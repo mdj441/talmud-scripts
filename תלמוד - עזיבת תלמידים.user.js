@@ -285,7 +285,7 @@
   async function processStudent(task) {
     const { branch, identity } = task;
     log(`\n${'─'.repeat(40)}`);
-    log(`▶ STUDENT branch=${branch} identity=${identity}`);
+    log(`▶ STUDENT branch=${branch} identity=${maskId(identity)}`);
     updateStatus(`מעבד: סניף ${branch} | ת.ז. ${identity}`);
 
     try {
@@ -506,6 +506,20 @@
     }
   }
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  function maskId(id) {
+    const s = String(id);
+    return s.length <= 4 ? '****' : '*'.repeat(s.length - 4) + s.slice(-4);
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   // ─── Logging ─────────────────────────────────────────────────────────────────
   let logLines = [];
   const MAX_LOG = 500;
@@ -553,9 +567,9 @@
       const color = ok ? '#0a5c0a' : skip ? '#666' : '#a00';
       const bg    = ok ? '#f0fff0' : skip ? '#f9f9f9' : '#fff5f5';
       html += `<tr style="border-bottom:1px solid #eee;background:${bg}">
-        <td style="padding:2px 6px;text-align:center">${r.branch}</td>
-        <td style="padding:2px 6px;direction:ltr;font-family:monospace;font-size:11px">${r.identity}</td>
-        <td style="padding:2px 6px;color:${color};font-weight:bold;font-size:11px">${r.status}</td>
+        <td style="padding:2px 6px;text-align:center">${escHtml(r.branch)}</td>
+        <td style="padding:2px 6px;direction:ltr;font-family:monospace;font-size:11px">${escHtml(r.identity)}</td>
+        <td style="padding:2px 6px;color:${color};font-weight:bold;font-size:11px">${escHtml(r.status)}</td>
       </tr>`;
     });
     html += '</table>';
