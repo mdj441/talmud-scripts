@@ -1,0 +1,23 @@
+# Auth/session files - NEVER commit these
+storageState.json
+*.session.json
+.auth/
+
+# Node
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Playwright
+playwright-report/
+test-results/
+.playwright/
+
+# Local environment
+.env
+.env.local
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
