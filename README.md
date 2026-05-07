@@ -37,7 +37,7 @@
 
 מקבל רשימת תלמידים (סניף + ת.ז.) ומבצע עזיבה לכולם ברצף.
 
-**[⬇️ לחץ כאן להתקנה](https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/%D7%AA%D7%9C%D7%9E%D7%95%D7%93%20-%20%D7%A2%D7%96%D7%99%D7%91%D7%AA%20%D7%AA%D7%9C%D7%9E%D7%95%D7%93%D7%99%D7%9D.user.js)**
+**[⬇️ לחץ כאן להתקנה](https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/%D7%AA%D7%9C%D7%9E%D7%95%D7%93%20-%20%D7%A2%D7%96%D7%99%D7%91%D7%AA%20%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js)**
 
 ---
 
