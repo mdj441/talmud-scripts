@@ -1,6 +1,6 @@
 # כלי אוטומציה למערכת תלמוד
 
-סקריפטים חינמיים לשימוש אישי | Tampermonkey | talmud.edu.gov.il
+סקריפטים חינמיים לשימוש אישי | Tampermonkey | talmud.edu.gov.il | מרדכי יאקאב
 
 ---
 
