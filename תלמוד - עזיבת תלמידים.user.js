@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         תלמוד - עזיבת תלמידים
 // @namespace    http://tampermonkey.net/
-// @version      4.2
-// @description  עיבוד אוטומטי של עזיבות תלמידים במערכת תלמוד - talmud.edu.gov.il
+// @version      5.0
+// @description  עיבוד אוטומטי של עזיבות תלמידים במערכת תלמוד - talmud.edu.gov.il (האצה: המתנה מבוססת-event)
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
 // @grant        none
@@ -75,47 +75,108 @@
     }
   }
 
-  // ─── PRM wait ────────────────────────────────────────────────────────────────
-  // Waits for an async ScriptManager postback to complete.
-  // If no postback starts within startTimeoutMs → resolves immediately (no postback fired).
+  // ─── PRM wait (event-based) ──────────────────────────────────────────────────
+  // Waits for an async ScriptManager postback to complete, using add_beginRequest/
+  // add_endRequest events instead of polling. Resolves the moment the server replies.
+  // If no postback starts within startTimeoutMs (the fired action didn't trigger a
+  // postback) → resolves so the flow can continue.
+  function getPRM() {
+    try { return Sys.WebForms.PageRequestManager.getInstance(); } catch (e) { return null; }
+  }
+
   function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
     return new Promise((resolve, reject) => {
-      const prm = Sys.WebForms.PageRequestManager.getInstance();
-      let resolved = false;
+      const prm = getPRM();
+      if (!prm) { setTimeout(resolve, 200); return; }
 
-      function done(err) {
-        if (resolved) return;
-        resolved = true;
+      let started = false, done = false;
+
+      function onBegin() { started = true; clearTimeout(startTimer); }
+
+      function onEnd(s, e) {
+        const err = e && e.get_error && e.get_error();
+        if (err && e.set_errorHandled) e.set_errorHandled(true);
+        finish(err ? new Error('PRM: ' + (err.message || 'postback error')) : null);
+      }
+
+      function finish(err) {
+        if (done) return;
+        done = true;
+        prm.remove_beginRequest(onBegin);
+        prm.remove_endRequest(onEnd);
+        clearTimeout(startTimer);
         clearTimeout(totalTimer);
-        clearInterval(startPoller);
-        prm.remove_endRequest(handler);
         if (err) reject(err); else resolve();
       }
 
-      function handler(s, e) {
-        log(`[PRM] endRequest fired${e.get_error() ? ' ERROR:' + e.get_error().message : ' OK'}`);
-        done(e.get_error() ? new Error('PRM: ' + e.get_error().message) : null);
-      }
-      prm.add_endRequest(handler);
+      prm.add_beginRequest(onBegin);
+      prm.add_endRequest(onEnd);
+
+      const startTimer = setTimeout(() => {
+        if (!started && !prm._isInAsyncPostBack) {
+          log(`[PRM] No postback started within ${startTimeoutMs}ms — resolving`);
+          finish(null);
+        }
+      }, startTimeoutMs);
 
       const totalTimer = setTimeout(() => {
         log(`[PRM] Total timeout after ${totalTimeoutMs}ms`);
-        done(new Error('PRM timeout'));
+        // Abort this student cleanly (caught by processStudent) rather than resolving and
+        // risking a second postback fired on top of one still in flight.
+        finish(new Error('PRM timeout'));
       }, totalTimeoutMs);
-
-      let started = false;
-      const startPoller = setInterval(() => {
-        if (prm._isInAsyncPostBack) { started = true; clearInterval(startPoller); }
-      }, 50);
-
-      // If no postback started within startTimeoutMs → no postback fired, resolve
-      setTimeout(() => {
-        if (!started && !prm._isInAsyncPostBack) {
-          log(`[PRM] No postback started within ${startTimeoutMs}ms — resolving`);
-          done(null);
-        }
-      }, startTimeoutMs);
     });
+  }
+
+  // ─── Condition wait ──────────────────────────────────────────────────────────
+  // Polls `predicate` and resolves true the moment it's truthy, or false on timeout.
+  // Replaces fixed sleep()s used to wait for DOM/animation to settle — early-exits
+  // as soon as the expected state appears instead of always burning a fixed delay.
+  function waitFor(predicate, { timeout = 5000, interval = 30 } = {}) {
+    return new Promise(resolve => {
+      const t0 = Date.now();
+      (function check() {
+        let ok = false;
+        try { ok = predicate(); } catch (e) { ok = false; }
+        if (ok) return resolve(true);
+        if (Date.now() - t0 >= timeout) return resolve(false);
+        setTimeout(check, interval);
+      })();
+    });
+  }
+
+  const modalVisible = () => {
+    const m = $el(IDs.modal);
+    return !!(m && window.getComputedStyle(m).display !== 'none');
+  };
+
+  // ─── Search ──────────────────────────────────────────────────────────────────
+  // Fills the ID field, runs the search, and waits until the grid actually re-renders
+  // with fresh results. The postback event-wait alone is NOT enough — endRequest can
+  // fire a tick before the UpdatePanel swaps the grid DOM, so analyzeGrid would read a
+  // stale/old grid and report a false "לא נמצא". We invalidate the old count + capture
+  // the old grid node, then wait until either is replaced. This is what the removed
+  // fixed sleep(300) was masking — now it's a condition wait that early-exits.
+  async function searchFor(identity) {
+    const idFieldEl = $el(IDs.idField);
+    if (!idFieldEl) throw new Error('ID field not found');
+    idFieldEl.value = identity;
+    idFieldEl.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const oldGrid = $el(IDs.grid);
+    const cl = $el(IDs.countLabel);
+    if (cl) cl.textContent = ''; // invalidate so we can detect the fresh render
+
+    const searchWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    $el(IDs.searchBtn).click();
+    await searchWait;
+
+    const settled = await waitFor(() => {
+      const grid = $el(IDs.grid);
+      const cnt  = ($el(IDs.countLabel)?.textContent || '').trim();
+      return (grid && grid !== oldGrid) || cnt !== '';
+    }, { timeout: 6000 });
+    if (!settled) log('[Search] ⚠️ grid did not refresh within 6s — analyzing anyway');
   }
 
   // ─── Grid analysis ───────────────────────────────────────────────────────────
@@ -189,43 +250,86 @@
       try { eval(cbOnclick); } catch(e) { log(`[Row] CB onclick eval error: ${e.message}`); }
       await prmWait;
     }
-    await sleep(300);
 
-    // Verify עזיבה button enabled
+    // Wait until the עזיבה button becomes enabled (early-exit instead of fixed sleep)
+    const btnEnabled = () => !$el(IDs.deptBtn)?.getAttribute('disabled');
+    await waitFor(btnEnabled, { timeout: 2000 });
+
     const deptBtn = $el(IDs.deptBtn);
-    const disabled = deptBtn?.getAttribute('disabled');
-    log(`[Row] עזיבה btn after select: class="${deptBtn?.className}" disabled=${disabled}`);
-    if (disabled) {
+    log(`[Row] עזיבה btn after select: class="${deptBtn?.className}" disabled=${deptBtn?.getAttribute('disabled')}`);
+    if (deptBtn?.getAttribute('disabled')) {
       // Fallback: call selectedRowStudents directly
       const rowMatch = trOnclick?.match(/selectedRowStudents\('?(\d+)'?\)/);
       if (rowMatch && typeof selectedRowStudents === 'function') {
         log(`[Row] Fallback: calling selectedRowStudents(${rowMatch[1]})`);
         selectedRowStudents(rowMatch[1]);
-        await sleep(300);
+        await waitFor(btnEnabled, { timeout: 2000 });
       }
-      log('[Row] ⚠️ עזיבה button still shows disabled — proceeding anyway');
+      if ($el(IDs.deptBtn)?.getAttribute('disabled')) {
+        log('[Row] ⚠️ עזיבה button still shows disabled — proceeding anyway');
+      }
     }
   }
 
-  // ─── Dismiss notification dialogs ────────────────────────────────────────────
-  function dismissDialogs() {
-    const candidates = ['ucMessagePopUp_btnOK', 'ucMessagePopUp_btnClose', 'btnOKMessage'];
-    for (const id of candidates) {
-      const btn = $el(id);
-      if (btn && window.getComputedStyle(btn).display !== 'none') {
-        log(`[Dialog] Closing dialog via #${id}`);
-        btn.click();
-        return;
+  // ─── Shared message popup (ucMessagePopUp) ───────────────────────────────────
+  // The site's shared message/confirm dialog (same control used on the messages page).
+  // After clicking אישור in the departure modal the server may raise it — e.g. the
+  // validation block "תאריך העזיבה לא יכול להיות לפני תאריך הקליטה...". We must surface
+  // that text to the user and NEVER click its cancel (which silently reverts).
+  function isVisible(el) {
+    if (!el) return false;
+    // NB: do NOT use offsetParent — the ModalPopupExtender shows the popup with
+    // position:fixed, for which offsetParent is always null even when fully visible.
+    // getClientRects() returns boxes for rendered elements (incl. fixed) and none for
+    // display:none, which is exactly the signal we want.
+    if (el.getClientRects().length === 0) return false;
+    const s = window.getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+  }
+
+  function getMessagePopup() {
+    const panel = $el('ucMessagePopUp_pnlMessagePopup');
+    if (!isVisible(panel)) return null;
+    const hasContinue = isVisible($el('ucMessagePopUp_btnMOK'));   // "המשך" — soft confirm
+    const hasOk       = isVisible($el('ucMessagePopUp_btnMCancel')); // "אישור" — acknowledge/error
+    const hasNo       = isVisible($el('ucMessagePopUp_btnMNo'));   // "לא"
+    // Panel rendered but no live action button → not a real prompt, ignore (avoid false block).
+    if (!hasContinue && !hasOk && !hasNo) return null;
+    let text = (panel.innerText || panel.textContent || '').replace(/\s+/g, ' ').trim();
+    text = text.replace(/^\s*הודעה\s*/, '').replace(/\s*(המשך|לא|אישור|ביטול|סגור)\s*$/g, '').trim();
+    return { text, hasContinue, hasOkOnly: hasOk && !hasContinue };
+  }
+
+  function hideMessagePopup() {
+    try {
+      if (typeof window.$find === 'function') {
+        const mpe = window.$find('ucMessagePopUp_ModalPopupExtender1');
+        if (mpe && typeof mpe.hide === 'function') { mpe.hide(); return; }
       }
-    }
-    // Fallback: any visible אישור in a popup div
-    document.querySelectorAll('a, button, input[type=button]').forEach(b => {
-      const text = (b.textContent || b.value || '').trim();
-      if (text === 'אישור') {
-        const parent = b.closest('[style*="display: block"], [style*="display:block"]');
-        if (parent) { log(`[Dialog] Fallback close via אישור in ${parent.id}`); b.click(); }
-      }
-    });
+    } catch (e) { /* ignore */ }
+    const ok = $el('ucMessagePopUp_btnMCancel'); // acknowledge ("אישור") — closes the error
+    if (isVisible(ok)) ok.click();
+  }
+
+  // Close the departure modal cleanly (used after a blocked departure) so the next
+  // student starts from the list, not a half-open modal.
+  async function closeDepartureModalIfOpen() {
+    if (!modalVisible()) return;
+    const cancel = $el(IDs.cancelBtn);
+    if (!cancel) return;
+    const href = cancel.getAttribute('href') || '';
+    const w = waitPRM({ startTimeoutMs: 800, totalTimeoutMs: 8000 });
+    if (href.startsWith('javascript:')) { try { eval(href.replace('javascript:', '')); } catch(e){} }
+    else cancel.click();
+    await w;
+  }
+
+  // ─── Page guard ──────────────────────────────────────────────────────────────
+  // The whole flow lives on the institute-details page (פרטי מוסד), which has the
+  // students tab + search field. On other pages (e.g. StudentsAllSearch.aspx) those
+  // elements are absent and trying to branch-navigate trips a site bug. Detect early.
+  function onInstitutePage() {
+    return !!($el(IDs.idField) || $el(IDs.tabContainer) || $el(IDs.searchBtn));
   }
 
   // ─── Branch detection ─────────────────────────────────────────────────────────
@@ -274,41 +378,57 @@
 
     const href = targetLink.getAttribute('href');
     if (href?.startsWith('javascript:')) {
-      eval(href.replace('javascript:', ''));
+      try { eval(href.replace('javascript:', '')); } catch (e) { log(`[Nav] eval error: ${e.message}`); }
     } else {
       targetLink.click();
     }
     return true;
   }
 
+  // ─── Auto-navigation with loop protection ────────────────────────────────────
+  // Navigate to a branch's institute page via the sidebar. Tracks attempts per target
+  // in sessionStorage so a navigation that never reaches the page (e.g. a site quirk on
+  // some pages) gives up after a few tries instead of looping forever on reload.
+  const NAV_KEY = 'tmScript_v5_nav';
+  function getNav()   { try { return JSON.parse(sessionStorage.getItem(NAV_KEY) || '{}'); } catch (e) { return {}; } }
+  function clearNav() { sessionStorage.removeItem(NAV_KEY); }
+
+  async function tryNavigate(branch) {
+    const nav = getNav();
+    const attempts = (nav.target === branch ? (nav.attempts || 0) : 0) + 1;
+    if (attempts > 3) { log(`[Nav] Giving up on branch ${branch} after ${attempts - 1} attempts`); clearNav(); return 'giveup'; }
+    sessionStorage.setItem(NAV_KEY, JSON.stringify({ target: branch, attempts }));
+    setPhase('start', `🧭 מנווט לסניף ${branch}... (ניסיון ${attempts})`);
+    const ok = await navigateToBranch(branch);
+    return ok ? 'navigating' : 'notfound';
+  }
+
   // ─── Process one student ──────────────────────────────────────────────────────
   async function processStudent(task) {
     const { branch, identity } = task;
+    if (stopFlag) return { branch, identity, status: 'נעצר' };
     log(`\n${'─'.repeat(40)}`);
     log(`▶ STUDENT branch=${branch} identity=${maskId(identity)}`);
-    updateStatus(`מעבד: סניף ${branch} | ת.ז. ${identity}`);
+    setPhase('running', `⏳ בתהליך ${curIdx + 1}/${queue.length} — סניף ${branch} | ת.ז. ${identity}`);
 
     try {
-      // Step 1: Switch to תלמידים tab (index 3)
-      log('[Step 1] Switch to tab 3');
+      // Step 1: Ensure תלמידים tab (index 3) is active — switch only if needed
       const tabCtrl = $find(IDs.tabContainer);
-      if (tabCtrl) { tabCtrl.set_activeTabIndex(3); log('[Step 1] Tab switched'); }
-      else { log('[Step 1] ⚠️ TabControl not found'); }
-      await sleep(500);
+      if (tabCtrl) {
+        let activeIdx = -1;
+        try { activeIdx = tabCtrl.get_activeTabIndex(); } catch (e) { /* ignore */ }
+        if (activeIdx !== 3) {
+          log('[Step 1] Switching to tab 3');
+          tabCtrl.set_activeTabIndex(3);
+          await waitFor(() => $el(IDs.idField) && window.getComputedStyle($el(IDs.idField)).display !== 'none', { timeout: 3000 });
+        }
+      } else {
+        log('[Step 1] ⚠️ TabControl not found');
+      }
 
-      // Step 2: Fill ID + click search
+      // Step 2: Search for the student (waits for the grid to actually refresh)
       log(`[Step 2] Search identity=${identity}`);
-      const idFieldEl = $el(IDs.idField);
-      if (!idFieldEl) throw new Error('ID field not found');
-      idFieldEl.value = identity;
-      idFieldEl.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(200);
-
-      log('[Step 2] Clicking search button...');
-      const searchWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
-      $el(IDs.searchBtn).click();
-      await searchWait;
-      await sleep(300);
+      await searchFor(identity);
       log('[Step 2] Search complete');
 
       // Step 3: Analyze grid
@@ -318,6 +438,9 @@
 
       if (!analysis.found)    return { branch, identity, status: 'לא נמצא' };
       if (analysis.departed)  return { branch, identity, status: `כבר בוצעה עזיבה (${analysis.departDate})` };
+
+      // Stop checkpoint — bail here (before the destructive part) if the user pressed עצור.
+      if (stopFlag) { log('[Stop] aborting before departure (user stop)'); return { branch, identity, status: 'נעצר' }; }
 
       // Step 4: Select row → enables עזיבה button
       log('[Step 4] Selecting row');
@@ -329,13 +452,11 @@
       const deptWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
       execHref(IDs.deptBtn);
       await deptWait;
-      await sleep(400);
 
-      // Step 6: Verify modal opened
-      const modal = $el(IDs.modal);
-      const modalVisible = modal && window.getComputedStyle(modal).display !== 'none';
-      log(`[Step 6] Modal visible: ${modalVisible}`);
-      if (!modalVisible) throw new Error('עזיבה modal did not open');
+      // Step 6: Wait for modal to open (early-exit instead of fixed sleep)
+      const opened = await waitFor(modalVisible, { timeout: 4000 });
+      log(`[Step 6] Modal visible: ${opened}`);
+      if (!opened) throw new Error('עזיבה modal did not open');
 
       // Step 7: Fill modal — date and reason
       const leaveDate   = getEffectiveLeaveDate();
@@ -356,7 +477,6 @@
         const selectedText = reasonEl.options[reasonEl.selectedIndex]?.text || '';
         log(`[Step 7] Reason set to ${leaveReason} ("${selectedText}")`);
       }
-      await sleep(200);
 
       // Step 8: Click אישור (confirm — async PRM)
       log('[Step 8] Click אישור (confirm departure)');
@@ -365,35 +485,34 @@
       log(`[Step 8] Confirm btn href: ${confirmEl.getAttribute('href')?.substring(0,60)}`);
 
       const confirmHref = confirmEl.getAttribute('href') || '';
+      const fireConfirm = () => {
+        if (confirmHref.startsWith('javascript:')) eval(confirmHref.replace('javascript:', ''));
+        else confirmEl.click();
+      };
+
       const confirmWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
-      if (confirmHref.startsWith('javascript:')) {
-        eval(confirmHref.replace('javascript:', ''));
-      } else {
-        confirmEl.click();
-      }
+      fireConfirm();
       await confirmWait;
-      await sleep(400);
 
-      // Check if modal closed
-      const modalAfter = $el(IDs.modal);
-      const stillOpen  = modalAfter && window.getComputedStyle(modalAfter).display !== 'none';
-      log(`[Step 8] Modal still open after confirm: ${stillOpen}`);
-      if (stillOpen) {
-        log('[Step 8] Retrying אישור...');
-        await sleep(500);
-        const retryWait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: 15000 });
-        if (confirmHref.startsWith('javascript:')) {
-          eval(confirmHref.replace('javascript:', ''));
-        } else {
-          confirmEl.click();
-        }
-        await retryWait;
-        await sleep(400);
-        log(`[Step 8] Modal after retry: ${$el(IDs.modal) && window.getComputedStyle($el(IDs.modal)).display !== 'none'}`);
+      // Step 8b: The server may raise the shared message popup in the confirm response
+      // (e.g. a validation block). Wait briefly for it to appear, then decide.
+      // No more modal-display retry dance.
+      const popup = (await waitFor(() => !!getMessagePopup(), { timeout: 1200 })) ? getMessagePopup() : null;
+
+      if (popup && !popup.hasContinue) {
+        // Pure block/validation (only "אישור" acknowledge) — surface to user & skip.
+        log(`[Step 8] ⚠️ נחסם: "${popup.text}"`);
+        hideMessagePopup();
+        await closeDepartureModalIfOpen();
+        return { branch, identity, status: `נחסם: ${popup.text || 'הודעת מערכת'}` };
       }
-
-      dismissDialogs();
-      await sleep(300);
+      if (popup && popup.hasContinue) {
+        // Soft confirm ("המשך"/"לא") — proceed with המשך.
+        log(`[Step 8] Confirm popup ("${popup.text}") → clicking המשך`);
+        const contWait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 });
+        $el('ucMessagePopUp_btnMOK').click();
+        await contWait;
+      }
 
       // Step 9: Click שמירה (save — async PRM)
       log('[Step 9] Click שמירה');
@@ -402,27 +521,23 @@
       const saveWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
       execHref(IDs.saveBtn);
       await saveWait;
-      await sleep(500);
       log('[Step 9] Save complete');
 
-      dismissDialogs();
-      await sleep(300);
+      // A message popup may also appear after save — capture text, hide it (never cancel).
+      // On success it's "הצלחה תהליך עידכון תלמיד הצליח"; treat that as informational only.
+      const savePopup = (await waitFor(() => !!getMessagePopup(), { timeout: 800 })) ? getMessagePopup() : null;
+      if (savePopup) { log(`[Step 9] Message after save: "${savePopup.text}"`); hideMessagePopup(); }
+      const saveBlocked = savePopup && savePopup.text && !/הצל/.test(savePopup.text);
 
-      // Step 10: Verify — re-search and confirm departure date in grid
+      // Step 10: Verify — re-search and confirm departure date in grid (source of truth)
       log('[Step 10] Verify departure');
-      idFieldEl.value = identity;
-      idFieldEl.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(200);
-
-      const verifyWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 });
-      $el(IDs.searchBtn).click();
-      await verifyWait;
-      await sleep(300);
-
+      await searchFor(identity);
       const verify = analyzeGrid(identity);
       log(`[Step 10] Verify: departed=${verify.departed} date="${verify.departDate}"`);
 
-      const status = verify.departed ? 'הצליח' : 'עזיבה בוצעה אך לא אומתה';
+      const status = verify.departed ? 'הצליח'
+                   : saveBlocked ? `נחסם: ${savePopup.text}`
+                   : 'עזיבה בוצעה אך לא אומתה';
       log(`▶ RESULT: ${status}`);
       return { branch, identity, status };
 
@@ -439,51 +554,69 @@
     stopFlag = false;
     log(`\n${'═'.repeat(40)}`);
     log(`🚀 RUN START — ${queue.length} students, leaveDate="${getEffectiveLeaveDate()}" reason="${getEffectiveLeaveReason()}"`);
+    setPhase('start', `▶ מתחיל — ${queue.length} תלמידים...`);
 
     while (curIdx < queue.length && !stopFlag) {
       const task = queue[curIdx];
       updateProgress();
 
-      const currentBranch = getCurrentBranchCode();
+      const onPage        = onInstitutePage();
+      const currentBranch = onPage ? getCurrentBranchCode() : null;
       const targetPadded  = task.branch.padStart(2,'0');
       const currentPadded = (currentBranch || '').padStart(2,'0');
       log(`\nQueue [${curIdx+1}/${queue.length}] branch=${targetPadded} id=${task.identity}`);
-      log(`Branch check: current="${currentPadded}" target="${targetPadded}"`);
+      log(`Branch check: onPage=${onPage} current="${currentPadded}" target="${targetPadded}"`);
 
-      if (currentPadded !== targetPadded) {
-        const found = await navigateToBranch(task.branch);
-        if (!found) {
+      // Not on the right institute page (or wrong branch) → auto-navigate via the sidebar.
+      // tryNavigate guards against an infinite reload loop if the page never changes.
+      if (!onPage || currentPadded !== targetPadded) {
+        const r = await tryNavigate(task.branch);
+        if (r === 'navigating') return; // page reloading; resume continues there
+        if (r === 'notfound') {
           results.push({ branch: task.branch, identity: task.identity, status: `סניף ${task.branch} לא נמצא` });
-          curIdx++;
-          updateProgress();
-          renderResultsInPanel();
+          curIdx++; clearNav(); updateProgress(); renderResultsInPanel();
           continue;
         }
-        return; // page reloading
+        // 'giveup' — couldn't reach the institute page after several tries
+        log('[Nav] Aborting run — could not reach the institute page.');
+        setPhase('error', `⚠️ לא הצלחתי להגיע לסניף ${task.branch}. נווט ידנית לסניף בתפריט הצד והרץ שוב.`);
+        sessionStorage.removeItem(SS_KEY);
+        running = false; setButtonsState(false);
+        return;
       }
 
+      clearNav(); // reached the correct branch — reset the nav-attempt guard
       const result = await processStudent(task);
       results.push(result);
       curIdx++;
       updateProgress();
       renderResultsInPanel();
-      await sleep(400);
+      await sleep(120); // small buffer between students; the next search waits on its own postback
     }
 
     running = false;
     sessionStorage.removeItem(SS_KEY);
+    clearNav();
     const summary = results.reduce((acc, r) => {
       if (r.status === 'הצליח') acc.ok++;
       else if (r.status === 'לא נמצא') acc.notFound++;
       else if (r.status.startsWith('כבר')) acc.already++;
+      else if (r.status.startsWith('נחסם')) acc.blocked++;
+      else if (r.status === 'נעצר') acc.stopped++;
       else acc.error++;
       return acc;
-    }, { ok:0, notFound:0, already:0, error:0 });
+    }, { ok:0, notFound:0, already:0, blocked:0, stopped:0, error:0 });
 
     log(`\n${'═'.repeat(40)}`);
     log(stopFlag ? '⛔ Stopped by user' : '✅ All done!');
-    log(`Summary: הצליח=${summary.ok} | לא נמצא=${summary.notFound} | כבר עזב=${summary.already} | שגיאה=${summary.error}`);
-    updateStatus(stopFlag ? 'עצר' : `הסתיים ✓ (${summary.ok} הצליחו)`);
+    log(`Summary: הצליח=${summary.ok} | לא נמצא=${summary.notFound} | כבר עזב=${summary.already} | נחסם=${summary.blocked} | נעצר=${summary.stopped} | שגיאה=${summary.error}`);
+    const parts = [`✓ ${summary.ok} הצליחו`];
+    if (summary.blocked)  parts.push(`${summary.blocked} נחסמו`);
+    if (summary.already)  parts.push(`${summary.already} כבר עזבו`);
+    if (summary.notFound) parts.push(`${summary.notFound} לא נמצאו`);
+    if (summary.error)    parts.push(`${summary.error} שגיאות`);
+    setPhase(stopFlag ? 'stopping' : 'done',
+      `${stopFlag ? '⛔ נעצר' : '✅ הסתיים'} — ${parts.join(' | ')}`);
     setButtonsState(false);
     renderResultsInPanel();
   }
@@ -539,6 +672,25 @@
     if (el) el.textContent = msg;
   }
 
+  // Prominent, colour-coded phase indicator shown in the panel (not just the log).
+  function setPhase(kind, msg) {
+    const el = $el('tm-status');
+    if (!el) return;
+    const styles = {
+      idle:     ['#555',    '#f0f4f8'],
+      start:    ['#1a5276', '#e6f0fa'],
+      running:  ['#1a5276', '#e6f0fa'],
+      stopping: ['#9a5b00', '#fff4e0'],
+      done:     ['#0a5c0a', '#eaffea'],
+      error:    ['#a00',    '#fff0f0'],
+    };
+    const [fg, bg] = styles[kind] || styles.idle;
+    el.style.color = fg;
+    el.style.background = bg;
+    el.style.fontWeight = kind === 'idle' ? 'normal' : 'bold';
+    el.textContent = msg;
+  }
+
   function updateProgress() {
     const el = $el('tm-progress');
     if (el) el.textContent = `${curIdx} / ${queue.length}`;
@@ -563,7 +715,7 @@
     </tr>`;
     results.forEach(r => {
       const ok    = r.status === 'הצליח';
-      const skip  = r.status.startsWith('כבר') || r.status === 'לא נמצא';
+      const skip  = r.status.startsWith('כבר') || r.status === 'לא נמצא' || r.status === 'נעצר';
       const color = ok ? '#0a5c0a' : skip ? '#666' : '#a00';
       const bg    = ok ? '#f0fff0' : skip ? '#f9f9f9' : '#fff5f5';
       html += `<tr style="border-bottom:1px solid #eee;background:${bg}">
@@ -648,7 +800,7 @@
       <div id="tm-header" style="background:#1a5276;color:#fff;padding:8px 12px;
            border-radius:6px 6px 0 0;cursor:move;
            display:flex;justify-content:space-between;align-items:center;user-select:none">
-        <span style="font-weight:bold;font-size:14px">🎓 עזיבת תלמידים v4.2</span>
+        <span style="font-weight:bold;font-size:14px">🎓 עזיבת תלמידים v5.0 ⚡</span>
         <span id="tm-progress" style="font-size:11px;opacity:.8">0 / 0</span>
         <span id="tm-toggle" style="cursor:pointer;font-size:16px;line-height:1;padding:0 4px">▲</span>
       </div>
@@ -779,7 +931,8 @@
     $el('tm-stop').addEventListener('click', () => {
       stopFlag = true;
       sessionStorage.removeItem(SS_KEY);
-      setButtonsState(false);
+      $el('tm-stop').disabled = true;          // immediate visual ack
+      setPhase('stopping', '⛔ עוצר... (מסיים את התלמיד הנוכחי)');
       log('[Stop] Stop requested by user');
     });
 
@@ -801,7 +954,7 @@
   // ─── Init ────────────────────────────────────────────────────────────────────
   function init() {
     createUI();
-    log(`[Init] v4.2 loaded on ${window.location.href}`);
+    log(`[Init] v5.0 (popup-aware) loaded on ${window.location.href}`);
     log(`[Init] Today: ${todayDate()}`);
 
     const resumed = resumeFromStorage();
