@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { resolveCountry } from '../src/core/identity.js';
+import { COUNTRIES } from '../src/data/countries.js';
+
+test('רשימה מלאה נטענה', () => assert.ok(COUNTRIES.length > 200));
+test('ארה"ב', () => assert.equal(resolveCountry('ארצות הברית'), '710'));
+test('מקסיקו', () => assert.equal(resolveCountry('מקסיקו'), '720'));
+test('הממלכה המאוחדת', () => assert.equal(resolveCountry('הממלכה המאוחדת'), '590'));
+test('מספר ישיר עובר כמו-שהוא', () => assert.equal(resolveCountry('640'), '640'));
+test('לא ידוע → null', () => assert.equal(resolveCountry('אטלנטיס'), null));
+test('ריק → null', () => assert.equal(resolveCountry(''), null));
