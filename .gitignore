@@ -1,0 +1,13 @@
+# חומרים אישיים — לעולם לא עולים לריפו הציבורי
+אישי/
+
+# קבצי מערכת
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# כלי פיתוח מקומיים
+node_modules/
+*.local.*
+.claude/settings.local.json
+.superpowers/
