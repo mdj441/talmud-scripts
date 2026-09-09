@@ -8,6 +8,16 @@ const pkg = JSON.parse(readFileSync(join(__dirname, 'package.json'), 'utf8'));
 
 // Ordered list of source modules to concatenate into the userscript.
 const MODULES = [
+  'src/core/dom.js',
+  'src/core/prm.js',
+  'src/core/popup.js',
+  'src/core/log.js',
+  'src/core/csv.js',
+  'src/data/countries.js',
+  'src/core/identity.js',
+  'src/core/navigate.js',
+  'src/tools/absorb-parse.js',
+  'src/tools/absorb.js',
   'src/absorb-main.js',
 ];
 

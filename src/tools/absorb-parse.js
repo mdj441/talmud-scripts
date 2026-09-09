@@ -1,7 +1,7 @@
 import { detectIdType, resolveCountry } from '../core/identity.js';
 
 // מרכאות עוטפות: ASCII " ' · גרשיים ״ (U+05F4) · גרש ׳ (U+05F3) · מסולסלות “ ” ‘ ’
-const WRAP_QUOTES = /^["'״׳“”‘’]+|["'״׳“”‘’]+$/g;
+const ABSORB_WRAP_QUOTES = /^["'״׳“”‘’]+|["'״׳“”‘’]+$/g;
 
 const HEADER_ALIASES = {
   branch: ['סניף'],
@@ -30,7 +30,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 const splitLines = (text) => String(text).split(/\r\n|\r|\n/);
 
 function normalizeHeaderCell(s) {
-  let t = String(s).trim().replace(/\s+/g, ' ').replace(WRAP_QUOTES, '');
+  let t = String(s).trim().replace(/\s+/g, ' ').replace(ABSORB_WRAP_QUOTES, '');
   if (t.endsWith('.')) t = t.slice(0, -1);
   return t.toLowerCase();
 }
@@ -40,7 +40,7 @@ for (const [field, aliases] of Object.entries(HEADER_ALIASES)) {
   for (const alias of aliases) HEADER_LOOKUP.set(normalizeHeaderCell(alias), field);
 }
 
-const isPurelyNumericCell = (cell) => /^\d+$/.test(String(cell ?? '').trim().replace(WRAP_QUOTES, ''));
+const isPurelyNumericCell = (cell) => /^\d+$/.test(String(cell ?? '').trim().replace(ABSORB_WRAP_QUOTES, ''));
 
 function detectDelimiter(text) {
   if (text.includes('\t')) return 'tab';
