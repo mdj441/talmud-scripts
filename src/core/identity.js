@@ -23,6 +23,7 @@ const byName = new Map(COUNTRIES.map(c => [c.he, c.value]));
 export function resolveCountry(input) {
   if (input == null) return null;
   const s = String(input)
+    .trim()
     .replace(/^["'״׳""'']+|["'״׳""'']+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
