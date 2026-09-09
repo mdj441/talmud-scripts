@@ -19,12 +19,15 @@ export function detectIdType(raw) {
   return { type: 'tz', identifier: padId9(s.replace(/\D/g, '')) };
 }
 
+// מרכאות עוטפות: ASCII " ' · גרשיים ״ (U+05F4) · גרש ׳ (U+05F3) · מסולסלות “ ” ‘ ’ (U+201C U+201D U+2018 U+2019)
+const WRAP_QUOTES = /^[\u0022\u0027\u05F4\u05F3\u201C\u201D\u2018\u2019]+|[\u0022\u0027\u05F4\u05F3\u201C\u201D\u2018\u2019]+$/g;
+
 const byName = new Map(COUNTRIES.map(c => [c.he, c.value]));
 export function resolveCountry(input) {
   if (input == null) return null;
   const s = String(input)
     .trim()
-    .replace(/^["'״׳""'']+|["'״׳""'']+$/g, '')
+    .replace(WRAP_QUOTES, '')
     .replace(/\s+/g, ' ')
     .trim();
   if (!s) return null;
