@@ -10,3 +10,6 @@ test('הממלכה המאוחדת', () => assert.equal(resolveCountry('הממל�
 test('מספר ישיר עובר כמו-שהוא', () => assert.equal(resolveCountry('640'), '640'));
 test('לא ידוע → null', () => assert.equal(resolveCountry('אטלנטיס'), null));
 test('ריק → null', () => assert.equal(resolveCountry(''), null));
+test('מקסיקו עם גרשיים כפולים ASCII', () => assert.equal(resolveCountry('"מקסיקו"'), '720'));
+test('ארצות הברית עם גרשיים כפולים עברים', () => assert.equal(resolveCountry('״ארצות הברית״'), '710'));
+test('אזרביג\'אן עם גרש פנימי', () => assert.equal(resolveCountry('אזרביג\'אן'), '311'));

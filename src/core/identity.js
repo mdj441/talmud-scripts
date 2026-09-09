@@ -22,7 +22,10 @@ export function detectIdType(raw) {
 const byName = new Map(COUNTRIES.map(c => [c.he, c.value]));
 export function resolveCountry(input) {
   if (input == null) return null;
-  const s = String(input).replace(/\s+/g, ' ').trim();
+  const s = String(input)
+    .replace(/^["'״׳""'']+|["'״׳""'']+$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!s) return null;
   if (/^\d+$/.test(s)) return s;
   if (byName.has(s)) return byName.get(s);
