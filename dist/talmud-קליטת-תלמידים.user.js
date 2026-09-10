@@ -2,14 +2,20 @@
 // @name         תלמוד - קליטת תלמידים
 // @namespace    https://github.com/mdj441/talmud-scripts
 // @version      3.3.0
+// @description  קליטת תלמידים באצווה לתלמו"ד — v3.3 מודולרי
+// @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
 // @grant        none
-// @author       מרדכי יאקאב
+// @run-at       document-idle
+// @updateURL    https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-%D7%A7%D7%9C%D7%99%D7%98%D7%AA-%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
+// @downloadURL  https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-%D7%A7%D7%9C%D7%99%D7%98%D7%AA-%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
+// @supportURL   https://github.com/mdj441/talmud-scripts/issues
 // ==/UserScript==
 
 (function () {
   'use strict';
 
+// ─── src/core/dom.js ───
 // עוזרי DOM כלליים — פורט מ"תלמוד - עזיבת תלמידים" v5 (‏$el:44, sleep:45, waitFor:135, isVisible:279).
 // חשוב: אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות, כדי שהמודול
 // יהיה ניתן ל-import ב-Node (בדיקות) בלי סביבת דפדפן.
@@ -52,191 +58,7 @@ function waitFor(predicate, { timeout = 5000, interval = 30 } = {}) {
   });
 }
 
-// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager — פורט מ"תלמוד - עזיבת תלמידים"
-// v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
-// אין גישה ל-Sys/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין גם ב-Node).
-
-function getPRM() {
-  try {
-    return Sys.WebForms.PageRequestManager.getInstance();
-  } catch (e) {
-    return null;
-  }
-}
-
-// שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
-// לעולם לא נזרק/נדחה — "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
-// {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
-// ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
-// "הפעולה לא הפעילה שום בקשה לשרת" — לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
-// אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
-function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
-  return new Promise((resolve) => {
-    const prm = getPRM();
-    if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
-
-    let started = false, done = false;
-
-    function onBegin() { started = true; clearTimeout(startTimer); }
-
-    function onEnd(s, e) {
-      const err = e && e.get_error && e.get_error();
-      if (err && e.set_errorHandled) e.set_errorHandled(true);
-      finish(err ? { ok: false, reason: 'PRM: ' + (err.message || 'postback error') } : { ok: true });
-    }
-
-    function finish(result) {
-      if (done) return;
-      done = true;
-      prm.remove_beginRequest(onBegin);
-      prm.remove_endRequest(onEnd);
-      clearTimeout(startTimer);
-      clearTimeout(totalTimer);
-      resolve(Object.assign({ started }, result));
-    }
-
-    prm.add_beginRequest(onBegin);
-    prm.add_endRequest(onEnd);
-
-    const startTimer = setTimeout(() => {
-      if (!started && !prm._isInAsyncPostBack) {
-        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback — ממשיכים
-      }
-    }, startTimeoutMs);
-
-    const totalTimer = setTimeout(() => {
-      // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
-      finish({ ok: false, reason: `PRM timeout after ${totalTimeoutMs}ms` });
-    }, totalTimeoutMs);
-  });
-}
-
-// יורה postback עם סדר קשיח (global-constraints, "postback מקוד strict"): רושמים
-// את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
-// נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
-function firePostback(target, arg = '', opts) {
-  const wait = waitPRM(opts); // (1) registers wait — add_endRequest is wired synchronously inside
-  setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
-  return wait;
-}
-
-// חלונית ההודעה המשותפת של האתר (ucMessagePopUp) — פורט מ"תלמוד - עזיבת תלמידים" v5
-// (‏getMessagePopup:290, hideMessagePopup:303). אותה בקרה משמשת בכל האתר (למשל ולידציה
-// "תאריך העזיבה לא יכול להיות לפני תאריך הקליטה..."). לעולם לא לוחצים על "המשך" (btnMOK)
-// בשקט — הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
-// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות.
-
-
-// שמות ה-ID נשמרים כפי שהם ב-depart-v5: btnMOK = "המשך" (אישור-רך), btnMCancel = "אישור"
-// (אישור/סגירת שגיאה — למרות השם), btnMNo = "לא".
-function readMessagePopup() {
-  const panel = $el('ucMessagePopUp_pnlMessagePopup');
-  if (!isVisible(panel)) return null;
-  const hasContinue = isVisible($el('ucMessagePopUp_btnMOK'));
-  const hasOk = isVisible($el('ucMessagePopUp_btnMCancel'));
-  const hasNo = isVisible($el('ucMessagePopUp_btnMNo'));
-  if (!hasContinue && !hasOk && !hasNo) return null; // פאנל מעובד אך בלי כפתור חי → לא פרומפט אמיתי
-  let text = (panel.innerText || panel.textContent || '').replace(/\s+/g, ' ').trim();
-  text = text.replace(/^\s*הודעה\s*/, '').replace(/\s*(המשך|לא|אישור|ביטול|סגור)\s*$/g, '').trim();
-  return { text, hasContinue, hasOkOnly: hasOk && !hasContinue };
-}
-
-// סוגר את חלונית ההודעה. מעדיף את ה-ModalPopupExtender (hide() נקי, לא מפעיל שום
-// postback צד-שרת). נופל ל-btnMCancel ("אישור") רק אם ה-extender לא זמין. לעולם לא
-// לוחץ על btnMOK ("המשך") — זה כפתור אישור-רך ולא כפתור סגירה.
-// M-f: ‏btnMCancel הוא postback צד-שרת, ולכן הוא חייב את הסדר הקשיח של
-// global-constraints: רושמים waitPRM *לפני* הלחיצה, והלחיצה נדחית ל-setTimeout(0).
-// מחזיר {hidden, wait} — `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
-// שאינו postback). ‏waitPRM לעולם לא נדחה.
-function hideMessagePopupAsync() {
-  try {
-    if (typeof window.$find === 'function') {
-      const mpe = window.$find('ucMessagePopUp_ModalPopupExtender1');
-      if (mpe && typeof mpe.hide === 'function') { mpe.hide(); return { hidden: true, wait: null }; }
-    }
-  } catch (e) { /* ignore, fall through to button click */ }
-  const ok = $el('ucMessagePopUp_btnMCancel');
-  if (isVisible(ok)) {
-    const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 }); // (1) נרשם קודם
-    setTimeout(() => { try { ok.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
-    return { hidden: true, wait };
-  }
-  return { hidden: false, wait: null };
-}
-
-// תאימות: אותה התנהגות, בלי ה-Promise (מי שלא ממתין לתוצאה).
-function hideMessagePopup() {
-  return hideMessagePopupAsync().hidden;
-}
-
-// גרסה גנרית ל-extender כלשהו (ModalPopupExtender / AjaxModalPopup): $find(id).hide(),
-// null-safe — מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
-function closeModal(extenderId) {
-  try {
-    if (typeof window.$find !== 'function') return false;
-    const ext = window.$find(extenderId);
-    if (!ext || typeof ext.hide !== 'function') return false;
-    ext.hide();
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-// יומן פעילות משותף — פורט מ"תלמוד - קליטת תלמידים" v3.2 (log:674, copyLog:735).
-// טבעת של 500 שורות בזיכרון + מאזין אחד לרינדור בפאנל. maskId חוסם דליפת ת.ז. ללוג
-// (global-constraints, "פרטיות"): הלוג ממוסך תמיד — טבלת התוצאות והדוח מציגים מזהה מלא.
-// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין ב-Node).
-
-
-const LOG_MAX_LINES = 500;
-const logLines = [];
-let logListener = null;
-
-// ת.ז. אמיתית לעולם לא נכתבת ללוג מלאה. מתחת ל-5 תווים אין מה למסך (אין די אנטרופיה
-// כדי שהמיסוך יועיל, ומחיקה מלאה רק מקשה על אבחון) — מוחזר כמות שהוא.
-function maskId(id) {
-  const s = String(id == null ? '' : id);
-  if (s.length < 5) return s;
-  return '*'.repeat(s.length - 3) + s.slice(-3);
-}
-
-// לטקסט חופשי (הודעות מערכת/ולידציה) שעלול להכיל ת.ז. — ממסך כל רצף של 5+ ספרות.
-function maskIdsInText(text) {
-  return String(text == null ? '' : text).replace(/\d{5,}/g, (m) => maskId(m));
-}
-
-function log(msg) {
-  const stamp = new Date().toTimeString().slice(0, 8);
-  const line = `${stamp} ${msg}`;
-  logLines.push(line);
-  while (logLines.length > LOG_MAX_LINES) logLines.shift();
-  // console רק בדפדפן — כדי ש-node --test יישאר נקי.
-  if (typeof document !== 'undefined' && typeof console !== 'undefined') {
-    console.log('[TM-Absorb]', msg);
-  }
-  if (logListener) { try { logListener(line); } catch (e) { /* אצווה לא נתקעת */ } }
-  return line;
-}
-
-function getLogText() {
-  return logLines.join('\n');
-}
-
-function clearLog() {
-  logLines.length = 0;
-  if (logListener) { try { logListener(''); } catch (e) { /* אצווה לא נתקעת */ } }
-}
-
-// מאזין יחיד (הפאנל). null מנתק.
-function setLogListener(fn) {
-  logListener = typeof fn === 'function' ? fn : null;
-}
-
-function copyLog() {
-  return copyTextToClipboard(getLogText());
-}
-
+// ─── src/core/csv.js ───
 // ייצוא/העתקה — פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
 // toCsv טהורה (נבדקת ביחידה); downloadText/copyTextToClipboard נוגעות ב-DOM ולכן
 // כל הגישה ל-document/window/navigator היא רק בתוך גופי הפונקציות (import תקין ב-Node).
@@ -307,6 +129,358 @@ function csvCopyFallback(text) {
   }
 }
 
+// ─── src/core/log.js ───
+// יומן פעילות משותף — פורט מ"תלמוד - קליטת תלמידים" v3.2 (log:674, copyLog:735).
+// טבעת של 500 שורות בזיכרון + מאזין אחד לרינדור בפאנל. maskId חוסם דליפת ת.ז. ללוג
+// (global-constraints, "פרטיות"): הלוג ממוסך תמיד — טבלת התוצאות והדוח מציגים מזהה מלא.
+// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין ב-Node).
+
+
+const LOG_MAX_LINES = 500;
+const logLines = [];
+let logListener = null;
+
+// ת.ז. אמיתית לעולם לא נכתבת ללוג מלאה. מתחת ל-5 תווים אין מה למסך (אין די אנטרופיה
+// כדי שהמיסוך יועיל, ומחיקה מלאה רק מקשה על אבחון) — מוחזר כמות שהוא.
+function maskId(id) {
+  const s = String(id == null ? '' : id);
+  if (s.length < 5) return s;
+  return '*'.repeat(s.length - 3) + s.slice(-3);
+}
+
+// לטקסט חופשי (הודעות מערכת/ולידציה) שעלול להכיל ת.ז. — ממסך כל רצף של 5+ ספרות.
+function maskIdsInText(text) {
+  return String(text == null ? '' : text).replace(/\d{5,}/g, (m) => maskId(m));
+}
+
+function log(msg) {
+  const stamp = new Date().toTimeString().slice(0, 8);
+  const line = `${stamp} ${msg}`;
+  logLines.push(line);
+  while (logLines.length > LOG_MAX_LINES) logLines.shift();
+  // console רק בדפדפן — כדי ש-node --test יישאר נקי.
+  if (typeof document !== 'undefined' && typeof console !== 'undefined') {
+    console.log('[TM-Absorb]', msg);
+  }
+  if (logListener) { try { logListener(line); } catch (e) { /* אצווה לא נתקעת */ } }
+  return line;
+}
+
+function getLogText() {
+  return logLines.join('\n');
+}
+
+function clearLog() {
+  logLines.length = 0;
+  if (logListener) { try { logListener(''); } catch (e) { /* אצווה לא נתקעת */ } }
+}
+
+// מאזין יחיד (הפאנל). null מנתק.
+function setLogListener(fn) {
+  logListener = typeof fn === 'function' ? fn : null;
+}
+
+function copyLog() {
+  return copyTextToClipboard(getLogText());
+}
+
+// ─── src/core/prm.js ───
+// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager — פורט מ"תלמוד - עזיבת תלמידים"
+// v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
+// אין גישה ל-Sys/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין גם ב-Node).
+
+function getPRM() {
+  try {
+    return Sys.WebForms.PageRequestManager.getInstance();
+  } catch (e) {
+    return null;
+  }
+}
+
+// שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
+// לעולם לא נזרק/נדחה — "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
+// {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
+// ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
+// "הפעולה לא הפעילה שום בקשה לשרת" — לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
+// אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
+function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
+  return new Promise((resolve) => {
+    const prm = getPRM();
+    if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
+
+    let started = false, done = false;
+
+    function onBegin() { started = true; clearTimeout(startTimer); }
+
+    function onEnd(s, e) {
+      const err = e && e.get_error && e.get_error();
+      if (err && e.set_errorHandled) e.set_errorHandled(true);
+      finish(err ? { ok: false, reason: 'PRM: ' + (err.message || 'postback error') } : { ok: true });
+    }
+
+    function finish(result) {
+      if (done) return;
+      done = true;
+      prm.remove_beginRequest(onBegin);
+      prm.remove_endRequest(onEnd);
+      clearTimeout(startTimer);
+      clearTimeout(totalTimer);
+      resolve(Object.assign({ started }, result));
+    }
+
+    prm.add_beginRequest(onBegin);
+    prm.add_endRequest(onEnd);
+
+    const startTimer = setTimeout(() => {
+      if (!started && !prm._isInAsyncPostBack) {
+        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback — ממשיכים
+      }
+    }, startTimeoutMs);
+
+    const totalTimer = setTimeout(() => {
+      // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
+      finish({ ok: false, reason: `PRM timeout after ${totalTimeoutMs}ms` });
+    }, totalTimeoutMs);
+  });
+}
+
+// יורה postback עם סדר קשיח (global-constraints, "postback מקוד strict"): רושמים
+// את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
+// נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
+function firePostback(target, arg = '', opts) {
+  const wait = waitPRM(opts); // (1) registers wait — add_endRequest is wired synchronously inside
+  setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
+  return wait;
+}
+
+// ─── src/core/navigate.js ───
+// זיהוי דף + ניווט אמין לסוג-לימוד דרך גריד "סוגי לימוד למוסד" (לא עץ-הצד השבור).
+// לכידה-01 (דף מוסד), לכידה-02 (דף סוג-לימוד), לכידה-03 (דף תלמיד-חדש) — סעיפים מצוינים בהערות.
+// אין גישה ל-document/window/sessionStorage ברמת המודול — רק בתוך גופי הפונקציות (import תקין ב-Node).
+
+
+const NAV_KEY = 'talmud.absorb.nav';
+
+// ─── sessionStorage: מצב-ניווט (לכידה-02 §1 — סניף לא ידוע בדף סוג-לימוד) ───
+
+function saveNavState(obj) {
+  try { sessionStorage.setItem(NAV_KEY, JSON.stringify(obj)); } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+// תמיד מחזיר אובייקט, לעולם לא זורק (חסר / JSON פגום / sessionStorage לא קיים => {}).
+function loadNavState() {
+  try {
+    const raw = sessionStorage.getItem(NAV_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function clearNavState() {
+  try { sessionStorage.removeItem(NAV_KEY); } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+// ─── זיהוי דף ────────────────────────────────────────────────────────────────
+
+// טהורה: מיון ראשוני לפי URL בלבד ("מועמד" — newStudent עדיין דורש אימות hidStudentState ב-getPage).
+function classifyUrl(url) {
+  if (typeof url !== 'string') return 'other';
+  if (url.includes('InstitutesDetails.aspx')) return 'institute';
+  if (url.includes('StudyTypeDetails.aspx')) return 'studyType';
+  if (url.includes('Students/StudentsDetails.aspx')) return 'newStudent';
+  return 'other';
+}
+
+function getPage() {
+  const url = (typeof location !== 'undefined' && location.href) || '';
+  const kind0 = classifyUrl(url);
+
+  if (kind0 === 'institute') {
+    // לכידה-01 §5: זיהוי סניף מ-h1 "<מוסד> סניף NN"; נופל חזרה למצב שמור אם ה-h1 לא נמצא/לא תואם.
+    const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
+    const m = h1 && /סניף\s*(\d+)/.exec(h1.textContent || '');
+    const branch = m ? String(m[1]).padStart(2, '0') : (loadNavState().currentBranch || null);
+    return { kind: 'institute', branch, studyType: null, url };
+  }
+
+  if (kind0 === 'studyType') {
+    // לכידה-02 §1: אין מספר סניף בדף הזה כלל (לא ב-h1, לא ב-breadcrumb) — המקור היחיד: sessionStorage.
+    const branch = loadNavState().currentBranch || null;
+    // לכידה-02 §1: h1 = "סוג לימוד 600 - כולל אברכים יום שלם" — הקוד המספרי הראשון אחרי "סוג לימוד".
+    const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
+    const m = h1 && /סוג לימוד\s*(\d+)/.exec(h1.textContent || '');
+    const studyType = m ? m[1] : null;
+    return { kind: 'studyType', branch, studyType, url };
+  }
+
+  if (kind0 === 'newStudent') {
+    // לכידה-03 §1/§2: אותו URL גם לבאג-הניווט מהעץ (דף ריק) וגם לתלמיד-חדש אמיתי —
+    // ההבחנה היחידה המתועדת: SD~hidStudentState == -1 (SD~ = ContentPlaceHolder1_TabsStudent_
+    // StudentDetails1_ucStudentDetails_, לכידה-03 §2).
+    const hid = $el('ContentPlaceHolder1_TabsStudent_StudentDetails1_ucStudentDetails_hidStudentState');
+    const isNewStudent = !!hid && String(hid.value).trim() === '-1';
+    if (isNewStudent) {
+      return { kind: 'newStudent', branch: loadNavState().currentBranch || null, studyType: null, url };
+    }
+    return { kind: 'other', branch: null, studyType: null, url };
+  }
+
+  return { kind: 'other', branch: null, studyType: null, url };
+}
+
+// ─── גריד "סוגי לימוד למוסד" (gvStudyType) — לכידה-02 §2 ────────────────────
+
+// טהורה, ללא DOM. `rows`: מערך של מערכי-תאים (מחרוזות, לא בהכרח trimmed).
+// סמנטיקת האינדקס המוחזר — הכרעה מפורשת (הבקר, סעיף 2 בהנחיה):
+//   האינדקס יחסי ל**שורות-נתונים בלבד** (0-based), אחרי דילוג על שורות-כותרת
+//   (td[0] שאינו מספרי, למשל "קוד סוג לימודים"). כותרת לא נספרת ולא משפיעה על האינדקס.
+//   זה בדיוק מה ש-selectedRowStudyType(rowIndex) מצפה לו על הדף החי (לכידה-02 §2:
+//   "שורה = onclick=selectedRowStudyType('N')", N הוא אינדקס שורת-הנתונים בעמוד הנוכחי) —
+//   הקוד שקורא לפונקציה הזו (gotoStudyTypeFromInstitute) חייב להעביר את האינדקס
+//   הזה כמות-שהוא ל-window.selectedRowStudyType, בלי לחבר/לחסר בשביל הכותרת.
+function findStudyTypeRow(rows, code) {
+  if (!Array.isArray(rows)) return -1;
+  const target = String(code).trim();
+  let dataIndex = -1;
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const first = String(row[0] ?? '').trim();
+    if (!/^\d+$/.test(first)) continue; // שורת-כותרת (או שורת-פייג'ר) — מדולגת, לא נספרת
+    dataIndex++;
+    if (first === target) return dataIndex;
+  }
+  return -1;
+}
+
+// DOM-touching, לא נבדק ביחידה: ממיר <table> ל-מערך-שורות של טקסטי-תאים (trimmed).
+function gridToRows(table) {
+  if (!table || typeof table.querySelectorAll !== 'function') return [];
+  return Array.from(table.querySelectorAll('tr')).map(
+    (tr) => Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim())
+  );
+}
+
+// NEEDS_CONTEXT (לבדיקה רטובה, Task 9): לכידה-01/02 לא מתעדות את מנגנון-ההפעלה המדויק
+// של הטאב ("$find(...).set_activeTabIndex(1)" מול פשוט הקלקה על כותרת הטאב), ולא את ה-ID
+// המלא של ה-TabContainer. מנחת-הבטיחות כאן: איתור כותרת הטאב לפי הטקסט שלה ("סוגי לימוד
+// למוסד", לכידה-01 §5) תחת מוסכמת-ה-CSS הסטנדרטית של AjaxControlToolkit
+// (ajax__tab_header/ajax__tab_tab) או role="tab" גנרי; אם לכותרת יש href בפורמט
+// __doPostBack יורים אותו דרך firePostback (עומד ב"כל postback דרך firePostback"), אחרת
+// מניחים מעבר-טאב צד-לקוח טהור (כל הפאנלים כבר ב-DOM) ורק ממתינים "טיק" (sleep) לעדכון.
+async function activateStudyTypeTab() {
+  try {
+    if (typeof document === 'undefined') return { ok: false, reason: 'אין document (סביבת בדיקה?)' };
+    const headers = Array.from(document.querySelectorAll('.ajax__tab_header a, .ajax__tab_tab, [role="tab"]'));
+    const tab = headers.find((el) => (el.textContent || '').includes('סוגי לימוד למוסד'));
+    if (!tab) return { ok: false, reason: 'לא נמצא טאב "סוגי לימוד למוסד" בעמוד המוסד' };
+
+    const href = typeof tab.getAttribute === 'function' ? tab.getAttribute('href') : null;
+    const parsed = href ? parsePostbackHref(href) : null;
+    if (parsed) return firePostback(parsed.target, parsed.arg);
+
+    tab.click();
+    await sleep(50);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: 'שגיאה בהפעלת טאב סוגי הלימוד: ' + (e && e.message) };
+  }
+}
+
+// NEEDS_CONTEXT (Task 9): ה-ID המלא של gvStudyType לא מופיע בלכידה (רק סיומת
+// "...InsStudyTypes_ucStudyTypeSearch_gvStudyType") — לכן איתור לפי סיומת ID, לא ID מדויק.
+// NEEDS_CONTEXT (Task 9): פורמט קישורי הפייג'ר (Page$Next / Page$<n> — מוסכמת GridView
+// סטנדרטית) לא מאומת מול הדף החי; הלולאה חסומה גם ע"י תקרה קשיחה כדי שלעולם לא תיתקע.
+async function gotoStudyTypeFromInstitute(code) {
+  const tab = await activateStudyTypeTab();
+  if (!tab.ok) return tab;
+
+  const maxPageFlips = 25; // תקרת-ביטחון: לא לסמוך על כך שמספר קישורי-הפייג'ר קבוע (Next/Prev)
+  for (let flip = 0; flip <= maxPageFlips; flip++) {
+    const table = typeof document !== 'undefined' ? document.querySelector('table[id$="gvStudyType"]') : null;
+    if (!table) return { ok: false, reason: 'לא נמצא גריד סוגי הלימוד (gvStudyType) בעמוד' };
+
+    const rows = gridToRows(table);
+    const rowIndex = findStudyTypeRow(rows, code);
+
+    if (rowIndex !== -1) {
+      if (typeof window === 'undefined' || typeof window.selectedRowStudyType !== 'function') {
+        return { ok: false, reason: 'selectedRowStudyType אינה זמינה בעמוד' };
+      }
+      try {
+        window.selectedRowStudyType(rowIndex);
+      } catch (e) {
+        return { ok: false, reason: 'שגיאה בבחירת שורת סוג הלימוד: ' + (e && e.message) };
+      }
+      return firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType');
+    }
+
+    const pagerAnchors = Array.from(table.querySelectorAll('tr:last-child a'));
+    const next = pagerAnchors
+      .map((a) => parsePostbackHref(a.getAttribute('href') || ''))
+      .find((p) => p && /Page\$(Next|\d+)/.test(p.arg));
+
+    if (!next) return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד` };
+
+    const res = await firePostback(next.target, next.arg);
+    if (!res.ok) return res;
+  }
+
+  return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד (חריגה ממספר הדפים המותר)` };
+}
+
+// ─── עץ הסניפים (tvTalmud) — לכידה-01 §1: "זה כן עובד — רק סוגי-הלימוד שבורים" ─
+
+// טהורה: href של צומת-סניף מסתיים ב-\<קוד דו-ספרתי>' (backslash+קוד+גרש-סוגר),
+// לפני ה-')' הסוגר של קריאת ה-__doPostBack. צומת-ילד (סוג-לימוד) ממשיך אחרי הקוד
+// ולכן לא תואם (ראו דוגמה בטסט: \00\(720)כולל...).
+function findBranchHref(hrefs, code) {
+  if (!Array.isArray(hrefs)) return -1;
+  const suffix = '\\' + String(code).trim().padStart(2, '0') + "'";
+  for (let i = 0; i < hrefs.length; i++) {
+    const h = hrefs[i];
+    if (typeof h !== 'string') continue;
+    const trimmed = h.trim().replace(/\)+;?$/, '');
+    if (trimmed.endsWith(suffix)) return i;
+  }
+  return -1;
+}
+
+// טהורה: מפרק href בפורמט javascript:__doPostBack('target','arg') ל-{target, arg}.
+// ה-arg עשוי להכיל backslash ועברית (לא תווים מיוחדים ל-regex כאן) — לא נזרק על תוכן לא-צפוי.
+function parsePostbackHref(href) {
+  if (typeof href !== 'string') return null;
+  const m = /^(?:javascript:)?__doPostBack\('([^']*)'\s*,\s*'([^']*)'\)\s*;?$/.exec(href.trim());
+  if (!m) return null;
+  return { target: m[1], arg: m[2] };
+}
+
+// NEEDS_CONTEXT (Task 9): ה-ID/סלקטור המדויק של מיכל עץ-הסניפים tvTalmud לא מלא בלכידה
+// (הסופיקס בלבד מאומת: ...ucTalmudSideBar_tvTalmud) — איתור לפי סיומת ID.
+// חשוב: זה גורם ל-navigate מלא (לא PRM/async) — ה-Promise עלול לעולם לא להתממש כי
+// הדף עצמו נטען-מחדש. **הקורא חייב לשמור את מצב ההמשך (resume state) שלו *לפני* הקריאה
+// לפונקציה הזו, לא אחריה** — אין הבטחה ש-then/await אחריה ירוצו.
+async function gotoBranch(code) {
+  if (typeof document === 'undefined') return { ok: false, reason: 'אין document (סביבת בדיקה?)' };
+  const padded = String(code).trim().padStart(2, '0');
+  const tree = document.querySelector('[id$="tvTalmud"]');
+  if (!tree) return { ok: false, reason: 'לא נמצא עץ הסניפים (tvTalmud)' };
+
+  const anchors = Array.from(tree.querySelectorAll('a'));
+  const hrefs = anchors.map((a) => a.getAttribute('href') || '');
+  const idx = findBranchHref(hrefs, padded);
+  if (idx === -1) return { ok: false, reason: `סניף ${padded} לא נמצא בעץ הצד` };
+
+  const parsed = parsePostbackHref(hrefs[idx]);
+  if (!parsed) return { ok: false, reason: 'קישור הסניף לא בפורמט __doPostBack צפוי' };
+
+  saveNavState({ ...loadNavState(), currentBranch: padded });
+  return firePostback(parsed.target, parsed.arg);
+}
+
+// ─── src/data/countries.js ───
 // נלכד מ-ddlCountryOfOrigine של האתר החי, 2026-09-09.
 const COUNTRIES = [
   { value: '710', he: 'ארצות הברית' },
@@ -557,6 +731,7 @@ const COUNTRIES = [
   { value: '71', he: 'תימן הדמוקרטית' },
 ];
 
+// ─── src/core/identity.js ───
 
 function padId9(raw) {
   const s = String(raw).trim();
@@ -595,232 +770,7 @@ function resolveCountry(input) {
   return hit ? hit.value : null;
 }
 
-// זיהוי דף + ניווט אמין לסוג-לימוד דרך גריד "סוגי לימוד למוסד" (לא עץ-הצד השבור).
-// לכידה-01 (דף מוסד), לכידה-02 (דף סוג-לימוד), לכידה-03 (דף תלמיד-חדש) — סעיפים מצוינים בהערות.
-// אין גישה ל-document/window/sessionStorage ברמת המודול — רק בתוך גופי הפונקציות (import תקין ב-Node).
-
-
-const NAV_KEY = 'talmud.absorb.nav';
-
-// ─── sessionStorage: מצב-ניווט (לכידה-02 §1 — סניף לא ידוע בדף סוג-לימוד) ───
-
-function saveNavState(obj) {
-  try { sessionStorage.setItem(NAV_KEY, JSON.stringify(obj)); } catch (e) { /* אצווה לא נתקעת */ }
-}
-
-// תמיד מחזיר אובייקט, לעולם לא זורק (חסר / JSON פגום / sessionStorage לא קיים => {}).
-function loadNavState() {
-  try {
-    const raw = sessionStorage.getItem(NAV_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return (parsed && typeof parsed === 'object') ? parsed : {};
-  } catch (e) {
-    return {};
-  }
-}
-
-function clearNavState() {
-  try { sessionStorage.removeItem(NAV_KEY); } catch (e) { /* אצווה לא נתקעת */ }
-}
-
-// ─── זיהוי דף ────────────────────────────────────────────────────────────────
-
-// טהורה: מיון ראשוני לפי URL בלבד ("מועמד" — newStudent עדיין דורש אימות hidStudentState ב-getPage).
-function classifyUrl(url) {
-  if (typeof url !== 'string') return 'other';
-  if (url.includes('InstitutesDetails.aspx')) return 'institute';
-  if (url.includes('StudyTypeDetails.aspx')) return 'studyType';
-  if (url.includes('Students/StudentsDetails.aspx')) return 'newStudent';
-  return 'other';
-}
-
-function getPage() {
-  const url = (typeof location !== 'undefined' && location.href) || '';
-  const kind0 = classifyUrl(url);
-
-  if (kind0 === 'institute') {
-    // לכידה-01 §5: זיהוי סניף מ-h1 "<מוסד> סניף NN"; נופל חזרה למצב שמור אם ה-h1 לא נמצא/לא תואם.
-    const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
-    const m = h1 && /סניף\s*(\d+)/.exec(h1.textContent || '');
-    const branch = m ? String(m[1]).padStart(2, '0') : (loadNavState().currentBranch || null);
-    return { kind: 'institute', branch, studyType: null, url };
-  }
-
-  if (kind0 === 'studyType') {
-    // לכידה-02 §1: אין מספר סניף בדף הזה כלל (לא ב-h1, לא ב-breadcrumb) — המקור היחיד: sessionStorage.
-    const branch = loadNavState().currentBranch || null;
-    // לכידה-02 §1: h1 = "סוג לימוד 600 - כולל אברכים יום שלם" — הקוד המספרי הראשון אחרי "סוג לימוד".
-    const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
-    const m = h1 && /סוג לימוד\s*(\d+)/.exec(h1.textContent || '');
-    const studyType = m ? m[1] : null;
-    return { kind: 'studyType', branch, studyType, url };
-  }
-
-  if (kind0 === 'newStudent') {
-    // לכידה-03 §1/§2: אותו URL גם לבאג-הניווט מהעץ (דף ריק) וגם לתלמיד-חדש אמיתי —
-    // ההבחנה היחידה המתועדת: SD~hidStudentState == -1 (SD~ = ContentPlaceHolder1_TabsStudent_
-    // StudentDetails1_ucStudentDetails_, לכידה-03 §2).
-    const hid = $el('ContentPlaceHolder1_TabsStudent_StudentDetails1_ucStudentDetails_hidStudentState');
-    const isNewStudent = !!hid && String(hid.value).trim() === '-1';
-    if (isNewStudent) {
-      return { kind: 'newStudent', branch: loadNavState().currentBranch || null, studyType: null, url };
-    }
-    return { kind: 'other', branch: null, studyType: null, url };
-  }
-
-  return { kind: 'other', branch: null, studyType: null, url };
-}
-
-// ─── גריד "סוגי לימוד למוסד" (gvStudyType) — לכידה-02 §2 ────────────────────
-
-// טהורה, ללא DOM. `rows`: מערך של מערכי-תאים (מחרוזות, לא בהכרח trimmed).
-// סמנטיקת האינדקס המוחזר — הכרעה מפורשת (הבקר, סעיף 2 בהנחיה):
-//   האינדקס יחסי ל**שורות-נתונים בלבד** (0-based), אחרי דילוג על שורות-כותרת
-//   (td[0] שאינו מספרי, למשל "קוד סוג לימודים"). כותרת לא נספרת ולא משפיעה על האינדקס.
-//   זה בדיוק מה ש-selectedRowStudyType(rowIndex) מצפה לו על הדף החי (לכידה-02 §2:
-//   "שורה = onclick=selectedRowStudyType('N')", N הוא אינדקס שורת-הנתונים בעמוד הנוכחי) —
-//   הקוד שקורא לפונקציה הזו (gotoStudyTypeFromInstitute) חייב להעביר את האינדקס
-//   הזה כמות-שהוא ל-window.selectedRowStudyType, בלי לחבר/לחסר בשביל הכותרת.
-function findStudyTypeRow(rows, code) {
-  if (!Array.isArray(rows)) return -1;
-  const target = String(code).trim();
-  let dataIndex = -1;
-  for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (!/^\d+$/.test(first)) continue; // שורת-כותרת (או שורת-פייג'ר) — מדולגת, לא נספרת
-    dataIndex++;
-    if (first === target) return dataIndex;
-  }
-  return -1;
-}
-
-// DOM-touching, לא נבדק ביחידה: ממיר <table> ל-מערך-שורות של טקסטי-תאים (trimmed).
-function gridToRows(table) {
-  if (!table || typeof table.querySelectorAll !== 'function') return [];
-  return Array.from(table.querySelectorAll('tr')).map(
-    (tr) => Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim())
-  );
-}
-
-// NEEDS_CONTEXT (לבדיקה רטובה, Task 9): לכידה-01/02 לא מתעדות את מנגנון-ההפעלה המדויק
-// של הטאב ("$find(...).set_activeTabIndex(1)" מול פשוט הקלקה על כותרת הטאב), ולא את ה-ID
-// המלא של ה-TabContainer. מנחת-הבטיחות כאן: איתור כותרת הטאב לפי הטקסט שלה ("סוגי לימוד
-// למוסד", לכידה-01 §5) תחת מוסכמת-ה-CSS הסטנדרטית של AjaxControlToolkit
-// (ajax__tab_header/ajax__tab_tab) או role="tab" גנרי; אם לכותרת יש href בפורמט
-// __doPostBack יורים אותו דרך firePostback (עומד ב"כל postback דרך firePostback"), אחרת
-// מניחים מעבר-טאב צד-לקוח טהור (כל הפאנלים כבר ב-DOM) ורק ממתינים "טיק" (sleep) לעדכון.
-async function activateStudyTypeTab() {
-  try {
-    if (typeof document === 'undefined') return { ok: false, reason: 'אין document (סביבת בדיקה?)' };
-    const headers = Array.from(document.querySelectorAll('.ajax__tab_header a, .ajax__tab_tab, [role="tab"]'));
-    const tab = headers.find((el) => (el.textContent || '').includes('סוגי לימוד למוסד'));
-    if (!tab) return { ok: false, reason: 'לא נמצא טאב "סוגי לימוד למוסד" בעמוד המוסד' };
-
-    const href = typeof tab.getAttribute === 'function' ? tab.getAttribute('href') : null;
-    const parsed = href ? parsePostbackHref(href) : null;
-    if (parsed) return firePostback(parsed.target, parsed.arg);
-
-    tab.click();
-    await sleep(50);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: 'שגיאה בהפעלת טאב סוגי הלימוד: ' + (e && e.message) };
-  }
-}
-
-// NEEDS_CONTEXT (Task 9): ה-ID המלא של gvStudyType לא מופיע בלכידה (רק סיומת
-// "...InsStudyTypes_ucStudyTypeSearch_gvStudyType") — לכן איתור לפי סיומת ID, לא ID מדויק.
-// NEEDS_CONTEXT (Task 9): פורמט קישורי הפייג'ר (Page$Next / Page$<n> — מוסכמת GridView
-// סטנדרטית) לא מאומת מול הדף החי; הלולאה חסומה גם ע"י תקרה קשיחה כדי שלעולם לא תיתקע.
-async function gotoStudyTypeFromInstitute(code) {
-  const tab = await activateStudyTypeTab();
-  if (!tab.ok) return tab;
-
-  const maxPageFlips = 25; // תקרת-ביטחון: לא לסמוך על כך שמספר קישורי-הפייג'ר קבוע (Next/Prev)
-  for (let flip = 0; flip <= maxPageFlips; flip++) {
-    const table = typeof document !== 'undefined' ? document.querySelector('table[id$="gvStudyType"]') : null;
-    if (!table) return { ok: false, reason: 'לא נמצא גריד סוגי הלימוד (gvStudyType) בעמוד' };
-
-    const rows = gridToRows(table);
-    const rowIndex = findStudyTypeRow(rows, code);
-
-    if (rowIndex !== -1) {
-      if (typeof window === 'undefined' || typeof window.selectedRowStudyType !== 'function') {
-        return { ok: false, reason: 'selectedRowStudyType אינה זמינה בעמוד' };
-      }
-      try {
-        window.selectedRowStudyType(rowIndex);
-      } catch (e) {
-        return { ok: false, reason: 'שגיאה בבחירת שורת סוג הלימוד: ' + (e && e.message) };
-      }
-      return firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType');
-    }
-
-    const pagerAnchors = Array.from(table.querySelectorAll('tr:last-child a'));
-    const next = pagerAnchors
-      .map((a) => parsePostbackHref(a.getAttribute('href') || ''))
-      .find((p) => p && /Page\$(Next|\d+)/.test(p.arg));
-
-    if (!next) return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד` };
-
-    const res = await firePostback(next.target, next.arg);
-    if (!res.ok) return res;
-  }
-
-  return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד (חריגה ממספר הדפים המותר)` };
-}
-
-// ─── עץ הסניפים (tvTalmud) — לכידה-01 §1: "זה כן עובד — רק סוגי-הלימוד שבורים" ─
-
-// טהורה: href של צומת-סניף מסתיים ב-\<קוד דו-ספרתי>' (backslash+קוד+גרש-סוגר),
-// לפני ה-')' הסוגר של קריאת ה-__doPostBack. צומת-ילד (סוג-לימוד) ממשיך אחרי הקוד
-// ולכן לא תואם (ראו דוגמה בטסט: \00\(720)כולל...).
-function findBranchHref(hrefs, code) {
-  if (!Array.isArray(hrefs)) return -1;
-  const suffix = '\\' + String(code).trim().padStart(2, '0') + "'";
-  for (let i = 0; i < hrefs.length; i++) {
-    const h = hrefs[i];
-    if (typeof h !== 'string') continue;
-    const trimmed = h.trim().replace(/\)+;?$/, '');
-    if (trimmed.endsWith(suffix)) return i;
-  }
-  return -1;
-}
-
-// טהורה: מפרק href בפורמט javascript:__doPostBack('target','arg') ל-{target, arg}.
-// ה-arg עשוי להכיל backslash ועברית (לא תווים מיוחדים ל-regex כאן) — לא נזרק על תוכן לא-צפוי.
-function parsePostbackHref(href) {
-  if (typeof href !== 'string') return null;
-  const m = /^(?:javascript:)?__doPostBack\('([^']*)'\s*,\s*'([^']*)'\)\s*;?$/.exec(href.trim());
-  if (!m) return null;
-  return { target: m[1], arg: m[2] };
-}
-
-// NEEDS_CONTEXT (Task 9): ה-ID/סלקטור המדויק של מיכל עץ-הסניפים tvTalmud לא מלא בלכידה
-// (הסופיקס בלבד מאומת: ...ucTalmudSideBar_tvTalmud) — איתור לפי סיומת ID.
-// חשוב: זה גורם ל-navigate מלא (לא PRM/async) — ה-Promise עלול לעולם לא להתממש כי
-// הדף עצמו נטען-מחדש. **הקורא חייב לשמור את מצב ההמשך (resume state) שלו *לפני* הקריאה
-// לפונקציה הזו, לא אחריה** — אין הבטחה ש-then/await אחריה ירוצו.
-async function gotoBranch(code) {
-  if (typeof document === 'undefined') return { ok: false, reason: 'אין document (סביבת בדיקה?)' };
-  const padded = String(code).trim().padStart(2, '0');
-  const tree = document.querySelector('[id$="tvTalmud"]');
-  if (!tree) return { ok: false, reason: 'לא נמצא עץ הסניפים (tvTalmud)' };
-
-  const anchors = Array.from(tree.querySelectorAll('a'));
-  const hrefs = anchors.map((a) => a.getAttribute('href') || '');
-  const idx = findBranchHref(hrefs, padded);
-  if (idx === -1) return { ok: false, reason: `סניף ${padded} לא נמצא בעץ הצד` };
-
-  const parsed = parsePostbackHref(hrefs[idx]);
-  if (!parsed) return { ok: false, reason: 'קישור הסניף לא בפורמט __doPostBack צפוי' };
-
-  saveNavState({ ...loadNavState(), currentBranch: padded });
-  return firePostback(parsed.target, parsed.arg);
-}
-
+// ─── src/tools/absorb-parse.js ───
 
 // מרכאות עוטפות: ASCII " ' · גרשיים ״ (U+05F4) · גרש ׳ (U+05F3) · מסולסלות “ ” ‘ ’
 const ABSORB_WRAP_QUOTES = /^["'״׳“”‘’]+|["'״׳“”‘’]+$/g;
@@ -1046,6 +996,71 @@ function parseAbsorbInput(text) {
   return { tasks, errors };
 }
 
+// ─── src/core/popup.js ───
+// חלונית ההודעה המשותפת של האתר (ucMessagePopUp) — פורט מ"תלמוד - עזיבת תלמידים" v5
+// (‏getMessagePopup:290, hideMessagePopup:303). אותה בקרה משמשת בכל האתר (למשל ולידציה
+// "תאריך העזיבה לא יכול להיות לפני תאריך הקליטה..."). לעולם לא לוחצים על "המשך" (btnMOK)
+// בשקט — הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
+// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות.
+
+
+// שמות ה-ID נשמרים כפי שהם ב-depart-v5: btnMOK = "המשך" (אישור-רך), btnMCancel = "אישור"
+// (אישור/סגירת שגיאה — למרות השם), btnMNo = "לא".
+function readMessagePopup() {
+  const panel = $el('ucMessagePopUp_pnlMessagePopup');
+  if (!isVisible(panel)) return null;
+  const hasContinue = isVisible($el('ucMessagePopUp_btnMOK'));
+  const hasOk = isVisible($el('ucMessagePopUp_btnMCancel'));
+  const hasNo = isVisible($el('ucMessagePopUp_btnMNo'));
+  if (!hasContinue && !hasOk && !hasNo) return null; // פאנל מעובד אך בלי כפתור חי → לא פרומפט אמיתי
+  let text = (panel.innerText || panel.textContent || '').replace(/\s+/g, ' ').trim();
+  text = text.replace(/^\s*הודעה\s*/, '').replace(/\s*(המשך|לא|אישור|ביטול|סגור)\s*$/g, '').trim();
+  return { text, hasContinue, hasOkOnly: hasOk && !hasContinue };
+}
+
+// סוגר את חלונית ההודעה. מעדיף את ה-ModalPopupExtender (hide() נקי, לא מפעיל שום
+// postback צד-שרת). נופל ל-btnMCancel ("אישור") רק אם ה-extender לא זמין. לעולם לא
+// לוחץ על btnMOK ("המשך") — זה כפתור אישור-רך ולא כפתור סגירה.
+// M-f: ‏btnMCancel הוא postback צד-שרת, ולכן הוא חייב את הסדר הקשיח של
+// global-constraints: רושמים waitPRM *לפני* הלחיצה, והלחיצה נדחית ל-setTimeout(0).
+// מחזיר {hidden, wait} — `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
+// שאינו postback). ‏waitPRM לעולם לא נדחה.
+function hideMessagePopupAsync() {
+  try {
+    if (typeof window.$find === 'function') {
+      const mpe = window.$find('ucMessagePopUp_ModalPopupExtender1');
+      if (mpe && typeof mpe.hide === 'function') { mpe.hide(); return { hidden: true, wait: null }; }
+    }
+  } catch (e) { /* ignore, fall through to button click */ }
+  const ok = $el('ucMessagePopUp_btnMCancel');
+  if (isVisible(ok)) {
+    const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 }); // (1) נרשם קודם
+    setTimeout(() => { try { ok.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
+    return { hidden: true, wait };
+  }
+  return { hidden: false, wait: null };
+}
+
+// תאימות: אותה התנהגות, בלי ה-Promise (מי שלא ממתין לתוצאה).
+function hideMessagePopup() {
+  return hideMessagePopupAsync().hidden;
+}
+
+// גרסה גנרית ל-extender כלשהו (ModalPopupExtender / AjaxModalPopup): $find(id).hide(),
+// null-safe — מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
+function closeModal(extenderId) {
+  try {
+    if (typeof window.$find !== 'function') return false;
+    const ext = window.$find(extenderId);
+    if (!ext || typeof ext.hide !== 'function') return false;
+    ext.hide();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// ─── src/tools/absorb.js ───
 // זרימת קליטת תלמידים v3.3 — פורט מ"תלמוד - קליטת תלמידים" v3.2
 // (analyzeGrid:197, processStudent:314, processStudentSafe:506, runQueue:563), עם:
 // ניווט-גריד במקום עץ (navigate.js), טיפול ב-ucMessagePopUp (popup.js), ענף תלמיד-חדש
@@ -2397,6 +2412,7 @@ function absorbStop() {
   }
 }
 
+// ─── src/absorb-main.js ───
 // פאנל קליטת תלמידים v3.3 — פורט מהפאנל של v3.2 (createUI:764, init:903) עם תוספות:
 // תצוגת שגיאות-פרסור לפני ריצה, "העתק לאקסל" (TSV), "תבנית לאקסל", דוח "מה נשאר" בסיום,
 // עצירה בכפתור וב-Escape, ו-resume אוטומטי אחרי ניווט מלא.
