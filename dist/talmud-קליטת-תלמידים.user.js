@@ -6,6 +6,7 @@
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
 // @grant        none
+// @require      https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js
 // @run-at       document-idle
 // @updateURL    https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-%D7%A7%D7%9C%D7%99%D7%98%D7%AA-%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
 // @downloadURL  https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-%D7%A7%D7%9C%D7%99%D7%98%D7%AA-%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
@@ -994,6 +995,58 @@ function parseAbsorbInput(text) {
   }
 
   return { tasks, errors };
+}
+
+// ─── src/tools/absorb-xlsx.js ───
+// טעינת רשימת תלמידים מקובץ אקסל (.xlsx/.xls) — ממיר את הגיליון לטקסט מופרד-טאבים
+// שנכנס ל-parseAbsorbInput (src/tools/absorb-parse.js), כך שיש מסלול פרסור אחד לכל
+// המקורות (הדבקה ידנית או קובץ אקסל). אין גישה ל-globalThis.XLSX ברמת המודול — רק
+// בתוך גוף loadXlsxFile — כדי שהמודול הזה ייבא נקי גם ב-Node (בדיקות, בלי דפדפן/ספרייה).
+
+function xlsxCellToString(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) {
+    const day = String(v.getDate()).padStart(2, '0');
+    const month = String(v.getMonth() + 1).padStart(2, '0');
+    return `${day}/${month}/${v.getFullYear()}`;
+  }
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v === 'number') return String(v);
+  return String(v).trim();
+}
+
+// ממיר מטריצת שורות (מ-XLSX.utils.sheet_to_json(ws,{header:1})) לטקסט טאבים\שורות.
+// שומר תאים ריקים פנימיים (כדי שמיקום העמודות ישרוד), חותך תאים ריקים בסוף כל שורה,
+// ומדלג על שורות שהתרוקנו לגמרי (שורות-זנב שאקסל נוטה להשאיר בסוף גיליון מפורמט).
+function sheetRowsToText(rows) {
+  const lines = [];
+  for (const row of rows || []) {
+    const cells = (row || []).map(xlsxCellToString);
+    let end = cells.length;
+    while (end > 0 && cells[end - 1] === '') end--;
+    const trimmed = cells.slice(0, end);
+    if (trimmed.length === 0) continue;
+    lines.push(trimmed.join('\t'));
+  }
+  return lines.join('\n');
+}
+
+// קורא קובץ אקסל שנבחר בדפדפן (File) ומחזיר טקסט טאבים של הגיליון הראשון.
+// דורש שהספרייה הגלובלית XLSX (SheetJS, נטענת ב-@require מהכותרת) כבר נטענה.
+async function loadXlsxFile(file) {
+  const XLSX = globalThis.XLSX;
+  if (!XLSX) {
+    throw new Error('ספריית SheetJS (XLSX) לא נטענה — בדוק חיבור לאינטרנט ונסה שוב');
+  }
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const sheetName = wb && wb.SheetNames && wb.SheetNames[0];
+  const ws = sheetName ? wb.Sheets[sheetName] : null;
+  if (!ws) {
+    throw new Error('לא נמצא גיליון בקובץ האקסל');
+  }
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+  return sheetRowsToText(rows);
 }
 
 // ─── src/core/popup.js ───
@@ -2628,6 +2681,37 @@ function panelDownloadTemplate() {
   log('[תבנית] הורדה');
 }
 
+// טעינת קובץ אקסל: ממלאת את ה-textarea ותו לא — המשתמש עדיין לוחץ "התחל" בעצמו
+// (מסלול פרסור אחד: xlsx → טקסט טאבים → parseAbsorbInput, כמו הדבקה ידנית).
+function panelHandleXlsxFile(ev) {
+  const input = ev && ev.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  const fileName = file.name;
+  panelSetStatus('טוען קובץ אקסל…');
+  Promise.resolve()
+    .then(() => loadXlsxFile(file))
+    .then((text) => {
+      const ta = $el('tma-input');
+      if (ta) ta.value = text;
+      const lineCount = text ? text.split('\n').length : 0;
+      panelSetStatus(`נטענו ${lineCount} שורות מהקובץ — בדוק ולחץ התחל`);
+      log(`[אקסל] נטענו ${lineCount} שורות מ"${fileName}"`);
+      if (panelAwaitingErrorConfirm) {
+        panelAwaitingErrorConfirm = false;
+        const btn = $el('tma-start');
+        if (btn) btn.textContent = '▶ התחל';
+        panelRenderErrors([], 0);
+      }
+    })
+    .catch((e) => {
+      const msg = (e && e.message) || 'שגיאה לא ידועה';
+      panelSetStatus('טעינת האקסל נכשלה: ' + msg);
+      log('[אקסל] כשל: ' + msg);
+    })
+    .finally(() => { if (input) input.value = ''; });
+}
+
 function panelHandleStop() {
   panelSetStatus('עוצר…');
   log('⛔ עצירה לבקשת המשתמש');
@@ -2697,6 +2781,9 @@ function panelCreateUI() {
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">💾 ייצוא CSV</button>
         <button id="tma-template" style="flex:1;background:#6c3483;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📄 תבנית לאקסל</button>
+        <button id="tma-xlsx" style="flex:1;background:#b9770e;color:#fff;border:none;
+                padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📥 טען מאקסל</button>
+        <input id="tma-xlsx-file" type="file" accept=".xlsx,.xls" style="display:none">
       </div>
       <div id="tma-results" style="max-height:170px;overflow-y:auto;margin-bottom:6px;
            border:1px solid #ddd;border-radius:4px;min-height:10px"></div>
@@ -2769,6 +2856,8 @@ function panelCreateUI() {
   $el('tma-tsv').addEventListener('click', panelCopyTsv);
   $el('tma-csv').addEventListener('click', panelExportCsv);
   $el('tma-template').addEventListener('click', panelDownloadTemplate);
+  $el('tma-xlsx').addEventListener('click', () => { const f = $el('tma-xlsx-file'); if (f) f.click(); });
+  $el('tma-xlsx-file').addEventListener('change', panelHandleXlsxFile);
   $el('tma-copy-log').addEventListener('click', () => {
     copyLog().then((ok) => panelFlash('tma-copy-log', ok ? '✓ הועתק' : '✗ נכשל', '📋 העתק לוג'));
   });

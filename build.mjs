@@ -147,14 +147,17 @@ export function buildHeader(pkg, opts = {}) {
   const rawBase = 'https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/';
   const updateUrl = rawBase + encodeURIComponent(OUTPUT_FILENAME);
 
+  const shortVersion = `v${pkg.version.split('.').slice(0, 2).join('.')}`;
+
   const entries = [
     ['@name', 'תלמוד - קליטת תלמידים'],
     ['@namespace', 'https://github.com/mdj441/talmud-scripts'],
     ['@version', pkg.version],
-    ['@description', 'קליטת תלמידים באצווה לתלמו"ד — v3.3 מודולרי'],
+    ['@description', `קליטת תלמידים באצווה לתלמו"ד — ${shortVersion} מודולרי`],
     ['@author', 'מרדכי יאקאב'],
     ['@match', 'https://talmud.edu.gov.il/*'],
     ['@grant', 'none'],
+    ['@require', 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'],
     ['@run-at', runAt],
     ['@updateURL', updateUrl],
     ['@downloadURL', updateUrl],

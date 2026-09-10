@@ -8,6 +8,7 @@ import { log, getLogText, clearLog, setLogListener, copyLog } from './core/log.j
 import { downloadCsv, copyTextToClipboard } from './core/csv.js';
 import { getPage } from './core/navigate.js';
 import { parseAbsorbInput } from './tools/absorb-parse.js';
+import { loadXlsxFile } from './tools/absorb-xlsx.js';
 import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './tools/absorb.js';
 import { absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults, absorbIsRunning, clearAbsorbStop } from './tools/absorb.js';
 import { absorbSavedQueueInfo, absorbDiscardSavedQueue } from './tools/absorb.js';
@@ -221,6 +222,37 @@ function panelDownloadTemplate() {
   log('[תבנית] הורדה');
 }
 
+// טעינת קובץ אקסל: ממלאת את ה-textarea ותו לא — המשתמש עדיין לוחץ "התחל" בעצמו
+// (מסלול פרסור אחד: xlsx → טקסט טאבים → parseAbsorbInput, כמו הדבקה ידנית).
+function panelHandleXlsxFile(ev) {
+  const input = ev && ev.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  const fileName = file.name;
+  panelSetStatus('טוען קובץ אקסל…');
+  Promise.resolve()
+    .then(() => loadXlsxFile(file))
+    .then((text) => {
+      const ta = $el('tma-input');
+      if (ta) ta.value = text;
+      const lineCount = text ? text.split('\n').length : 0;
+      panelSetStatus(`נטענו ${lineCount} שורות מהקובץ — בדוק ולחץ התחל`);
+      log(`[אקסל] נטענו ${lineCount} שורות מ"${fileName}"`);
+      if (panelAwaitingErrorConfirm) {
+        panelAwaitingErrorConfirm = false;
+        const btn = $el('tma-start');
+        if (btn) btn.textContent = '▶ התחל';
+        panelRenderErrors([], 0);
+      }
+    })
+    .catch((e) => {
+      const msg = (e && e.message) || 'שגיאה לא ידועה';
+      panelSetStatus('טעינת האקסל נכשלה: ' + msg);
+      log('[אקסל] כשל: ' + msg);
+    })
+    .finally(() => { if (input) input.value = ''; });
+}
+
 function panelHandleStop() {
   panelSetStatus('עוצר…');
   log('⛔ עצירה לבקשת המשתמש');
@@ -290,6 +322,9 @@ function panelCreateUI() {
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">💾 ייצוא CSV</button>
         <button id="tma-template" style="flex:1;background:#6c3483;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📄 תבנית לאקסל</button>
+        <button id="tma-xlsx" style="flex:1;background:#b9770e;color:#fff;border:none;
+                padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📥 טען מאקסל</button>
+        <input id="tma-xlsx-file" type="file" accept=".xlsx,.xls" style="display:none">
       </div>
       <div id="tma-results" style="max-height:170px;overflow-y:auto;margin-bottom:6px;
            border:1px solid #ddd;border-radius:4px;min-height:10px"></div>
@@ -362,6 +397,8 @@ function panelCreateUI() {
   $el('tma-tsv').addEventListener('click', panelCopyTsv);
   $el('tma-csv').addEventListener('click', panelExportCsv);
   $el('tma-template').addEventListener('click', panelDownloadTemplate);
+  $el('tma-xlsx').addEventListener('click', () => { const f = $el('tma-xlsx-file'); if (f) f.click(); });
+  $el('tma-xlsx-file').addEventListener('change', panelHandleXlsxFile);
   $el('tma-copy-log').addEventListener('click', () => {
     copyLog().then((ok) => panelFlash('tma-copy-log', ok ? '✓ הועתק' : '✗ נכשל', '📋 העתק לוג'));
   });

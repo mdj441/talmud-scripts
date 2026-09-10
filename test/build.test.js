@@ -215,6 +215,12 @@ test('buildHeader: מכיל את כל השורות הנדרשות', () => {
   assert.match(header, /@supportURL\s+https:\/\/github\.com\/mdj441\/talmud-scripts\/issues/);
 });
 
+test('buildHeader: כולל @require ל-SheetJS (xlsx) לטעינת קבצי אקסל בפאנל', () => {
+  const pkg = { version: '9.9.9' };
+  const header = buildHeader(pkg);
+  assert.match(header, /@require\s+https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/xlsx\/0\.18\.5\/xlsx\.full\.min\.js/);
+});
+
 test('buildHeader: updateURL/downloadURL כוללים את שם הקובץ המקודד', () => {
   const pkg = { version: '9.9.9' };
   const header = buildHeader(pkg);
