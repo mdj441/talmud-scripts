@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { $el, isVisible, sleep, waitFor } from '../src/core/dom.js';
 import { getPRM, waitPRM, firePostback } from '../src/core/prm.js';
-import { readMessagePopup, hideMessagePopup, closeModal } from '../src/core/popup.js';
+import { readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal } from '../src/core/popup.js';
 
 // ─── Smoke: import in Node succeeds, no top-level document/window/Sys access ────
 test('smoke: כל היצוא הוא פונקציות (import ב-Node לא זרק)', () => {
   for (const fn of [$el, isVisible, sleep, waitFor, getPRM, waitPRM, firePostback,
-    readMessagePopup, hideMessagePopup, closeModal]) {
+    readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal]) {
     assert.equal(typeof fn, 'function');
   }
 });
@@ -111,4 +111,60 @@ test('waitPRM: בלי PRM בכלל → {ok:true, started:false}', async () => {
   const result = await waitPRM({ startTimeoutMs: 20, totalTimeoutMs: 100 });
   assert.equal(result.ok, true);
   assert.equal(result.started, false);
+});
+
+// ─── popup.js: btnMCancel הוא postback (M-f) ────────────────────────────────
+test('hideMessagePopupAsync: נפילה ל-btnMCancel רושמת waitPRM לפני הלחיצה, והלחיצה נדחית ל-setTimeout(0)', async () => {
+  const handlers = { begin: [], end: [] };
+  const fakePrm = {
+    add_beginRequest: (h) => handlers.begin.push(h),
+    add_endRequest: (h) => handlers.end.push(h),
+    remove_beginRequest: (h) => { handlers.begin = handlers.begin.filter(x => x !== h); },
+    remove_endRequest: (h) => { handlers.end = handlers.end.filter(x => x !== h); },
+  };
+  let clickedAt = null;
+  let endRequestRegisteredBeforeClick = false;
+  const btn = {
+    getClientRects: () => [{}],
+    click: () => { clickedAt = Date.now(); endRequestRegisteredBeforeClick = handlers.end.length > 0; },
+  };
+  const prevSys = globalThis.Sys;
+  const prevDoc = globalThis.document;
+  const prevWindow = globalThis.window;
+  globalThis.Sys = { WebForms: { PageRequestManager: { getInstance: () => fakePrm } } };
+  globalThis.document = { getElementById: (id) => (id === 'ucMessagePopUp_btnMCancel' ? btn : null) };
+  globalThis.window = { getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }) };
+
+  try {
+    const res = hideMessagePopupAsync();
+    assert.equal(res.hidden, true);
+    assert.ok(res.wait && typeof res.wait.then === 'function', 'חייבת לחזור המתנת PRM');
+    assert.equal(clickedAt, null, 'הלחיצה לא סינכרונית — נדחית ל-setTimeout(0)');
+    assert.equal(handlers.end.length, 1, 'endRequest נרשם לפני הלחיצה');
+
+    await new Promise((r) => setTimeout(r, 5));
+    assert.ok(clickedAt, 'הלחיצה קרתה אחרי ה-tick');
+    assert.equal(endRequestRegisteredBeforeClick, true);
+
+    handlers.begin[0]({}, {});
+    handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
+    const settled = await res.wait;
+    assert.equal(settled.ok, true);
+    assert.equal(settled.started, true);
+  } finally {
+    if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+  }
+});
+
+test('hideMessagePopupAsync: אין כפתור סגירה → {hidden:false, wait:null} (בלי לזרוק)', () => {
+  const prevDoc = globalThis.document;
+  globalThis.document = { getElementById: () => null };
+  try {
+    assert.deepEqual(hideMessagePopupAsync(), { hidden: false, wait: null });
+    assert.equal(hideMessagePopup(), false);
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+  }
 });

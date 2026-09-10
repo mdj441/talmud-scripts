@@ -5,6 +5,7 @@
 // אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות.
 
 import { $el, isVisible } from './dom.js';
+import { waitPRM } from './prm.js';
 
 // שמות ה-ID נשמרים כפי שהם ב-depart-v5: btnMOK = "המשך" (אישור-רך), btnMCancel = "אישור"
 // (אישור/סגירת שגיאה — למרות השם), btnMNo = "לא".
@@ -23,16 +24,29 @@ export function readMessagePopup() {
 // סוגר את חלונית ההודעה. מעדיף את ה-ModalPopupExtender (hide() נקי, לא מפעיל שום
 // postback צד-שרת). נופל ל-btnMCancel ("אישור") רק אם ה-extender לא זמין. לעולם לא
 // לוחץ על btnMOK ("המשך") — זה כפתור אישור-רך ולא כפתור סגירה.
-export function hideMessagePopup() {
+// M-f: ‏btnMCancel הוא postback צד-שרת, ולכן הוא חייב את הסדר הקשיח של
+// global-constraints: רושמים waitPRM *לפני* הלחיצה, והלחיצה נדחית ל-setTimeout(0).
+// מחזיר {hidden, wait} — `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
+// שאינו postback). ‏waitPRM לעולם לא נדחה.
+export function hideMessagePopupAsync() {
   try {
     if (typeof window.$find === 'function') {
       const mpe = window.$find('ucMessagePopUp_ModalPopupExtender1');
-      if (mpe && typeof mpe.hide === 'function') { mpe.hide(); return true; }
+      if (mpe && typeof mpe.hide === 'function') { mpe.hide(); return { hidden: true, wait: null }; }
     }
   } catch (e) { /* ignore, fall through to button click */ }
   const ok = $el('ucMessagePopUp_btnMCancel');
-  if (isVisible(ok)) { ok.click(); return true; }
-  return false;
+  if (isVisible(ok)) {
+    const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 }); // (1) נרשם קודם
+    setTimeout(() => { try { ok.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
+    return { hidden: true, wait };
+  }
+  return { hidden: false, wait: null };
+}
+
+// תאימות: אותה התנהגות, בלי ה-Promise (מי שלא ממתין לתוצאה).
+export function hideMessagePopup() {
+  return hideMessagePopupAsync().hidden;
 }
 
 // גרסה גנרית ל-extender כלשהו (ModalPopupExtender / AjaxModalPopup): $find(id).hide(),
