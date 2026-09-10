@@ -658,21 +658,33 @@ async function absorbEnsureStudyTypePage(task, gen) {
     return { ok: true, navigated: false };
   }
 
-  if (page.kind === 'institute' && page.branch === branch) {
+  // ‏A1: המסלול המהיר הזה מסתמך על "אנחנו כבר בדף המוסד של הסניף הנכון" — ולכן הוא
+  // מותר **רק** כשהסניף נקרא מה-h1 של הדף שמולנו (branchSource==='h1'). ‏branch שהגיע
+  // מ-sessionStorage הוא הצהרה של ניווט קודם: אם הוא שגוי (ניווט שנבלע / המשתמש ניווט
+  // ידנית), נלחץ "עריכה" בדף המוסד הלא-נכון, ננחת בדף סוג-לימוד שאין בו סניף, נקרא שוב
+  // את אותו מצב שמור — והתלמיד ייקלט לסניף השגוי עם "נקלט" ירוק. במקרה כזה נופלים
+  // לניווט המלא דרך gotoBranch, שקובע את הסניף מחדש.
+  if (page.kind === 'institute' && page.branch === branch && page.branchSource === 'h1') {
     log(`[ניווט] דף מוסד ${branch} → סוג לימוד ${studyType}`);
     // I4: btnUpdateStudyType גורר ניווט מלא ל-StudyTypeDetails.aspx. רושמים את הסניף
     // (הדף הבא לא יודע אותו) ואת מצב ההמשך *לפני* הירי — אחרת ה-resume נוחת בלי סניף,
     // מנווט שוב, ושורף ניסיונות עד "דולג" שקרי.
     const prevNav = loadNavState(); // #1: נלכד לפני הכתיבה, לשחזור אם הניווט לא קרה
-    // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js) — אמת מאומתת, לא הצהרה של
-    // ‏gotoBranch. שחזור שמוחק אותו היה גורר gotoBranch מיותר בטעינה הבאה (ושורף
-    // ניסיונות-resume) גם כשהניווט פשוט היה איטי מ-ABSORB_NAV_EVIDENCE_MS. לכן
-    // משחזרים את המצב הקודם *עם* הסניף המאומת; מסלול gotoBranch נשאר בשחזור מלא.
+    // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js, branchSource==='h1') — אמת
+    // מאומתת מול הדף שמולנו, לא הצהרה של gotoBranch. שחזור שמוחק אותו היה גורר
+    // ‏gotoBranch מיותר בטעינה הבאה (ושורף ניסיונות-resume) גם כשהניווט פשוט היה איטי
+    // מ-ABSORB_NAV_EVIDENCE_MS. לכן משחזרים את המצב הקודם *עם* הסניף המאומת;
+    // מסלול gotoBranch נשאר בשחזור מלא.
     const restoreNav = Object.assign({}, prevNav, { currentBranch: branch });
     saveNavState(restoreNav);
     saveAbsorbState();
     const before = absorbBeginNavigation();
-    const res = await gotoStudyTypeFromInstitute(studyType);
+    // ‏B5(a): לולאת הפייג'ר בתוך gotoStudyTypeFromInstitute כפופה למודל-הביטול שלנו —
+    // ניסיון שהוחלף (דור ישן) או בקשת-עצירה מפסיקים אותה לפני הדפדוף הבא.
+    const res = await gotoStudyTypeFromInstitute(studyType, {
+      shouldAbort: () => (typeof gen === 'number' && gen !== absorbCurrentGeneration()) || absorbIsStopped(),
+    });
+    if (res && res.aborted) checkStop('studytype-aborted', gen); // זורק (ביטול/עצירה) ומת כאן
     if (!res || res.ok === false) {
       absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
       return { ok: false, navigated: false, reason: (res && res.reason) || 'ניווט לסוג הלימוד נכשל' };

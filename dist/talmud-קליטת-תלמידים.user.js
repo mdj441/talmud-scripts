@@ -295,6 +295,20 @@ function classifyUrl(url) {
   return 'other';
 }
 
+// טהורה (A1): מספר הסניף מתוך טקסט ה-h1 של דף המוסד ("<מוסד> סניף NN", לכידה-01 §5),
+// מרופד לשתי ספרות. אין התאמה / קלט לא-מחרוזת => null.
+function parseBranchFromH1(text) {
+  if (typeof text !== 'string') return null;
+  const m = /סניף\s*(\d+)/.exec(text);
+  return m ? String(m[1]).padStart(2, '0') : null;
+}
+
+// ‏A1: ‏`branchSource` אומר מאין הגיע `branch`:
+//   'h1'     — נקרא מה-h1 של דף המוסד = אמת מאומתת מול הדף שמולנו;
+//   'stored' — הגיע מ-sessionStorage (הצהרה של ניווט קודם, לא ראיה על הדף הנוכחי);
+//   null     — אין סניף כלל.
+// הקורא שמחליט "אנחנו בסניף הנכון" חייב לדרוש 'h1'; 'stored' עלול להיות של סניף אחר
+// לגמרי (ניווט שנבלע, ניווט ידני של המשתמש) והתלמיד ייקלט לסניף השגוי בלי שום סימן.
 function getPage() {
   const url = (typeof location !== 'undefined' && location.href) || '';
   const kind0 = classifyUrl(url);
@@ -302,9 +316,11 @@ function getPage() {
   if (kind0 === 'institute') {
     // לכידה-01 §5: זיהוי סניף מ-h1 "<מוסד> סניף NN"; נופל חזרה למצב שמור אם ה-h1 לא נמצא/לא תואם.
     const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
-    const m = h1 && /סניף\s*(\d+)/.exec(h1.textContent || '');
-    const branch = m ? String(m[1]).padStart(2, '0') : (loadNavState().currentBranch || null);
-    return { kind: 'institute', branch, studyType: null, url };
+    const fromH1 = parseBranchFromH1((h1 && h1.textContent) || '');
+    const stored = loadNavState().currentBranch || null;
+    const branch = fromH1 || stored;
+    const branchSource = fromH1 ? 'h1' : (stored ? 'stored' : null);
+    return { kind: 'institute', branch, branchSource, studyType: null, url };
   }
 
   if (kind0 === 'studyType') {
@@ -314,7 +330,7 @@ function getPage() {
     const h1 = typeof document !== 'undefined' ? document.querySelector('h1') : null;
     const m = h1 && /סוג לימוד\s*(\d+)/.exec(h1.textContent || '');
     const studyType = m ? m[1] : null;
-    return { kind: 'studyType', branch, studyType, url };
+    return { kind: 'studyType', branch, branchSource: branch ? 'stored' : null, studyType, url };
   }
 
   if (kind0 === 'newStudent') {
@@ -324,12 +340,13 @@ function getPage() {
     const hid = $el('ContentPlaceHolder1_TabsStudent_StudentDetails1_ucStudentDetails_hidStudentState');
     const isNewStudent = !!hid && String(hid.value).trim() === '-1';
     if (isNewStudent) {
-      return { kind: 'newStudent', branch: loadNavState().currentBranch || null, studyType: null, url };
+      const branch = loadNavState().currentBranch || null;
+      return { kind: 'newStudent', branch, branchSource: branch ? 'stored' : null, studyType: null, url };
     }
-    return { kind: 'other', branch: null, studyType: null, url };
+    return { kind: 'other', branch: null, branchSource: null, studyType: null, url };
   }
 
-  return { kind: 'other', branch: null, studyType: null, url };
+  return { kind: 'other', branch: null, branchSource: null, studyType: null, url };
 }
 
 // ─── גריד "סוגי לימוד למוסד" (gvStudyType) — לכידה-02 §2 ────────────────────
@@ -356,6 +373,45 @@ function findStudyTypeRow(rows, code) {
   return -1;
 }
 
+// טהורה (B5): מיקום השורה **במערך** (כולל שורות-כותרת/פייג'ר), להבדיל מ-findStudyTypeRow
+// שמחזיר את אינדקס שורת-הנתונים. ‏gridToRows ממפה tr אחד לכל איבר, ולכן המיקום הזה הוא
+// גם האינדקס של ה-<tr> המתאים — כך אפשר לקרוא את ה-onclick של השורה עצמה.
+function findStudyTypeRowPosition(rows, code) {
+  if (!Array.isArray(rows)) return -1;
+  const target = String(code).trim();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (!Array.isArray(row)) continue;
+    const first = String(row[0] ?? '').trim();
+    if (!/^\d+$/.test(first)) continue;
+    if (first === target) return i;
+  }
+  return -1;
+}
+
+// טהורה (B5): האינדקס שהדף עצמו מצהיר עליו — onclick="selectedRowStudyType('N')"
+// (לכידה-02 §2). עדיף על ספירה שלנו: הוא בדיוק מה ש-hidStudyTypeID יקבל.
+function parseSelectedRowIndex(onclickText) {
+  if (typeof onclickText !== 'string') return null;
+  const m = /selectedRowStudyType\s*\(\s*['"]?(\d+)['"]?\s*\)/.exec(onclickText);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+// טהורה (B5): חתימת-עמוד לגילוי "הפייג'ר לא התקדם". התא הראשון של כל שורת-נתונים
+// (הקוד) + מספרן — אם אלה זהים אחרי דפדוף, לא עברנו עמוד ואין טעם להמשיך.
+function gridPageSignature(rows) {
+  if (!Array.isArray(rows)) return '';
+  const codes = [];
+  for (const row of rows) {
+    if (!Array.isArray(row)) continue;
+    const first = String(row[0] ?? '').trim();
+    if (/^\d+$/.test(first)) codes.push(first);
+  }
+  return `${codes.length}|${codes.join(',')}`;
+}
+
 // DOM-touching, לא נבדק ביחידה: ממיר <table> ל-מערך-שורות של טקסטי-תאים (trimmed).
 function gridToRows(table) {
   if (!table || typeof table.querySelectorAll !== 'function') return [];
@@ -366,24 +422,37 @@ function gridToRows(table) {
 
 // NEEDS_CONTEXT (לבדיקה רטובה, Task 9): לכידה-01/02 לא מתעדות את מנגנון-ההפעלה המדויק
 // של הטאב ("$find(...).set_activeTabIndex(1)" מול פשוט הקלקה על כותרת הטאב), ולא את ה-ID
-// המלא של ה-TabContainer. מנחת-הבטיחות כאן: איתור כותרת הטאב לפי הטקסט שלה ("סוגי לימוד
-// למוסד", לכידה-01 §5) תחת מוסכמת-ה-CSS הסטנדרטית של AjaxControlToolkit
-// (ajax__tab_header/ajax__tab_tab) או role="tab" גנרי; אם לכותרת יש href בפורמט
-// __doPostBack יורים אותו דרך firePostback (עומד ב"כל postback דרך firePostback"), אחרת
-// מניחים מעבר-טאב צד-לקוח טהור (כל הפאנלים כבר ב-DOM) ורק ממתינים "טיק" (sleep) לעדכון.
+// המלא של ה-TabContainer. מנחת-הבטיחות כאן: איתור כותרת הטאב לפי הטקסט שלה תחת
+// מוסכמת-ה-CSS הסטנדרטית של AjaxControlToolkit (ajax__tab_header/ajax__tab_tab) או
+// role="tab" גנרי; אם לכותרת יש href בפורמט __doPostBack יורים אותו דרך firePostback.
+// ‏B6: הלכידות חלוקות על הסיומת ("סוגי לימוד למוסד" מול "סוגי לימוד") — מתאימים לפי
+// הקידומת המשותפת, ומעדיפים כותרת שמתחילה ב"סוגי לימוד" על פני כזו שרק מכילה אותו.
+// ‏B2: גם לחיצה "צד-לקוח" עוברת בסדר הקשיח — waitPRM נרשם *לפני*, הלחיצה ב-setTimeout(0);
+// מעבר-טאב שאינו postback פשוט יחזיר started=false מהר, וזה בסדר גמור.
+const STUDY_TYPE_TAB_LABEL = 'סוגי לימוד';
+
+function tabText(el) {
+  return String((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+}
+
 async function activateStudyTypeTab() {
   try {
     if (typeof document === 'undefined') return { ok: false, reason: 'אין document (סביבת בדיקה?)' };
     const headers = Array.from(document.querySelectorAll('.ajax__tab_header a, .ajax__tab_tab, [role="tab"]'));
-    const tab = headers.find((el) => (el.textContent || '').includes('סוגי לימוד למוסד'));
+    const tab = headers.find((el) => tabText(el).startsWith(STUDY_TYPE_TAB_LABEL))
+      || headers.find((el) => tabText(el).includes(STUDY_TYPE_TAB_LABEL));
     if (!tab) return { ok: false, reason: 'לא נמצא טאב "סוגי לימוד למוסד" בעמוד המוסד' };
 
     const href = typeof tab.getAttribute === 'function' ? tab.getAttribute('href') : null;
     const parsed = href ? parsePostbackHref(href) : null;
     if (parsed) return firePostback(parsed.target, parsed.arg);
 
-    tab.click();
-    await sleep(50);
+    const wait = waitPRM({ startTimeoutMs: 800, totalTimeoutMs: 3000 }); // (1) נרשם קודם
+    setTimeout(() => { try { tab.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
+    const res = await wait;
+    if (res && res.ok === false) {
+      return { ok: false, reason: 'מעבר לטאב סוגי הלימוד נכשל: ' + (res.reason || 'postback לא הושלם') };
+    }
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: 'שגיאה בהפעלת טאב סוגי הלימוד: ' + (e && e.message) };
@@ -394,22 +463,36 @@ async function activateStudyTypeTab() {
 // "...InsStudyTypes_ucStudyTypeSearch_gvStudyType") — לכן איתור לפי סיומת ID, לא ID מדויק.
 // NEEDS_CONTEXT (Task 9): פורמט קישורי הפייג'ר (Page$Next / Page$<n> — מוסכמת GridView
 // סטנדרטית) לא מאומת מול הדף החי; הלולאה חסומה גם ע"י תקרה קשיחה כדי שלעולם לא תיתקע.
-async function gotoStudyTypeFromInstitute(code) {
+// ‏B5: ‏`opts.shouldAbort` (אופציונלי) — פרדיקט שנבדק לפני כל דפדוף. הקורא (absorb.js)
+// מעביר "הדור שלי כבר לא הנוכחי, או שהמשתמש ביקש לעצור"; אנחנו לא זורקים אלא מחזירים
+// ‏{ok:false, aborted:true} — הקורא ימות בגבול-השלב שלו (checkStop) ולא באמצע לולאה כאן.
+const STUDY_TYPE_MAX_PAGE_FLIPS = 25; // תקרת-ביטחון: לכל היותר 25 דפדופים (26 קריאות גריד)
+
+async function gotoStudyTypeFromInstitute(code, opts) {
+  const shouldAbort = opts && typeof opts.shouldAbort === 'function' ? opts.shouldAbort : null;
+  const aborted = (where) => ({ ok: false, aborted: true, reason: `הניווט לסוג הלימוד בוטל (${where})` });
+
   const tab = await activateStudyTypeTab();
   if (!tab.ok) return tab;
+  if (shouldAbort && shouldAbort()) return aborted('אחרי הפעלת הטאב');
 
-  const maxPageFlips = 25; // תקרת-ביטחון: לא לסמוך על כך שמספר קישורי-הפייג'ר קבוע (Next/Prev)
-  for (let flip = 0; flip <= maxPageFlips; flip++) {
+  for (let flip = 0; ; flip++) {
     const table = typeof document !== 'undefined' ? document.querySelector('table[id$="gvStudyType"]') : null;
     if (!table) return { ok: false, reason: 'לא נמצא גריד סוגי הלימוד (gvStudyType) בעמוד' };
 
     const rows = gridToRows(table);
-    const rowIndex = findStudyTypeRow(rows, code);
+    const position = findStudyTypeRowPosition(rows, code);
 
-    if (rowIndex !== -1) {
+    if (position !== -1) {
       if (typeof window === 'undefined' || typeof window.selectedRowStudyType !== 'function') {
         return { ok: false, reason: 'selectedRowStudyType אינה זמינה בעמוד' };
       }
+      // ‏B5(c): קודם כול האינדקס שהשורה עצמה מצהירה עליו (onclick), ורק אם אין — הספירה שלנו.
+      const tr = Array.from(table.querySelectorAll('tr'))[position] || null;
+      const onclick = (tr && typeof tr.getAttribute === 'function' && tr.getAttribute('onclick')) || '';
+      const fromAttr = parseSelectedRowIndex(onclick);
+      const rowIndex = fromAttr === null ? findStudyTypeRow(rows, code) : fromAttr;
+      if (rowIndex === -1) return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד` };
       try {
         window.selectedRowStudyType(rowIndex);
       } catch (e) {
@@ -424,12 +507,22 @@ async function gotoStudyTypeFromInstitute(code) {
       .find((p) => p && /Page\$(Next|\d+)/.test(p.arg));
 
     if (!next) return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד` };
+    if (flip >= STUDY_TYPE_MAX_PAGE_FLIPS) {
+      return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד (חריגה ממספר הדפים המותר)` };
+    }
+    if (shouldAbort && shouldAbort()) return aborted(`לפני דפדוף ${flip + 1}`);
 
+    const signatureBefore = gridPageSignature(rows);
     const res = await firePostback(next.target, next.arg);
     if (!res.ok) return res;
-  }
 
-  return { ok: false, reason: `סוג לימוד ${code} לא נמצא בגריד (חריגה ממספר הדפים המותר)` };
+    // ‏B5(b): גילוי אי-התקדמות — אם אותו עמוד בדיוק חזר, הדפדוף לא עבד (קישור פייג'ר
+    // שנבלע/פורמט לא צפוי) והמשך הלולאה רק ישרוף postbacks על אותו עמוד.
+    const tableAfter = typeof document !== 'undefined' ? document.querySelector('table[id$="gvStudyType"]') : null;
+    if (tableAfter && gridPageSignature(gridToRows(tableAfter)) === signatureBefore) {
+      return { ok: false, reason: `דפדוף הגריד לא התקדם (עמוד ${flip + 1}) — סוג לימוד ${code} לא נמצא` };
+    }
+  }
 }
 
 // ─── עץ הסניפים (tvTalmud) — לכידה-01 §1: "זה כן עובד — רק סוגי-הלימוד שבורים" ─
@@ -1767,21 +1860,33 @@ async function absorbEnsureStudyTypePage(task, gen) {
     return { ok: true, navigated: false };
   }
 
-  if (page.kind === 'institute' && page.branch === branch) {
+  // ‏A1: המסלול המהיר הזה מסתמך על "אנחנו כבר בדף המוסד של הסניף הנכון" — ולכן הוא
+  // מותר **רק** כשהסניף נקרא מה-h1 של הדף שמולנו (branchSource==='h1'). ‏branch שהגיע
+  // מ-sessionStorage הוא הצהרה של ניווט קודם: אם הוא שגוי (ניווט שנבלע / המשתמש ניווט
+  // ידנית), נלחץ "עריכה" בדף המוסד הלא-נכון, ננחת בדף סוג-לימוד שאין בו סניף, נקרא שוב
+  // את אותו מצב שמור — והתלמיד ייקלט לסניף השגוי עם "נקלט" ירוק. במקרה כזה נופלים
+  // לניווט המלא דרך gotoBranch, שקובע את הסניף מחדש.
+  if (page.kind === 'institute' && page.branch === branch && page.branchSource === 'h1') {
     log(`[ניווט] דף מוסד ${branch} → סוג לימוד ${studyType}`);
     // I4: btnUpdateStudyType גורר ניווט מלא ל-StudyTypeDetails.aspx. רושמים את הסניף
     // (הדף הבא לא יודע אותו) ואת מצב ההמשך *לפני* הירי — אחרת ה-resume נוחת בלי סניף,
     // מנווט שוב, ושורף ניסיונות עד "דולג" שקרי.
     const prevNav = loadNavState(); // #1: נלכד לפני הכתיבה, לשחזור אם הניווט לא קרה
-    // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js) — אמת מאומתת, לא הצהרה של
-    // ‏gotoBranch. שחזור שמוחק אותו היה גורר gotoBranch מיותר בטעינה הבאה (ושורף
-    // ניסיונות-resume) גם כשהניווט פשוט היה איטי מ-ABSORB_NAV_EVIDENCE_MS. לכן
-    // משחזרים את המצב הקודם *עם* הסניף המאומת; מסלול gotoBranch נשאר בשחזור מלא.
+    // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js, branchSource==='h1') — אמת
+    // מאומתת מול הדף שמולנו, לא הצהרה של gotoBranch. שחזור שמוחק אותו היה גורר
+    // ‏gotoBranch מיותר בטעינה הבאה (ושורף ניסיונות-resume) גם כשהניווט פשוט היה איטי
+    // מ-ABSORB_NAV_EVIDENCE_MS. לכן משחזרים את המצב הקודם *עם* הסניף המאומת;
+    // מסלול gotoBranch נשאר בשחזור מלא.
     const restoreNav = Object.assign({}, prevNav, { currentBranch: branch });
     saveNavState(restoreNav);
     saveAbsorbState();
     const before = absorbBeginNavigation();
-    const res = await gotoStudyTypeFromInstitute(studyType);
+    // ‏B5(a): לולאת הפייג'ר בתוך gotoStudyTypeFromInstitute כפופה למודל-הביטול שלנו —
+    // ניסיון שהוחלף (דור ישן) או בקשת-עצירה מפסיקים אותה לפני הדפדוף הבא.
+    const res = await gotoStudyTypeFromInstitute(studyType, {
+      shouldAbort: () => (typeof gen === 'number' && gen !== absorbCurrentGeneration()) || absorbIsStopped(),
+    });
+    if (res && res.aborted) checkStop('studytype-aborted', gen); // זורק (ביטול/עצירה) ומת כאן
     if (!res || res.ok === false) {
       absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
       return { ok: false, navigated: false, reason: (res && res.reason) || 'ניווט לסוג הלימוד נכשל' };
