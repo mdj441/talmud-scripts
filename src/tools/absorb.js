@@ -9,7 +9,7 @@ import { firePostback, waitPRM } from '../core/prm.js';
 import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoStudyTypeFromInstitute, gotoBranch, parsePostbackHref } from '../core/navigate.js';
+import { getPage, gotoStudyTypeFromInstitute, gotoBranch, parsePostbackHref, parseInstituteId } from '../core/navigate.js';
 import { clearNavState, loadNavState, saveNavState } from '../core/navigate.js';
 
 // ─── מזהי DOM (לכידה-02 §3 — מאומתים; לכידה-03 §2/§3 — דף תלמיד חדש) ────────
@@ -54,7 +54,9 @@ const ABSORB_QUEUE_KEY = 'talmud.absorb.queue';
 const ABSORB_STOP_KEY = 'talmud.absorb.stop';
 const ABSORB_ATTEMPT_KEY = 'talmud.absorb.attempts';
 const ABSORB_STUDENT_TIMEOUT_MS = 60000; // v3.2: STUDENT_TIMEOUT_MS
-const ABSORB_MAX_RESUME_ATTEMPTS = 4;
+// ‏I2 (1b): מסלול-הקפיצה (סניף לא במפה + התחלה מדף לא-מוסד + תלמיד חדש) = 4 טעינות לגיטימיות
+// (קפיצה, עץ, סוג-לימוד, תלמיד-חדש); ב-4 הטעינה הרביעית נרשמה "דולג" בעודנו על דף התלמיד-החדש.
+const ABSORB_MAX_RESUME_ATTEMPTS = 5;
 const ABSORB_STOP_PREFIX = '__STOPPED__@';
 const ABSORB_CANCEL_PREFIX = '__CANCELLED__@'; // ניסיון שהוחלף (timeout+retry) — נהרג בגבול-השלב הבא
 const ABSORB_NAVIGATED = { __navigated: true }; // סימן ל-runQueue: הדף נטען מחדש, resume ימשיך
@@ -245,6 +247,22 @@ export function absorbStoredBranchTrusted(nav, branch) {
   if (nav.branchSource !== 'h1' || !nav.currentBranch) return false;
   const pad = (v) => String(v == null ? '' : v).trim().padStart(2, '0');
   return pad(nav.currentBranch) === pad(branch);
+}
+
+// טהורה (C1, סקירת-בטיחות 1b): ‏'h1' אומר "דף-המוסד האחרון שנראה בטאב"; "דף סוג-הלימוד שמולנו
+// שייך לאותו מוסד" נכון רק בניווט-קדימה. אחרי Back של הדפדפן (מוסד 00 → סוג-לימוד → עץ →
+// מוסד 16 → Back לסוג-הלימוד) ה-nav אומר 16 אך הדף של 00. ה-referrer של דף סוג-לימוד שהגיע
+// מגריד המוסד הוא URL דף-המוסד (גם אחרי 302; ניווט-היסטוריה שומר את המקורי) — InstituteID
+// אחר מהשמור = סתירה → true (הקורא מנווט מחדש). referrer ריק / לא דף-מוסד / אין id שמור →
+// אין מסקנה → false (ההתנהגות הקיימת; אפס ניווט מיותר במקרה הרגיל).
+export function absorbReferrerMismatch(referrer, instituteId) {
+  try {
+    const refId = parseInstituteId(referrer);
+    const own = String(instituteId == null ? '' : instituteId).trim();
+    return !!refId && !!own && String(refId) !== own;
+  } catch (e) {
+    return false;
+  }
 }
 
 // טהורה (W2 §4): "אותו ניווט שכבר נכשל" = אותה חתימת-דף (DOM בלבד) + אותו יעד. אחרי
@@ -848,8 +866,17 @@ async function absorbEnsureStudyTypePage(task, gen) {
     // מדף סוג-לימוד לא אמין) — באצווה רב-סניפית זה היה קולט לסניף שגוי עם "נקלט" ירוק.
     // ‏W1: תחילת-ריצה כבר לא מוחקת את המצב, ולכן משתמש שכבר עומד על הדף הנכון (F6: הזרימה
     // עצמה 2–6 שניות) לא נשלח לסיבוב-ניווט של 15 שניות.
-    if (absorbStoredBranchTrusted(nav, branch)) return { ok: true, navigated: false };
-    log(`[ניווט] דף סוג-לימוד ${studyType}, אך הסניף השמור ${branch} אינו מאומת (מקור: ${nav.branchSource || 'ללא'}) — מנווטים מחדש`);
+    // ‏C1 (1b): גם 'h1' תקף רק לניווט-קדימה — אחרי Back של הדפדפן הדף שמולנו עלול להיות של
+    // המוסד הקודם. ה-referrer (דף-המוסד שממנו הגענו) מול nav.instituteId חושף זאת; ריק = אין מסקנה.
+    let referrer = '';
+    try { referrer = (typeof document !== 'undefined' && document.referrer) || ''; } catch (e) { referrer = ''; }
+    if (!absorbStoredBranchTrusted(nav, branch)) {
+      log(`[ניווט] דף סוג-לימוד ${studyType}, אך הסניף השמור ${branch} אינו מאומת (מקור: ${nav.branchSource || 'ללא'}) — מנווטים מחדש`);
+    } else if (absorbReferrerMismatch(referrer, nav.instituteId)) {
+      log('[ניווט] הסניף השמור לא תואם לדף המוסד שממנו הגענו — מנווטים מחדש');
+    } else {
+      return { ok: true, navigated: false };
+    }
   }
 
   // ‏A1: המסלול המהיר הזה מסתמך על "אנחנו כבר בדף המוסד של הסניף הנכון" — ולכן הוא

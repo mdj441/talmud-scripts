@@ -14,11 +14,13 @@ import { waitPRM } from './prm.js';
 //   'success' — אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
 //   'confirm' — יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
 //   'info'    — רק "אישור" (שגיאה/ולידציה); 'unknown' — אין מידע.
+// ‏1b (סקירת-בטיחות): "הצליח" לבדו רחב מדי (היה מסתיר בקשת-אישור לא-מוכרת כהצלחה). הצלחה = רק
+// "הצלחה" בתחילת הטקסט (כותרת ההודעה) או "קליטת תלמיד הצליחה" (גוף ההודעה שנצפה, F4).
 export function classifyPopupText(text, flags) {
   const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
   const f = flags && typeof flags === 'object' ? flags : {};
   const negated = /לא\s+הצליח|נכשל/.test(t);
-  if (!negated && (/^הצלחה/.test(t) || t.includes('הצליח'))) return 'success';
+  if (!negated && (/^הצלחה/.test(t) || /קליטת תלמיד הצליחה/.test(t))) return 'success';
   if (f.hasContinue) return 'confirm';
   if (f.hasOkOnly) return 'info';
   return 'unknown';

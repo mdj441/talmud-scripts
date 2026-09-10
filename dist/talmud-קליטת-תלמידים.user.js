@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         תלמוד - קליטת תלמידים v3.3
 // @namespace    https://github.com/mdj441/talmud-scripts
-// @version      3.3.1
+// @version      3.3.2
 // @description  קליטת תלמידים באצווה לתלמו"ד — v3.3 מודולרי
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
@@ -1317,11 +1317,13 @@ async function loadXlsxFile(file) {
 //   'success' — אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
 //   'confirm' — יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
 //   'info'    — רק "אישור" (שגיאה/ולידציה); 'unknown' — אין מידע.
+// ‏1b (סקירת-בטיחות): "הצליח" לבדו רחב מדי (היה מסתיר בקשת-אישור לא-מוכרת כהצלחה). הצלחה = רק
+// "הצלחה" בתחילת הטקסט (כותרת ההודעה) או "קליטת תלמיד הצליחה" (גוף ההודעה שנצפה, F4).
 function classifyPopupText(text, flags) {
   const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
   const f = flags && typeof flags === 'object' ? flags : {};
   const negated = /לא\s+הצליח|נכשל/.test(t);
-  if (!negated && (/^הצלחה/.test(t) || t.includes('הצליח'))) return 'success';
+  if (!negated && (/^הצלחה/.test(t) || /קליטת תלמיד הצליחה/.test(t))) return 'success';
   if (f.hasContinue) return 'confirm';
   if (f.hasOkOnly) return 'info';
   return 'unknown';
@@ -1457,7 +1459,9 @@ const ABSORB_QUEUE_KEY = 'talmud.absorb.queue';
 const ABSORB_STOP_KEY = 'talmud.absorb.stop';
 const ABSORB_ATTEMPT_KEY = 'talmud.absorb.attempts';
 const ABSORB_STUDENT_TIMEOUT_MS = 60000; // v3.2: STUDENT_TIMEOUT_MS
-const ABSORB_MAX_RESUME_ATTEMPTS = 4;
+// ‏I2 (1b): מסלול-הקפיצה (סניף לא במפה + התחלה מדף לא-מוסד + תלמיד חדש) = 4 טעינות לגיטימיות
+// (קפיצה, עץ, סוג-לימוד, תלמיד-חדש); ב-4 הטעינה הרביעית נרשמה "דולג" בעודנו על דף התלמיד-החדש.
+const ABSORB_MAX_RESUME_ATTEMPTS = 5;
 const ABSORB_STOP_PREFIX = '__STOPPED__@';
 const ABSORB_CANCEL_PREFIX = '__CANCELLED__@'; // ניסיון שהוחלף (timeout+retry) — נהרג בגבול-השלב הבא
 const ABSORB_NAVIGATED = { __navigated: true }; // סימן ל-runQueue: הדף נטען מחדש, resume ימשיך
@@ -1648,6 +1652,22 @@ function absorbStoredBranchTrusted(nav, branch) {
   if (nav.branchSource !== 'h1' || !nav.currentBranch) return false;
   const pad = (v) => String(v == null ? '' : v).trim().padStart(2, '0');
   return pad(nav.currentBranch) === pad(branch);
+}
+
+// טהורה (C1, סקירת-בטיחות 1b): ‏'h1' אומר "דף-המוסד האחרון שנראה בטאב"; "דף סוג-הלימוד שמולנו
+// שייך לאותו מוסד" נכון רק בניווט-קדימה. אחרי Back של הדפדפן (מוסד 00 → סוג-לימוד → עץ →
+// מוסד 16 → Back לסוג-הלימוד) ה-nav אומר 16 אך הדף של 00. ה-referrer של דף סוג-לימוד שהגיע
+// מגריד המוסד הוא URL דף-המוסד (גם אחרי 302; ניווט-היסטוריה שומר את המקורי) — InstituteID
+// אחר מהשמור = סתירה → true (הקורא מנווט מחדש). referrer ריק / לא דף-מוסד / אין id שמור →
+// אין מסקנה → false (ההתנהגות הקיימת; אפס ניווט מיותר במקרה הרגיל).
+function absorbReferrerMismatch(referrer, instituteId) {
+  try {
+    const refId = parseInstituteId(referrer);
+    const own = String(instituteId == null ? '' : instituteId).trim();
+    return !!refId && !!own && String(refId) !== own;
+  } catch (e) {
+    return false;
+  }
 }
 
 // טהורה (W2 §4): "אותו ניווט שכבר נכשל" = אותה חתימת-דף (DOM בלבד) + אותו יעד. אחרי
@@ -2251,8 +2271,17 @@ async function absorbEnsureStudyTypePage(task, gen) {
     // מדף סוג-לימוד לא אמין) — באצווה רב-סניפית זה היה קולט לסניף שגוי עם "נקלט" ירוק.
     // ‏W1: תחילת-ריצה כבר לא מוחקת את המצב, ולכן משתמש שכבר עומד על הדף הנכון (F6: הזרימה
     // עצמה 2–6 שניות) לא נשלח לסיבוב-ניווט של 15 שניות.
-    if (absorbStoredBranchTrusted(nav, branch)) return { ok: true, navigated: false };
-    log(`[ניווט] דף סוג-לימוד ${studyType}, אך הסניף השמור ${branch} אינו מאומת (מקור: ${nav.branchSource || 'ללא'}) — מנווטים מחדש`);
+    // ‏C1 (1b): גם 'h1' תקף רק לניווט-קדימה — אחרי Back של הדפדפן הדף שמולנו עלול להיות של
+    // המוסד הקודם. ה-referrer (דף-המוסד שממנו הגענו) מול nav.instituteId חושף זאת; ריק = אין מסקנה.
+    let referrer = '';
+    try { referrer = (typeof document !== 'undefined' && document.referrer) || ''; } catch (e) { referrer = ''; }
+    if (!absorbStoredBranchTrusted(nav, branch)) {
+      log(`[ניווט] דף סוג-לימוד ${studyType}, אך הסניף השמור ${branch} אינו מאומת (מקור: ${nav.branchSource || 'ללא'}) — מנווטים מחדש`);
+    } else if (absorbReferrerMismatch(referrer, nav.instituteId)) {
+      log('[ניווט] הסניף השמור לא תואם לדף המוסד שממנו הגענו — מנווטים מחדש');
+    } else {
+      return { ok: true, navigated: false };
+    }
   }
 
   // ‏A1: המסלול המהיר הזה מסתמך על "אנחנו כבר בדף המוסד של הסניף הנכון" — ולכן הוא

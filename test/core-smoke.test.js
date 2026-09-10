@@ -244,10 +244,17 @@ test('waitPRM: endRequest בלי שגיאה אחרי begin → {ok:true, started
 // ─── W3: הודעת-הצלחה היא אינפורמטיבית, לא בקשת-אישור (בדיקה רטובה 10.9.2026, F4) ──
 // האתר הציג אחרי אישור-קליטה מוצלח את ucMessagePopUp עם "הצלחה קליטת תלמיד הצליחה" ועם
 // כפתור "המשך" גלוי; hasContinue=true סיווג אותה "נחסם" ודילג על אימות-הגריד.
-test('classifyPopupText: מתחיל ב"הצלחה" / מכיל "הצליח" → success, גם כשיש כפתור "המשך"', () => {
+test('classifyPopupText: מתחיל ב"הצלחה" / "קליטת תלמיד הצליחה" → success, גם כשיש כפתור "המשך"', () => {
   assert.equal(classifyPopupText('הצלחה קליטת תלמיד הצליחה', { hasContinue: true, hasOkOnly: false }), 'success');
-  assert.equal(classifyPopupText('קליטת התלמיד הצליחה', { hasContinue: false, hasOkOnly: true }), 'success');
+  assert.equal(classifyPopupText('קליטת תלמיד הצליחה', { hasContinue: false, hasOkOnly: true }), 'success');
   assert.equal(classifyPopupText('  הצלחה  ', {}), 'success');
+});
+// ‏1b (סקירת-בטיחות): "הצליח" לבדו רחב מדי — רק שני הניסוחים שנצפו/צפויים הם הצלחה. ניסוח
+// אחר לא מוסתר כהצלחה; נופל לסיווג לפי הכפתורים (fail-safe: "המשך" לא-מוכר → נחסם, לא נלחץ).
+test('classifyPopupText (1b): "הצליח" בטקסט אחר אינו הצלחה — נופל לסיווג לפי הכפתורים', () => {
+  assert.equal(classifyPopupText('העדכון הצליח. להמשיך?', { hasContinue: true }), 'confirm', 'בקשת-אישור לא-מוכרת לעולם לא מוסתרת');
+  assert.equal(classifyPopupText('קליטת התלמיד הצליחה', { hasContinue: false, hasOkOnly: true }), 'info', 'ניסוח שונה מזה שנצפה באתר — לא מנחשים');
+  assert.equal(classifyPopupText('הודעת הצלחה', {}), 'unknown');
 });
 test('classifyPopupText: "לא הצליח" / "נכשל" אינו הצלחה — נופל לסיווג לפי הכפתורים', () => {
   assert.equal(classifyPopupText('קליטת התלמיד לא הצליחה', { hasContinue: false, hasOkOnly: true }), 'info');

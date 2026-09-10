@@ -6,7 +6,7 @@ import {
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
   absorbShouldRecord, absorbNavStateRestore, absorbPrecheckDecision,
-  absorbStoredBranchTrusted, absorbSameNavFailure,
+  absorbStoredBranchTrusted, absorbSameNavFailure, absorbReferrerMismatch,
 } from '../src/tools/absorb.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -435,4 +435,31 @@ test('absorbSameNavFailure: בלי רשומה / רשומה ריקה → לא ת�
 test('absorbNavStateRestore: שחזור שומר את ה-provenance ואת דף-המוסד (לא מוחק h1 מאומת)', () => {
   const prev = { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491' };
   assert.deepEqual(absorbNavStateRestore(prev), prev);
+});
+
+// ─── C1 (סקירת-בטיחות 1b): המסלול המהיר בדף סוג-לימוד — referrer מול דף-המוסד השמור ──
+// ‏'h1' אומר "דף-המוסד האחרון שנראה בטאב"; "דף סוג-הלימוד שמולנו שייך לאותו מוסד" נכון רק
+// בניווט-קדימה. אחרי Back של הדפדפן (מוסד 00 → סוג-לימוד 600 → עץ → מוסד 16 → Back) ה-nav
+// אומר 16 אך הדף שייך ל-00 — ה-referrer (דף-המוסד שממנו הגענו; נשמר גם אחרי 302 וגם
+// בניווט-היסטוריה) חושף את הסתירה. referrer ריק/לא-מוסד = אין מסקנה (ההתנהגות הקיימת).
+const REF_INST_00 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491';
+const REF_INST_16 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4159';
+test('absorbReferrerMismatch: referrer של דף-מוסד אחר מזה השמור → true (מנווטים מחדש)', () => {
+  assert.equal(absorbReferrerMismatch(REF_INST_00, '4159'), true);
+  assert.equal(absorbReferrerMismatch(REF_INST_00, 4159), true, 'id מספרי — השוואה כמחרוזת');
+});
+test('absorbReferrerMismatch: referrer תואם → false (המסלול המהיר נשאר — אפס ניווט מיותר)', () => {
+  assert.equal(absorbReferrerMismatch(REF_INST_16, '4159'), false);
+  assert.equal(absorbReferrerMismatch(REF_INST_16, 4159), false);
+  assert.equal(absorbReferrerMismatch(REF_INST_00.replace('InstituteID', 'instituteid') + '&x=1', '491'), false, 'לא רגיש לרישיות, פרמטרים נוספים');
+});
+test('absorbReferrerMismatch: אין מסקנה (referrer ריק / לא-מחרוזת / לא דף-מוסד / אין id שמור) → false', () => {
+  assert.equal(absorbReferrerMismatch('', '4159'), false);
+  assert.equal(absorbReferrerMismatch(undefined, '4159'), false);
+  assert.equal(absorbReferrerMismatch(null, '4159'), false);
+  assert.equal(absorbReferrerMismatch('https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx', '4159'), false, 'referrer שאינו דף-מוסד');
+  assert.equal(absorbReferrerMismatch('https://talmud.edu.gov.il/Home/Default.aspx', '4159'), false);
+  assert.equal(absorbReferrerMismatch(REF_INST_00, undefined), false, 'nav ישן בלי instituteId');
+  assert.equal(absorbReferrerMismatch(REF_INST_00, ''), false);
+  assert.equal(absorbReferrerMismatch(REF_INST_00, null), false);
 });
