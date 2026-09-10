@@ -447,7 +447,7 @@ async function activateStudyTypeTab() {
     const parsed = href ? parsePostbackHref(href) : null;
     if (parsed) return firePostback(parsed.target, parsed.arg);
 
-    const wait = waitPRM({ startTimeoutMs: 800, totalTimeoutMs: 3000 }); // (1) נרשם קודם
+    const wait = waitPRM({ startTimeoutMs: 800, totalTimeoutMs: 8000 }); // (1) נרשם קודם
     setTimeout(() => { try { tab.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
     const res = await wait;
     if (res && res.ok === false) {
