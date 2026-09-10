@@ -6,6 +6,7 @@ import {
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
   absorbShouldRecord, absorbNavStateRestore, absorbPrecheckDecision,
+  absorbStoredBranchTrusted, absorbSameNavFailure,
 } from '../src/tools/absorb.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -397,4 +398,41 @@ test('absorbPrecheckDecision: אין עדות שהחיפוש רץ → שגיאה
   assert.equal(absorbPrecheckDecision(null), 'error');
   assert.equal(absorbPrecheckDecision(undefined), 'error');
   assert.equal(absorbPrecheckDecision('x'), 'error');
+});
+
+// ─── W1/W2: אמון בסניף השמור לפי provenance (בדיקה רטובה 10.9.2026) ──────────
+// בדף סוג-לימוד אין סניף ב-DOM. הסניף השמור נסמך רק כשנקרא מ-h1 של דף מוסד בטאב הזה
+// ושום ניווט לא דרס אותו ('h1'). 'pending' = gotoBranch כתב לפני ירי שאולי נבלע (F2).
+test('absorbStoredBranchTrusted: רק branchSource "h1" עם סניף תואם נחשב אמת', () => {
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '00', branchSource: 'h1' }, '00'), true);
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '7', branchSource: 'h1' }, '07'), true, 'השוואה אחרי ריפוד');
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '00', branchSource: 'h1' }, '16'), false, 'סניף אחר');
+});
+test('absorbStoredBranchTrusted: pending / stored / בלי מקור / ריק → לא אמין (מנווטים)', () => {
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16', branchSource: 'pending' }, '16'), false, 'pending לעולם לא נצרך במסלול-מהיר');
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16', branchSource: 'stored' }, '16'), false);
+  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16' }, '16'), false, 'מצב ישן בלי provenance');
+  assert.equal(absorbStoredBranchTrusted({ branchSource: 'h1' }, '16'), false, 'בלי סניף');
+  assert.equal(absorbStoredBranchTrusted(null, '16'), false);
+  assert.equal(absorbStoredBranchTrusted(undefined, '16'), false);
+  assert.equal(absorbStoredBranchTrusted('h1', '16'), false);
+});
+
+// ─── W2 §4: "אותו ניווט שכבר נכשל" — לא חוזרים על 4×15 שניות ────────────────
+test('absorbSameNavFailure: אותה חתימת-דף + אותו סניף-יעד = אותו ניווט שכלב-השומר כבר תפס', () => {
+  const rec = { signature: 'studyType||600|https://x', branch: '16' };
+  assert.equal(absorbSameNavFailure(rec, 'studyType||600|https://x', '16'), true);
+  assert.equal(absorbSameNavFailure(rec, 'studyType||600|https://x', '00'), false, 'סניף אחר — מנסים');
+  assert.equal(absorbSameNavFailure(rec, 'institute|00||https://y', '16'), false, 'דף אחר — מנסים');
+});
+test('absorbSameNavFailure: בלי רשומה / רשומה ריקה → לא תואם (מנסים)', () => {
+  assert.equal(absorbSameNavFailure(null, 'studyType||600|https://x', '16'), false);
+  assert.equal(absorbSameNavFailure(undefined, 'x', '16'), false);
+  assert.equal(absorbSameNavFailure({}, '', ''), false, 'רשומה ריקה לא תואמת כלום, גם לא חתימה ריקה');
+  assert.equal(absorbSameNavFailure({ signature: 'x' }, 'x', '16'), false);
+});
+
+test('absorbNavStateRestore: שחזור שומר את ה-provenance ואת דף-המוסד (לא מוחק h1 מאומת)', () => {
+  const prev = { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491' };
+  assert.deepEqual(absorbNavStateRestore(prev), prev);
 });

@@ -1565,6 +1565,27 @@ function absorbNavStateRestore(prev) {
   return prev.currentBranch ? prev : null;
 }
 
+// טהורה (W1/W2, בדיקה רטובה 10.9.2026): האם מותר לסמוך על הסניף השמור ב-nav state כ"אנחנו
+// בסניף הזה". רק provenance 'h1' — נקרא מ-h1 של דף מוסד בטאב הזה ושום ניווט לא דרס אותו
+// מאז — עם סניף תואם (אחרי ריפוד). 'pending' = gotoBranch כתב לפני ירי שטרם אומת (ואולי
+// נבלע — F2: קליק-עץ מדף סוג-לימוד לא אמין) → לא; 'stored'/null (מצב ישן) → לא.
+function absorbStoredBranchTrusted(nav, branch) {
+  if (!nav || typeof nav !== 'object' || Array.isArray(nav)) return false;
+  if (nav.branchSource !== 'h1' || !nav.currentBranch) return false;
+  const pad = (v) => String(v == null ? '' : v).trim().padStart(2, '0');
+  return pad(nav.currentBranch) === pad(branch);
+}
+
+// טהורה (W2 §4): "אותו ניווט שכבר נכשל" = אותה חתימת-דף (DOM בלבד) + אותו יעד. אחרי
+// המשך-במקום אחד של כלב-השומר (B1) ניסיון זהה לא חוזר על עוד 15 שניות — הקורא רושם
+// "שגיאה" עם הוראה ידנית וממשיך. `branch` ברשומה הוא קוד סניף, או "study:<קוד>" למעבר
+// מוסד→סוג-לימוד (אותו מנגנון, יעד אחר).
+function absorbSameNavFailure(record, signature, branch) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  if (!record.signature || !record.branch) return false;
+  return record.signature === signature && String(record.branch) === String(branch == null ? '' : branch);
+}
+
 // טהורה (M5): האם תור שמור ישן מדי ל-resume אוטומטי. חותמת חסרה/פגומה → לא ישן
 // (לא חוסמים המשך של תור שנשמר בגרסה בלי חותמת).
 function absorbQueueIsStale(startedAt, now, maxAgeMs) {
@@ -1967,7 +1988,11 @@ const ABSORB_NAV_FAIL_ACTION = 'נווט ידנית לסניף ולחץ התחל
 // חתימת-דף להשוואת "לפני/אחרי" — כולל ה-URL, כדי לזהות ניווט מלא שכבר קרה.
 function absorbPageSignature() {
   const p = getPage();
-  return `${p.kind}|${p.branch || ''}|${p.studyType || ''}|${p.url || ''}`;
+  // ‏W2: רק סניף עם ראיה ב-DOM (h1 של דף מוסד) משתתף בחתימה. סניף 'stored'/'pending'
+  // משתנה כש*אנחנו* כותבים אותו (gotoBranch לפני ירי) — ואז "החתימה השתנתה" הייתה נקראת
+  // בטעות כעדות שהדף התחלף, וניווט שנבלע היה מוכרז כהצלחה.
+  const branch = p.branchSource === 'h1' ? p.branch : '';
+  return `${p.kind}|${branch || ''}|${p.studyType || ''}|${p.url || ''}`;
 }
 
 // ניווט מלא (postback רגיל, לא MS AJAX) לא מפעיל beginRequest, ולכן started=false שם
@@ -2007,6 +2032,11 @@ function absorbBeginNavigation() {
 // (‏absorbResumeIfPending אידמפוטנטי; אם ריצה כבר מתנהלת הוא פשוט מחזיר false).
 const ABSORB_NAV_WATCHDOG_MS = 15000;
 let absorbNavWatchdogTimer = null;
+// ‏W2 §3/§4: הניווט שהוכרז אחרון — מה לשחזר ב-nav state אם הוא לא יגיע (כלב-השומר ממשיך
+// במקום), ומה היעד שלו. נקבע לפני כל ירי ניווט, מתאפס כשהעדות/הכישלון הוכרעו.
+let absorbPendingNav = null; // { prevNav, branch, signature }
+// ‏W2 §4: ניווט שכלב-השומר תפס שלא הביא טעינת דף — ניסיון זהה (אותו דף, אותו יעד) לא חוזר.
+let absorbNavFailure = null; // { signature, branch }
 
 function absorbClearNavWatchdog() {
   if (absorbNavWatchdogTimer !== null) {
@@ -2026,9 +2056,21 @@ function absorbArmNavWatchdog() {
     if (absorbUnloadSeen) return; // הדף באמת מתחלף — ה-resume יקרה אחרי הטעינה
     if (absorbRunning) return; // מישהו כבר ממשיך
     if (absorbPageSignature() !== before) {
+      // הדף כן השתנה (postback אסינכרוני) — ההצהרה השמורה לא בהכרח שקרית; בדף מוסד getPage
+      // כבר קבע אמת מה-h1, ובדף בלי h1 'pending' נשאר לא-אמין ממילא (מנווטים שוב, לא צורכים).
       log('[ניווט] הדף השתנה בלי טעינה מלאה — ממשיכים במקום');
+      absorbPendingNav = null;
     } else {
       log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(ABSORB_NAV_WATCHDOG_MS / 1000)} שניות — ממשיכים במקום`);
+      // ‏W2 §3: הניווט לא קרה → ההצהרה 'pending' שנכתבה לפניו שקרית. משחזרים את המצב
+      // שלפניה (אותו מסלול כמו כישלון-עדות), אחרת ההמשך-במקום היה קורא סניף שמעולם לא
+      // הגענו אליו. ‏§4: זוכרים את הכישלון כדי לא לחזור על אותו ניווט 4×15 שניות.
+      if (absorbPendingNav) {
+        absorbRestoreNavState(absorbPendingNav.prevNav);
+        absorbNavFailure = { signature: absorbPendingNav.signature, branch: absorbPendingNav.branch };
+        log(`[ניווט] הניווט ל-${absorbPendingNav.branch} מהדף הזה נרשם ככישלון — לא יחזור על עצמו מהדף הזה`);
+        absorbPendingNav = null;
+      }
     }
     Promise.resolve()
       .then(() => absorbResumeIfPending())
@@ -2039,13 +2081,15 @@ function absorbArmNavWatchdog() {
 // #1: ניווט שנכשל/נבלע השאיר את מצב-הניווט מצהיר על סניף שמעולם לא הגענו אליו
 // (‏gotoBranch כותב currentBranch לפני הירי). בדף סוג-לימוד זה המקור *היחיד* לסניף,
 // ולכן המשימה הבאה הייתה "מתאימה" לדף הלא-נכון ונקלטת לסניף שגוי. משחזרים.
-// M-c: הלוג נכתב רק כשבאמת שוחזר/נוקה סניף. מצב ריק שנשאר ריק (המקרה הרגיל במשימה
-// הראשונה אחרי clearNavState) אינו "שחזור" ואינו ראוי לשורת-לוג מטעה.
+// M-c: הלוג נכתב רק כשבאמת שוחזר/נוקה סניף. מצב ריק שנשאר ריק (טאב חדש שעוד לא ביקר
+// בדף מוסד) אינו "שחזור" ואינו ראוי לשורת-לוג מטעה.
+// ‏W2 §3: זו נקודת-השחזור היחידה — כישלון-עדות, מסלול המוסד וכלב-השומר (המשך-במקום)
+// עוברים כולם דרכה, כך ש-'pending' של ניווט שלא קרה לעולם לא נשאר ב-nav state.
 function absorbRestoreNavState(prev) {
   const restore = absorbNavStateRestore(prev);
   if (restore) {
     saveNavState(restore);
-    log(`[ניווט] הניווט לא אומת — מצב-הניווט שוחזר לסניף ${restore.currentBranch}`);
+    log(`[ניווט] הניווט לא אומת — מצב-הניווט שוחזר לסניף ${restore.currentBranch} (מקור: ${restore.branchSource || 'ללא'})`);
     return;
   }
   const cur = loadNavState();
@@ -2059,6 +2103,9 @@ function absorbRestoreNavState(prev) {
 // "ok" לבדו אינו ראיה — דורשים started===true, או שהדף מתחלף/מתחיל להיפרק בפועל.
 async function absorbNavigationEvidence(res, signatureBefore, what) {
   if (res && res.ok === false) return { ok: false, reason: res.reason || `${what} נכשל` };
+  // ‏W4 §8: ניווט לפי URL (location.href) הוא ניווט מלא שיקרה — אין PRM ואין beginRequest
+  // לחכות להם, הדף מתחיל להיפרק. כלב-השומר (B1) נשאר כרשת-ביטחון אם בכל זאת לא.
+  if (res && res.method === 'url') return { ok: true };
   if (res && res.started === true) return { ok: true };
   const t0 = Date.now();
   while (Date.now() - t0 < ABSORB_NAV_EVIDENCE_MS) {
@@ -2081,21 +2128,47 @@ async function absorbNavigateToBranch(branch, gen) {
     return { ok: false, cancelled: true, reason: 'הניסיון בוטל (ניסיון חדש כבר רץ)' };
   }
   saveAbsorbState();
-  const prevNav = loadNavState(); // #1: נלכד *לפני* ש-gotoBranch כותב currentBranch
+  const prevNav = loadNavState(); // #1: נלכד *לפני* ש-gotoBranch כותב currentBranch/pending
   const before = absorbBeginNavigation();
+  // ‏W2 §4: אותו ניווט (אותו דף, אותו סניף-יעד) שכלב-השומר כבר תפס שלא הביא טעינת דף —
+  // לא חוזרים עליו (F2: 4×15 שניות). שגיאה עם הוראה ידנית, והאצווה ממשיכה.
+  if (absorbSameNavFailure(absorbNavFailure, before, branch)) {
+    log(`[ניווט] הניווט לסניף ${branch} מהדף הזה כבר נכשל — לא מנסים שוב`);
+    return { ok: false, repeated: true, reason: `הניווט לסניף ${branch} מהדף הזה לא הביא טעינת דף`, action: absorbNavFailAction(branch) };
+  }
+  absorbPendingNav = { prevNav, branch, signature: before }; // W2 §3: לשחזור אם הטעינה לא תגיע
   const res = await gotoBranch(branch);
+  const how = res && res.method === 'url'
+    ? (res.hop ? `URL — קפיצה לדף מוסד ידוע (${res.via})` : `URL ישיר (${res.via})`)
+    : (res && res.method === 'tree' ? 'עץ-הצד (postback)' : 'לא נורה');
+  log(`[ניווט] סניף ${branch} · שיטה: ${how}`);
   const evidence = await absorbNavigationEvidence(res, before, `ניווט לסניף ${branch}`);
-  if (!evidence.ok) absorbRestoreNavState(prevNav);
+  if (!evidence.ok) {
+    absorbRestoreNavState(prevNav);
+    absorbPendingNav = null;
+  }
   return evidence;
+}
+
+function absorbNavFailAction(branch) {
+  return `לא ניתן לנווט לסניף ${branch} מהדף הזה — עבור ידנית לדף המוסד של הסניף ולחץ התחל`;
 }
 
 async function absorbEnsureStudyTypePage(task, gen) {
   const branch = String(task.branch).padStart(2, '0');
   const studyType = String(task.studyType);
   const page = getPage();
+  const nav = loadNavState();
 
   if (page.kind === 'studyType' && page.branch === branch && page.studyType === studyType) {
-    return { ok: true, navigated: false };
+    // ‏W1+W2: בדף סוג-לימוד אין סניף ב-DOM — `page.branch` הוא הצהרה מ-sessionStorage.
+    // המסלול המהיר מותר רק כשה-provenance שלה 'h1' (נקראה מ-h1 של דף מוסד בטאב הזה, ושום
+    // ניווט לא דרס אותה מאז). 'pending' = gotoBranch כתב לפני ירי שאולי נבלע (F2: קליק-עץ
+    // מדף סוג-לימוד לא אמין) — באצווה רב-סניפית זה היה קולט לסניף שגוי עם "נקלט" ירוק.
+    // ‏W1: תחילת-ריצה כבר לא מוחקת את המצב, ולכן משתמש שכבר עומד על הדף הנכון (F6: הזרימה
+    // עצמה 2–6 שניות) לא נשלח לסיבוב-ניווט של 15 שניות.
+    if (absorbStoredBranchTrusted(nav, branch)) return { ok: true, navigated: false };
+    log(`[ניווט] דף סוג-לימוד ${studyType}, אך הסניף השמור ${branch} אינו מאומת (מקור: ${nav.branchSource || 'ללא'}) — מנווטים מחדש`);
   }
 
   // ‏A1: המסלול המהיר הזה מסתמך על "אנחנו כבר בדף המוסד של הסניף הנכון" — ולכן הוא
@@ -2113,12 +2186,24 @@ async function absorbEnsureStudyTypePage(task, gen) {
     // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js, branchSource==='h1') — אמת
     // מאומתת מול הדף שמולנו, לא הצהרה של gotoBranch. שחזור שמוחק אותו היה גורר
     // ‏gotoBranch מיותר בטעינה הבאה (ושורף ניסיונות-resume) גם כשהניווט פשוט היה איטי
-    // מ-ABSORB_NAV_EVIDENCE_MS. לכן משחזרים את המצב הקודם *עם* הסניף המאומת;
-    // מסלול gotoBranch נשאר בשחזור מלא.
-    const restoreNav = Object.assign({}, prevNav, { currentBranch: branch });
+    // מ-ABSORB_NAV_EVIDENCE_MS. לכן משחזרים את המצב הקודם *עם* הסניף המאומת (ו-provenance
+    // 'h1' — W1: זה מה שמצדיק את המסלול המהיר בדף סוג-הלימוד שננחת בו); מסלול gotoBranch
+    // נשאר בשחזור מלא.
+    const restoreNav = Object.assign({}, prevNav, { currentBranch: branch, branchSource: 'h1' });
     saveNavState(restoreNav);
     saveAbsorbState();
     const before = absorbBeginNavigation();
+    // ‏W2 §4: המעבר לסוג-הלימוד מהדף הזה כבר "לא הביא טעינה" פעם אחת (כלב-השומר) — לא חוזרים.
+    const studyTarget = `study:${studyType}`;
+    if (absorbSameNavFailure(absorbNavFailure, before, studyTarget)) {
+      log(`[ניווט] המעבר לסוג לימוד ${studyType} מדף המוסד כבר נכשל — לא מנסים שוב`);
+      return {
+        ok: false, navigated: false, repeated: true,
+        reason: `המעבר לסוג לימוד ${studyType} מדף המוסד לא הביא טעינת דף`,
+        action: `פתח ידנית את סוג הלימוד ${studyType} (טאב "סוגי לימוד למוסד" → השורה → עריכה) ולחץ התחל`,
+      };
+    }
+    absorbPendingNav = { prevNav: restoreNav, branch: studyTarget, signature: before }; // W2 §3
     // ‏B5(a): לולאת הפייג'ר בתוך gotoStudyTypeFromInstitute כפופה למודל-הביטול שלנו —
     // ניסיון שהוחלף (דור ישן) או בקשת-עצירה מפסיקים אותה לפני הדפדוף הבא.
     const res = await gotoStudyTypeFromInstitute(studyType, {
@@ -2127,24 +2212,29 @@ async function absorbEnsureStudyTypePage(task, gen) {
     if (res && res.aborted) checkStop('studytype-aborted', gen); // זורק (ביטול/עצירה) ומת כאן
     if (!res || res.ok === false) {
       absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
+      absorbPendingNav = null;
       return { ok: false, navigated: false, reason: (res && res.reason) || 'ניווט לסוג הלימוד נכשל' };
     }
     await sleepCheckStop(500, gen);
     const after = getPage();
-    if (after.kind === 'studyType' && after.studyType === studyType) return { ok: true, navigated: false };
+    if (after.kind === 'studyType' && after.studyType === studyType) {
+      absorbPendingNav = null;
+      return { ok: true, navigated: false };
+    }
     const evidence = await absorbNavigationEvidence(res, before, `ניווט לסוג לימוד ${studyType}`);
     if (!evidence.ok) {
       absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
+      absorbPendingNav = null;
       return { ok: false, navigated: false, reason: evidence.reason, action: ABSORB_NAV_FAIL_ACTION };
     }
     // בקשה אמיתית יצאה אך עוד לא נחתנו — ה-resume אחרי טעינת הדף ימשיך מכאן.
     return { ok: true, navigated: true };
   }
 
-  log(`[ניווט] ניווט מלא לסניף ${branch} (דף נוכחי: ${page.kind})`);
-  const nav = await absorbNavigateToBranch(branch, gen);
-  if (nav.cancelled) checkStop('nav-cancelled', gen); // #3: ניסיון שבוטל מת כאן
-  if (!nav.ok) return { ok: false, navigated: false, reason: nav.reason, action: ABSORB_NAV_FAIL_ACTION };
+  log(`[ניווט] ניווט מלא לסניף ${branch} (דף נוכחי: ${page.kind}${page.branch ? ` · סניף שמור ${page.branch}/${nav.branchSource || 'ללא'}` : ''})`);
+  const navRes = await absorbNavigateToBranch(branch, gen);
+  if (navRes.cancelled) checkStop('nav-cancelled', gen); // #3: ניסיון שבוטל מת כאן
+  if (!navRes.ok) return { ok: false, navigated: false, reason: navRes.reason, action: navRes.action || ABSORB_NAV_FAIL_ACTION };
   return { ok: true, navigated: true };
 }
 
@@ -2189,13 +2279,16 @@ async function absorbLeaveNewStudentPage(task, recorded, gen) {
     log('[תלמיד חדש] ניסיון שבוטל — לא יוצאים מהדף');
     return ABSORB_CONTINUE;
   }
+  // ‏W4 §7: מדף תלמיד-חדש עץ-הצד לא מנווט כלל (F2). ‏gotoBranch יוצא מכאן תמיד לפי URL:
+  // הסניף במפה → דף המוסד שלו; אחרת → דף-המוסד האחרון הידוע (instituteUrl / seed 00) ומשם
+  // העץ ב-resume. הדף הזה אינו 'institute' ולכן מסלול-העץ לא נבחר בו לעולם.
   const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'), gen);
   if (nav.ok) return ABSORB_NAVIGATED;
   if (nav.cancelled) return ABSORB_CONTINUE;
   log(`[ניווט] ${nav.reason}`);
   if (recorded) {
     recorded.detail = [recorded.detail, nav.reason].filter(Boolean).join(' | ');
-    recorded.action = ABSORB_NAV_FAIL_ACTION;
+    recorded.action = nav.action || ABSORB_NAV_FAIL_ACTION;
     saveAbsorbState();
   }
   return ABSORB_CONTINUE;
@@ -2323,7 +2416,7 @@ async function processStudent(task, gen) {
     log('[תלמיד חדש] הדף שייך למזהה אחר — יוצאים ממנו');
     const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'), gen);
     if (nav.cancelled) checkStop('nav-cancelled', gen); // #3: ניסיון שבוטל מת כאן
-    if (!nav.ok) return mk(ABSORB_STATUS.ERROR, nav.reason, ABSORB_NAV_FAIL_ACTION);
+    if (!nav.ok) return mk(ABSORB_STATUS.ERROR, nav.reason, nav.action || ABSORB_NAV_FAIL_ACTION);
     return ABSORB_NAVIGATED;
   }
 
@@ -2693,10 +2786,12 @@ async function runQueue() {
 async function absorbStartRun(tasks) {
   clearAbsorbStop();
   absorbNextGeneration(); // C3: כל שריד של ריצה קודמת מת כאן
-  // C2: מצב-הניווט השמור (currentBranch) שייך לריצה הקודמת. בדף סוג-לימוד אין מספר
-  // סניף בדף עצמו, ולכן סניף ישן + קוד סוג-לימוד שמשותף לכמה סניפים = קליטה לסניף הלא
-  // נכון. מנקים, כך שהמשימה הראשונה תקבע את הסניף דרך gotoBranch.
-  clearNavState();
+  // ‏W1 (בדיקה רטובה 10.9.2026): **לא** מנקים את מצב-הניווט בתחילת ריצה. C2 חשש שסניף ישן
+  // בדף סוג-לימוד יקלוט לסניף שגוי — היום זה נפתר ב-provenance: המסלול המהיר בדף סוג-לימוד
+  // מקבל את הסניף השמור רק כש-branchSource==='h1' (absorbStoredBranchTrusted), ו-'pending'
+  // לעולם לא נצרך. הניקוי עלה 15–17 שניות מיותרות לכל ריצה שהתחילה בדף הנכון (F6).
+  absorbPendingNav = null;
+  absorbNavFailure = null;
   absorbQueue = Array.isArray(tasks) ? tasks.slice() : [];
   absorbResults = [];
   absorbCurIdx = 0;
@@ -2728,6 +2823,8 @@ function absorbSavedQueueInfo() {
 function absorbDiscardSavedQueue() {
   absorbNextGeneration();
   absorbClearNavWatchdog(); // B1: אין למה לחכות יותר
+  absorbPendingNav = null;
+  absorbNavFailure = null;
   absorbQueue = [];
   absorbResults = [];
   absorbCurIdx = 0;
@@ -2812,6 +2909,7 @@ function absorbStop() {
   requestAbsorbStop();
   absorbNextGeneration(); // C3: גם ניסיון יתום שעדיין רץ מת כאן
   absorbClearNavWatchdog(); // B1: עצירה מבטלת גם המתנה לטעינת דף
+  absorbPendingNav = null;
   if (!absorbRunning) {
     if (absorbQueue.length && absorbCurIdx < absorbQueue.length) {
       absorbFillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
