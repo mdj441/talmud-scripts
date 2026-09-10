@@ -5,8 +5,8 @@ import vm from 'node:vm';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const ENTRY = 'src/absorb-main.js';
-const OUTPUT_FILENAME = 'talmud-קליטת-תלמידים.user.js';
+const ENTRY = 'src/main.js';
+const OUTPUT_FILENAME = 'talmud-tools.user.js';
 
 // ─── Module graph resolution ─────────────────────────────────────────────────
 
@@ -154,10 +154,10 @@ export function buildHeader(pkg, opts = {}) {
     // Tampermonkey identifies a script by @namespace+@name; an identical pair makes the
     // two installs indistinguishable in the UI while both run on the page. Hard-coded
     // (not derived from pkg.version) so a version bump never breaks auto-update.
-    ['@name', 'תלמוד - קליטת תלמידים v3.3'],
+    ['@name', 'תלמוד - כלי אוטומציה'],
     ['@namespace', 'https://github.com/mdj441/talmud-scripts'],
     ['@version', pkg.version],
-    ['@description', `קליטת תלמידים באצווה לתלמו"ד — ${shortVersion} מודולרי`],
+    ['@description', `קליטה, עזיבה, הודעות ודיווח חודשי לתלמו"ד בסקריפט אחד (${shortVersion})`],
     ['@author', 'מרדכי יאקאב'],
     ['@match', 'https://talmud.edu.gov.il/*'],
     ['@grant', 'none'],

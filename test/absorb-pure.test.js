@@ -23,9 +23,9 @@ test('smoke: absorb-report.js נטען ב-Node והיצוא הטהור הוא פ
   assert.ok(Array.isArray(ABSORB_TEMPLATE_HEADER));
 });
 
-test('smoke: absorb-main.js נטען ב-Node בלי לגעת ב-DOM', async () => {
-  const mod = await import('../src/absorb-main.js');
-  assert.equal(typeof mod.initAbsorbPanel, 'function');
+test('smoke: main.js (נקודת הכניסה המאוחדת) נטען ב-Node בלי לגעת ב-DOM', async () => {
+  const mod = await import('../src/main.js');
+  assert.equal(typeof mod.initTalmudTools, 'function');
 });
 
 test('תבנית האקסל = כותרות Task 4', () => {

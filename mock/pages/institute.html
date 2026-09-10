@@ -155,9 +155,13 @@
     afterPostback() { D.save(db); },
   };
 
-  render();
+  // הרינדור נקרא בסוף ה-body, אחרי שקבצי-ההרחבה (עזיבה, דיווח) רשמו את הלשוניות שלהם.
+  window.__mockInstituteRender = render;
 })();
 </script>
 <script src="/mock/institute-ext.js"></script>
+<script src="/mock/ext-depart.js"></script>
+<script src="/mock/ext-report.js"></script>
+<script>window.__mockInstituteRender();</script>
 </body>
 </html>

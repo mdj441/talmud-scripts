@@ -16,7 +16,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
-const DIST_PATH = join(rootDir, 'dist', 'talmud-קליטת-תלמידים.user.js');
+const DIST_PATH = join(rootDir, 'dist', 'talmud-tools.user.js');
 
 function fsReadFile(repoRelativePath) {
   return readFileSync(join(rootDir, repoRelativePath), 'utf8');
@@ -224,7 +224,7 @@ test('buildHeader: כולל @require ל-SheetJS (xlsx) לטעינת קבצי א�
 test('buildHeader: updateURL/downloadURL כוללים את שם הקובץ המקודד', () => {
   const pkg = { version: '9.9.9' };
   const header = buildHeader(pkg);
-  const encoded = encodeURIComponent('talmud-קליטת-תלמידים.user.js');
+  const encoded = encodeURIComponent('talmud-tools.user.js');
   const updateLine = header.split('\n').find((l) => l.includes('@updateURL'));
   const downloadLine = header.split('\n').find((l) => l.includes('@downloadURL'));
   assert.ok(updateLine && updateLine.includes(encoded), 'updateURL כולל את שם הקובץ המקודד');
@@ -235,13 +235,13 @@ test('buildHeader: updateURL/downloadURL כוללים את שם הקובץ המ�
 // ─── buildUserscript על הריפו האמיתי ─────────────────────────────────────────
 test('buildUserscript: הפלט מתחיל בכותרת userscript', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
+  const out = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
   assert.ok(out.startsWith('// ==UserScript=='));
 });
 
 test('buildUserscript: אין שורות import/export שנשארו', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
+  const out = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
   const bodyStart = out.indexOf("(function () {");
   const body = out.slice(bodyStart);
   assert.ok(!/^import /m.test(body));
@@ -250,36 +250,39 @@ test('buildUserscript: אין שורות import/export שנשארו', () => {
 
 test('buildUserscript: הפלט תקין תחבירית (vm.Script)', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
-  assert.doesNotThrow(() => new vm.Script(out, { filename: 'talmud-קליטת-תלמידים.user.js' }));
+  const out = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
+  assert.doesNotThrow(() => new vm.Script(out, { filename: 'talmud-tools.user.js' }));
 });
 
 test('buildUserscript: דטרמיניסטי — זהה בית-לבית בשתי ריצות', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out1 = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
-  const out2 = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
+  const out1 = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
+  const out2 = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
   assert.equal(out1, out2);
 });
 
 test('buildUserscript: זהה לקובץ dist המחויב (מצפין את הדטרמיניזם ל-CI)', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
+  const out = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
   const committed = readFileSync(DIST_PATH, 'utf8');
   assert.equal(out, committed);
 });
 
 // ─── A3: הפרדה מסקריפט v3.2 הישן (שניהם עשויים להיות מותקנים בו-זמנית) ─────
-test('buildHeader: ה-@name שונה מזה של הסקריפט הישן (‏@namespace+@name מזהים סקריפט ב-Tampermonkey)', () => {
+test('buildHeader: ה-@name שונה מזה של הסקריפטים הישנים (‏@namespace+@name מזהים סקריפט ב-Tampermonkey)', () => {
   const header = buildHeader({ version: '9.9.9' });
   const nameLine = header.split('\n').find((l) => l.includes('@name'));
   const value = nameLine.replace(/^\/\/\s*@name\s+/, '').trim();
   assert.notEqual(value, 'תלמוד - קליטת תלמידים');
-  assert.equal(value, 'תלמוד - קליטת תלמידים v3.3');
+  assert.equal(value, 'תלמוד - כלי אוטומציה');
+  for (const old of ['תלמוד - עזיבת תלמידים', 'תלמוד - טיפול בהודעות', 'תלמוד - דיווח חודשי אוטומטי']) assert.notEqual(value, old);
 });
 
-test('buildUserscript: הפאנל החדש לא משתמש במזהי-DOM של v3.2 (tma-…)', () => {
+test('buildUserscript: החלונית המאוחדת לא משתמשת במזהי-DOM של הסקריפטים הישנים (tma-, tm-, autoMsg, autoReportBtn)', () => {
   const pkg = JSON.parse(fsReadFile('package.json'));
-  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
-  assert.ok(!/["'#]tma-/.test(out), 'נמצא מזהה tma- בפלט — יתנגש עם הסקריפט הישן');
-  assert.ok(out.includes('tma3-panel'));
+  const out = buildUserscript({ pkg, entry: 'src/main.js', readFile: fsReadFile });
+  assert.ok(!/["'#]tma3?-/.test(out), 'נמצא מזהה tma- בפלט — יתנגש עם הסקריפט הישן');
+  assert.ok(!/["'#]tm-(panel|input|start)/.test(out), 'נמצא מזהה tm- של סקריפט העזיבה הישן');
+  assert.ok(!/autoMsgPanel|autoReportBtn/.test(out), 'נמצא מזהה של סקריפט ההודעות/הדיווח הישן');
+  assert.ok(out.includes('tt-panel'));
 });

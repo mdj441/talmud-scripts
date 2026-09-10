@@ -52,7 +52,7 @@ export async function launch() {
   return chromium.launch({ channel: 'chrome', headless: !process.env.HEADED });
 }
 
-export function readUserscript(name = 'talmud-קליטת-תלמידים.user.js') {
+export function readUserscript(name = 'talmud-tools.user.js') {
   return readFileSync(join(ROOT, 'dist', name), 'utf8');
 }
 
@@ -93,15 +93,15 @@ export async function evalRetry(page, fn, arg, { timeoutMs = 5000 } = {}) {
 
 // ─── קליטה: סלקטורים של הפאנל (מרוכזים כאן — משתנים פעם אחת כשהפאנל משתנה) ───
 export const ABSORB_SEL = {
-  panel: '#tma3-panel',
-  input: '#tma3-input',
-  start: '#tma3-start',
-  stop: '#tma3-stop',
-  startDate: '#tma3-start-date',
-  status: '#tma3-status',
-  results: '#tma3-results',
-  report: '#tma3-report',
-  log: '#tma3-log',
+  panel: '#tt-panel',
+  input: '#tt-absorb-input',
+  start: '#tt-absorb-start',
+  stop: '#tt-absorb-stop',
+  startDate: '#tt-absorb-start-date',
+  status: '#tt-absorb-status',
+  results: '#tt-absorb-results',
+  report: '#tt-absorb-report',
+  log: '#tt-log',
 };
 
 export async function waitForPanel(page, sel = ABSORB_SEL, timeoutMs = 10000) {
@@ -116,7 +116,7 @@ export async function waitForRunDone(page, sel = ABSORB_SEL, timeoutMs = 90000) 
       const st = await page.evaluate((s) => {
         const rep = document.querySelector(s.report);
         const status = document.querySelector(s.status);
-        return { done: !!rep && rep.style.display === 'block', status: status ? status.textContent : '' };
+        return { done: !!rep && !rep.hidden && rep.innerHTML.trim() !== '', status: status ? status.textContent : '' };
       }, sel);
       if (st.done) return st;
     } catch (e) { /* ניווט באמצע */ }
@@ -127,7 +127,7 @@ export async function waitForRunDone(page, sel = ABSORB_SEL, timeoutMs = 90000) 
 
 export async function readResults(page, sel = ABSORB_SEL) {
   return evalRetry(page, (s) => {
-    const rows = Array.from(document.querySelectorAll(`${s.results} table tr`)).slice(1);
+    const rows = Array.from(document.querySelectorAll(`${s.results} table tbody tr`));
     return rows.map((tr) => {
       const c = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
       return { branch: c[0], studyType: c[1], identity: c[2], status: c[3], detail: tr.getAttribute('title') || '' };
