@@ -5,7 +5,7 @@ import {
   gotoStudyTypeFromInstitute, gotoBranch, findBranchHref, parsePostbackHref,
   saveNavState, loadNavState, clearNavState,
   parseBranchFromH1, parseSelectedRowIndex, findStudyTypeRowPosition, gridPageSignature,
-  parseInstituteId, mergeBranchIds, institutePageUrl, loadBranchIds, NAV_BRANCH_IDS_SEED,
+  parseInstituteId, mergeBranchIds, institutePageUrl, loadBranchIds, NAV_BRANCH_IDS_SEED, forgetBranchId,
 } from '../src/core/navigate.js';
 
 // ─── Smoke: import ב-Node לא זרק, כל היצוא פונקציות ─────────────────────────
@@ -471,5 +471,64 @@ test('gotoBranch: סניף לא-מוכר בדף מוסד => מסלול העץ (v
     assert.equal(globalThis.location.href, INST_00, 'לא נורה location.href');
     assert.equal(loadNavState().currentBranch, '00');
     assert.equal(loadNavState().branchSource, 'h1');
+  });
+});
+
+// ─── I1 (סקירת-בטיחות 1b): המפה לומדת רק כשה-URL באמת השתנה; מיפוי שגוי מתרפא ──────────
+test('forgetBranchId: מחזיר מפה חדשה בלי הסניף (מרופד), המקור לא משתנה', () => {
+  const map = { '00': '491', '16': '4159', '07': '999' };
+  const out = forgetBranchId(map, '7');
+  assert.deepEqual(out, { '00': '491', '16': '4159' });
+  assert.deepEqual(map, { '00': '491', '16': '4159', '07': '999' }, 'המקור לא השתנה');
+  assert.deepEqual(forgetBranchId(map, '16'), { '00': '491', '07': '999' });
+});
+test('forgetBranchId: סניף שאינו במפה / קלט לא-תקין → עותק זהה (בלי לזרוק)', () => {
+  const map = { '00': '491' };
+  assert.deepEqual(forgetBranchId(map, '26'), { '00': '491' });
+  assert.deepEqual(forgetBranchId(map, 'abc'), { '00': '491' });
+  assert.deepEqual(forgetBranchId(map, null), { '00': '491' });
+  assert.deepEqual(forgetBranchId(null, '00'), {});
+  assert.deepEqual(forgetBranchId([1, 2], '00'), {});
+});
+
+test('getPage: דף מוסד באותו URL כמו דף-המוסד האחרון (רינדור-במקום של עץ-הצד) => nav state מה-h1, אך המפה לא לומדת', async () => {
+  // ‏POST לאותו URL: ה-h1 אומר "סניף 07" אך ה-URL עדיין InstituteID=491 (של סניף 00). ללמוד
+  // 07→491 היה שולח לנצח כל ניווט לסניף 07 לדף של 00 (ובדיקת ה-h1 הייתה מסרבת → דולג).
+  await withFakePageAsync({ url: INST_00, h1: 'עטרת שלמה סניף 07', nav: { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: INST_00 } }, () => {
+    const page = getPage();
+    assert.equal(page.branch, '07');
+    assert.equal(page.branchSource, 'h1');
+    assert.equal(loadBranchIds()['07'], undefined, 'לא נלמד 07→491');
+    assert.equal(loadNavState().currentBranch, '07');
+    assert.equal(loadNavState().branchSource, 'h1');
+  });
+  // אותו h1, אבל הגענו בניווט אמיתי (URL שונה מדף-המוסד האחרון) → לומדים.
+  await withFakePageAsync({ url: INST_16, h1: 'עטרת שלמה סניף 07', nav: { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: INST_00 } }, () => {
+    getPage();
+    assert.equal(loadBranchIds()['07'], '4159');
+  });
+});
+
+test('getPage: נחיתה עם pending לסניף אחר בדיוק על ה-InstituteID שהמפה הבטיחה לו => המיפוי השגוי נמחק (ריפוי-עצמי)', async () => {
+  // ‏gotoBranch(07) ניווט ל-URL שהמפה אמרה (491), אך ה-h1 שם אומר "סניף 00" → 07→491 שגוי.
+  await withFakePageAsync({
+    url: INST_00, h1: 'עטרת שלמה סניף 00',
+    nav: { currentBranch: '07', branchSource: 'pending', instituteUrl: INST_16 },
+    local: { 'talmud.absorb.branchIds': JSON.stringify({ '07': '491' }) },
+  }, () => {
+    const page = getPage();
+    assert.equal(page.branch, '00');
+    assert.equal(loadBranchIds()['07'], undefined, 'המיפוי השגוי נמחק');
+    assert.equal(loadBranchIds()['00'], '491', 'המיפוי הנכון נשאר');
+    assert.deepEqual(loadNavState(), { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: INST_00 });
+  });
+  // אותה נחיתה, אך המפה לא הבטיחה 491 לסניף 07 (קפיצה/עץ) → לא נוגעים במפה.
+  await withFakePageAsync({
+    url: INST_00, h1: 'עטרת שלמה סניף 00',
+    nav: { currentBranch: '07', branchSource: 'pending', instituteUrl: INST_16 },
+    local: { 'talmud.absorb.branchIds': JSON.stringify({ '07': '777' }) },
+  }, () => {
+    getPage();
+    assert.equal(loadBranchIds()['07'], '777', 'מיפוי אחר של 07 — לא נוגעים');
   });
 });

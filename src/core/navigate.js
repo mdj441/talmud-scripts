@@ -4,6 +4,7 @@
 
 import { $el } from './dom.js';
 import { firePostback, waitPRM } from './prm.js';
+import { log } from './log.js';
 
 const NAV_KEY = 'talmud.absorb.nav';
 
@@ -56,23 +57,47 @@ export function mergeBranchIds(map, branch, id) {
   return out;
 }
 
+// טהורה (I1): מפה חדשה בלי הסניף (מחיקת מיפוי שגוי). סניף לא-תקין/לא-קיים => עותק זהה.
+export function forgetBranchId(map, branch) {
+  const out = Object.assign({}, map && typeof map === 'object' && !Array.isArray(map) ? map : {});
+  const b = String(branch == null ? '' : branch).trim();
+  if (/^[0-9]{1,2}$/.test(b)) delete out[b.padStart(2, '0')];
+  return out;
+}
+
 // טהורה: URL דף-המוסד של InstituteID. id לא-מספרי => null (לא יורים ניווט ל-"undefined").
 export function institutePageUrl(id) {
   const i = String(id == null ? '' : id).trim();
   return /^\d+$/.test(i) ? NAV_INSTITUTE_PAGE + i : null;
 }
 
-// תמיד מחזיר מפה (seed + מה שנלמד); localStorage חסר/פגום => seed בלבד. לעולם לא זורק.
-export function loadBranchIds() {
-  let learned = {};
+// מה שנלמד בלבד (בלי seed); localStorage חסר/פגום => {}. לעולם לא זורק.
+function loadLearnedBranchIds() {
   try {
     if (typeof localStorage !== 'undefined') {
       const raw = localStorage.getItem(NAV_BRANCH_IDS_KEY);
       const parsed = raw ? JSON.parse(raw) : null;
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) learned = parsed;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
     }
   } catch (e) { /* אצווה לא נתקעת */ }
-  return Object.assign({}, NAV_BRANCH_IDS_SEED, learned);
+  return {};
+}
+
+// תמיד מחזיר מפה (seed + מה שנלמד); localStorage חסר/פגום => seed בלבד. לעולם לא זורק.
+export function loadBranchIds() {
+  return Object.assign({}, NAV_BRANCH_IDS_SEED, loadLearnedBranchIds());
+}
+
+// ‏I1: מוחק מיפוי שנלמד (ה-seed אינו נמחק — עובדה מהבדיקה הרטובה). מחזיר true רק כשהסניף
+// באמת נעלם מהמפה הממוזגת.
+function unlearnBranchId(branch) {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.setItem(NAV_BRANCH_IDS_KEY, JSON.stringify(forgetBranchId(loadLearnedBranchIds(), branch)));
+    return loadBranchIds()[String(branch).padStart(2, '0')] === undefined;
+  } catch (e) {
+    return false;
+  }
 }
 
 // לומד זוג אחד. כותב רק כשמשהו באמת השתנה (getPage נקרא בפולינג). מחזיר true כשנכתב.
@@ -95,10 +120,19 @@ export function learnBranchId(branch, id) {
 // כותב רק כשמשהו השתנה — getPage נקרא בפולינג (חתימת-דף) ואין טעם לכתוב כל 200ms.
 function navRememberInstitutePage(nav, branch, url) {
   const instituteId = parseInstituteId(url);
+  // ‏I1 ריפוי-עצמי: gotoBranch(NN) ניווט ל-URL שהמפה הבטיחה ל-NN, ונחתנו על דף של סניף אחר →
+  // המיפוי NN→id שגוי (נלמד פעם מרינדור-במקום) ונמחק; אחרת כל ניווט ל-NN היה נכשל לנצח (דולג).
+  if (nav.branchSource === 'pending' && nav.currentBranch && nav.currentBranch !== branch && instituteId
+      && loadBranchIds()[nav.currentBranch] === instituteId && unlearnBranchId(nav.currentBranch)) {
+    log(`[ניווט] מיפוי סניף ${nav.currentBranch} → InstituteID שגוי נמחק`);
+  }
   if (nav.currentBranch !== branch || nav.branchSource !== 'h1' || nav.instituteUrl !== url || nav.instituteId !== instituteId) {
     saveNavState(Object.assign({}, nav, { currentBranch: branch, branchSource: 'h1', instituteId, instituteUrl: url }));
   }
-  if (instituteId) learnBranchId(branch, instituteId);
+  // ‏I1: לומדים רק כשה-URL באמת השתנה מדף-המוסד האחרון. קליק-עץ שמרנדר את הדף במקום (POST לאותו
+  // URL: h1 "סניף 16", URL עדיין InstituteID=491) אסור שילמד 16→491. נחיתה ראשונה
+  // (instituteUrl לא מוגדר) עדיין לומדת.
+  if (instituteId && url !== nav.instituteUrl) learnBranchId(branch, instituteId);
 }
 
 // ─── זיהוי דף ────────────────────────────────────────────────────────────────
