@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>פרטי תלמיד - תלמו"ד (דמה)</title>
+<script src="/mock/shim.js"></script>
+<script src="/mock/db.js"></script>
+<script src="/mock/common.js"></script>
+</head>
+<body>
+<form id="aspnetForm" onsubmit="return false">
+<div id="mock-root"></div>
+</form>
+<script>
+(function () {
+  'use strict';
+  const D = window.__mockDb, C = window.__mockCommon;
+  const db = D.load();
+  const pending = db.pendingNewStudent || null;
+  const SD = 'ContentPlaceHolder1_TabsStudent_StudentDetails1_ucStudentDetails';
+  const TAB_ID = 'ContentPlaceHolder1_TabsStudent';
+
+  window.__mockLog = (m) => console.log('[mock-site] ' + m);
+  document.head.insertAdjacentHTML('beforeend', C.baseStyle());
+
+  const maxYear = (() => { const d = new Date(); d.setFullYear(d.getFullYear() - 16); return d; })();
+  const parseDate = (s) => { const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s || '').trim()); return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null; };
+  const hebrewOnly = (s) => /^[֐-׿\s'"-]+$/.test(String(s || '').trim());
+
+  function render() {
+    const root = document.getElementById('mock-root');
+    if (!pending) {
+      // הבאג של עץ-הצד: דף פרטי-תלמיד ריק (hidStudentState לא -1)
+      root.innerHTML = C.treeHtml(db) + `<div class="page">${C.headerHtml('פרטי תלמיד', ['בית', 'איתור תלמיד'])}
+        <input type="hidden" id="${SD}_hidStudentState" value=""><p>לא נבחר תלמיד.</p></div>` + C.messagePopupHtml();
+      C.wireMessageButtons();
+      return;
+    }
+    root.innerHTML = C.treeHtml(db) + `
+<div class="page">
+  ${C.headerHtml('פרטי תלמיד', ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', 'פרטי מוסד', 'פרטי תלמיד'])}
+  <div id="${TAB_ID}">
+    <div class="ajax__tab_header">
+      <span class="ajax__tab_tab" data-tab-header="0">פרטי תלמיד</span>
+      <span class="ajax__tab_tab" data-tab-header="1">שינוי פרטים מזהים</span>
+      <span class="ajax__tab_tab" data-tab-header="2">מצב זכאות</span>
+      <span class="ajax__tab_tab" data-tab-header="3">היסטוריית פעילות</span>
+    </div>
+    <div data-tab-index="0">
+      <input type="hidden" id="${SD}_hidStudentState" value="-1">
+      <table style="font-size:13px">
+        <tr><td>שם פרטי</td><td><input type="text" id="${SD}_txtFirstName" maxlength="30"> <span class="validator" id="${SD}_valFirstName">שם פרטי הינו חובה</span> <span class="validator" id="${SD}_valFirstNameCheckLetters">אותיות בעברית בלבד</span></td></tr>
+        <tr><td>שם משפחה</td><td><input type="text" id="${SD}_txtLastName" maxlength="30"> <span class="validator" id="${SD}_valLastName">שם משפחה הינו חובה</span> <span class="validator" id="${SD}_valLastNameCheckLetters">אותיות בעברית בלבד</span></td></tr>
+        <tr><td>שם האב</td><td><input type="text" id="${SD}_txtFatherName" maxlength="12"></td></tr>
+        <tr><td>תאריך לידה *</td><td><input type="text" id="${SD}_ctlBirthDate_txtDate" value="${C.esc(pending.birth || '')}"> <span class="validator" id="${SD}_validDate">תאריך לידה הינו חובה</span> <span class="validator" id="${SD}_valBirthDateLessThan">גיל התלמיד חייב להיות 16 לפחות</span></td></tr>
+        <tr><td>סוג מזהה תלמיד</td><td><select id="${SD}_ddlStudentIden"><option value="-1">בחירה</option><option value="0">ללא</option><option value="1">תעודת זהות</option><option value="2">דרכון</option></select></td></tr>
+        <tr><td>ת.ז/דרכון</td><td><input type="text" id="${SD}_txtID" value="${C.esc(pending.id)}"></td></tr>
+        <tr><td>מזהה תלמיד ממרכבה</td><td><input type="text" id="${SD}_txtStudentIdentifierMercava" maxlength="9"></td></tr>
+        <tr><td>מגדר</td><td><select id="${SD}_ddlGender"><option value="-1">בחירה</option><option value="1">זכר</option><option value="2">נקבה</option></select></td></tr>
+        <tr><td>מצב משפחתי</td><td><select id="${SD}_ddlFamilyStatus"><option value="-1">בחירה</option><option value="10">רווק/ה</option><option value="20">נשוי/אה</option><option value="21">פוליגם</option><option value="30">גרוש/ה</option><option value="40">אלמן/ה</option></select></td></tr>
+        <tr><td>תאריך נישואין</td><td><input type="text" id="${SD}_ctlMarriageDate_txtDate"></td></tr>
+        <tr><td></td><td><input type="checkbox" id="${SD}_chbMillitaryService"> שירות צבאי &nbsp; <input type="checkbox" id="${SD}_chbLearningInInstitute"> לומד במוסד</td></tr>
+      </table>
+    </div>
+    <div data-tab-index="1" style="display:none"></div>
+    <div data-tab-index="2" style="display:none"></div>
+    <div data-tab-index="3" style="display:none"></div>
+  </div>
+  <div style="margin-top:12px">
+    <a id="ContentPlaceHolder1_btnSave" class="btn" href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;ctl00$ContentPlaceHolder1$btnSave&quot;, &quot;&quot;, true, &quot;Validation&quot;, &quot;&quot;, false, true))">שמירה</a>
+  </div>
+</div>` + C.messagePopupHtml();
+    C.wireMessageButtons();
+    document.querySelectorAll('[data-tab-header]').forEach((el) => {
+      el.addEventListener('click', () => window.__mock.components[TAB_ID].set_activeTabIndex(Number(el.getAttribute('data-tab-header'))));
+    });
+    window.__mock.components[TAB_ID] = window.__mockTabs(TAB_ID, 4, 0);
+    window.__mock.components['ucMessagePopUp_ModalPopupExtender1'] = window.__mockModal('ucMessagePopUp_pnlMessagePopup');
+    document.getElementById(`${SD}_ddlStudentIden`).value = pending.idType === '2' ? '2' : '1';
+    document.getElementById(`${SD}_ddlGender`).value = '1';
+    document.getElementById(`${SD}_ddlFamilyStatus`).value = '20';
+
+    const v = (id, check) => ({ validationgroup: 'Validation', el: document.getElementById(id), errormessage: document.getElementById(id).textContent, check, get textContent() { return this.errormessage; } });
+    const val = (id) => document.getElementById(`${SD}_${id}`).value;
+    window.Page_Validators = [
+      v(`${SD}_valFirstName`, () => val('txtFirstName').trim() !== ''),
+      v(`${SD}_valFirstNameCheckLetters`, () => val('txtFirstName').trim() === '' || hebrewOnly(val('txtFirstName'))),
+      v(`${SD}_valLastName`, () => val('txtLastName').trim() !== ''),
+      v(`${SD}_valLastNameCheckLetters`, () => val('txtLastName').trim() === '' || hebrewOnly(val('txtLastName'))),
+      v(`${SD}_validDate`, () => !!parseDate(val('ctlBirthDate_txtDate'))),
+      v(`${SD}_valBirthDateLessThan`, () => { const d = parseDate(val('ctlBirthDate_txtDate')); return !d || d <= maxYear; }),
+    ];
+  }
+
+  window.__mock = {
+    components: {},
+    postback(target, arg) {
+      const m = C.handleMessagePostback(target);
+      if (m) return m;
+      if (!pending) return { kind: 'none' };
+
+      if (target === 'ctl00$ContentPlaceHolder1$btnSave') {
+        if (!window.Page_ClientValidate('Validation')) {
+          return { kind: 'async', apply: () => D.log(db, 'save rejected by validation') };
+        }
+        const first = document.getElementById(`${SD}_txtFirstName`).value.trim();
+        const last = document.getElementById(`${SD}_txtLastName`).value.trim();
+        const birth = document.getElementById(`${SD}_ctlBirthDate_txtDate`).value.trim();
+        const gender = document.getElementById(`${SD}_ddlGender`).value;
+        const family = document.getElementById(`${SD}_ddlFamilyStatus`).value;
+        const student = { id: pending.id, idType: pending.idType, first, last, birth, gender, family, accepted: pending.accepted, country: pending.country || undefined };
+        const commit = () => {
+          db.known = db.known || {};
+          db.known[pending.id] = { first, last, birth, gender, family };
+          D.enroll(db, pending.studyTypeInstId, student);
+          db.pendingNewStudent = null;
+          D.log(db, `save new student ${pending.id} → enrolled to ${pending.studyTypeInstId} (afterSave=${db.afterSave})`);
+          D.save(db);
+        };
+        const stUrl = `/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=${pending.studyTypeInstId}&InstituteID=${pending.instituteId}`;
+        if (db.afterSave === 'stay') {
+          return { kind: 'async', apply: () => { commit(); document.getElementById(`${SD}_hidStudentState`).value = '1'; } };
+        }
+        if (db.afterSave === 'popup') {
+          return { kind: 'async', apply: () => { commit(); document.getElementById(`${SD}_hidStudentState`).value = '1'; C.showMessage('הצלחה הפרטים נשמרו והתלמיד נקלט', ['continue']); } };
+        }
+        commit();
+        return { kind: 'navigate', url: stUrl };
+      }
+      return { kind: 'none' };
+    },
+    onContinue() { D.log(db, 'user clicked המשך'); },
+    afterPostback() { D.save(db); },
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>

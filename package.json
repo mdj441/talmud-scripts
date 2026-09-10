@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test"
+    "test": "node --test \"test/*.test.js\"",
+    "test:e2e": "node --test \"test/e2e/*.e2e.js\"",
+    "mock": "node mock/serve.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }
