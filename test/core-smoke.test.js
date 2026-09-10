@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { $el, isVisible, sleep, waitFor } from '../src/core/dom.js';
 import { getPRM, waitPRM, firePostback } from '../src/core/prm.js';
-import { readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal } from '../src/core/popup.js';
+import { readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal, classifyPopupText } from '../src/core/popup.js';
 
 // ─── Smoke: import in Node succeeds, no top-level document/window/Sys access ────
 test('smoke: כל היצוא הוא פונקציות (import ב-Node לא זרק)', () => {
@@ -238,5 +238,92 @@ test('waitPRM: endRequest בלי שגיאה אחרי begin → {ok:true, started
     assert.deepEqual(res, { started: true, ok: true });
     assert.equal(fake.handlers.begin.length, 0);
     assert.equal(fake.handlers.end.length, 0);
+  });
+});
+
+// ─── W3: הודעת-הצלחה היא אינפורמטיבית, לא בקשת-אישור (בדיקה רטובה 10.9.2026, F4) ──
+// האתר הציג אחרי אישור-קליטה מוצלח את ucMessagePopUp עם "הצלחה קליטת תלמיד הצליחה" ועם
+// כפתור "המשך" גלוי; hasContinue=true סיווג אותה "נחסם" ודילג על אימות-הגריד.
+test('classifyPopupText: מתחיל ב"הצלחה" / מכיל "הצליח" → success, גם כשיש כפתור "המשך"', () => {
+  assert.equal(classifyPopupText('הצלחה קליטת תלמיד הצליחה', { hasContinue: true, hasOkOnly: false }), 'success');
+  assert.equal(classifyPopupText('קליטת התלמיד הצליחה', { hasContinue: false, hasOkOnly: true }), 'success');
+  assert.equal(classifyPopupText('  הצלחה  ', {}), 'success');
+});
+test('classifyPopupText: "לא הצליח" / "נכשל" אינו הצלחה — נופל לסיווג לפי הכפתורים', () => {
+  assert.equal(classifyPopupText('קליטת התלמיד לא הצליחה', { hasContinue: false, hasOkOnly: true }), 'info');
+  assert.equal(classifyPopupText('הפעולה לא הצליחה — להמשיך?', { hasContinue: true }), 'confirm');
+  assert.equal(classifyPopupText('הצלחה חלקית: השמירה נכשלה', { hasContinue: false, hasOkOnly: true }), 'info');
+});
+test('classifyPopupText: כפתור "המשך" בטקסט אחר → confirm (לעולם לא נלחץ אוטומטית)', () => {
+  assert.equal(classifyPopupText('התלמיד לומד במוסד אחר. להמשיך?', { hasContinue: true, hasOkOnly: false }), 'confirm');
+});
+test('classifyPopupText: רק "אישור" → info; בלי כפתורים / בלי טקסט → unknown', () => {
+  assert.equal(classifyPopupText('שגיאה: תאריך לא תקין', { hasContinue: false, hasOkOnly: true }), 'info');
+  assert.equal(classifyPopupText('', {}), 'unknown');
+  assert.equal(classifyPopupText(null, null), 'unknown');
+  assert.equal(classifyPopupText('טקסט', undefined), 'unknown');
+});
+
+function withFakePopupDom(els, fn) {
+  const prevDoc = globalThis.document;
+  const prevWindow = globalThis.window;
+  globalThis.document = { getElementById: (id) => els[id] || null };
+  globalThis.window = { getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }) };
+  try {
+    return fn();
+  } finally {
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+  }
+}
+const popupShown = () => [{}];
+const popupHidden = () => [];
+
+test('readMessagePopup: מחזיר kind ו-buttons (תוויות הכפתורים הגלויים, בלי מזהים) — F4', () => {
+  const els = {
+    ucMessagePopUp_pnlMessagePopup: { getClientRects: popupShown, innerText: 'הודעה הצלחה קליטת תלמיד הצליחה המשך' },
+    ucMessagePopUp_btnMOK: { getClientRects: popupShown, value: 'המשך' },
+    ucMessagePopUp_btnMCancel: { getClientRects: popupHidden, value: 'אישור' },
+    ucMessagePopUp_btnMNo: { getClientRects: popupHidden, value: 'לא' },
+  };
+  withFakePopupDom(els, () => {
+    const pop = readMessagePopup();
+    assert.equal(pop.kind, 'success');
+    assert.equal(pop.hasContinue, true, 'הדגל הגולמי נשמר — הקורא מחליט לפי kind');
+    assert.equal(pop.text, 'הצלחה קליטת תלמיד הצליחה');
+    assert.deepEqual(pop.buttons, ['המשך']);
+  });
+});
+
+test('readMessagePopup: "המשך"+"לא" עם טקסט שאינו הצלחה → confirm, שני הכפתורים ברשימה, הטקסט נקי מתוויות', () => {
+  const els = {
+    ucMessagePopUp_pnlMessagePopup: { getClientRects: popupShown, innerText: 'הודעה התלמיד לומד במוסד אחר. להמשיך? המשך לא' },
+    ucMessagePopUp_btnMOK: { getClientRects: popupShown, textContent: ' המשך ' },
+    ucMessagePopUp_btnMCancel: { getClientRects: popupHidden },
+    ucMessagePopUp_btnMNo: { getClientRects: popupShown, value: 'לא' },
+  };
+  withFakePopupDom(els, () => {
+    const pop = readMessagePopup();
+    assert.equal(pop.kind, 'confirm');
+    assert.equal(pop.text, 'התלמיד לומד במוסד אחר. להמשיך?');
+    assert.deepEqual(pop.buttons, ['המשך', 'לא']);
+  });
+});
+
+test('readMessagePopup: רק "אישור" → info; חלונית לא גלויה → null', () => {
+  const els = {
+    ucMessagePopUp_pnlMessagePopup: { getClientRects: popupShown, innerText: 'שגיאה: תאריך לא תקין אישור' },
+    ucMessagePopUp_btnMOK: { getClientRects: popupHidden },
+    ucMessagePopUp_btnMCancel: { getClientRects: popupShown, value: 'אישור' },
+    ucMessagePopUp_btnMNo: { getClientRects: popupHidden },
+  };
+  withFakePopupDom(els, () => {
+    const pop = readMessagePopup();
+    assert.equal(pop.kind, 'info');
+    assert.equal(pop.hasOkOnly, true);
+    assert.deepEqual(pop.buttons, ['אישור']);
+  });
+  withFakePopupDom({ ucMessagePopUp_pnlMessagePopup: { getClientRects: popupHidden } }, () => {
+    assert.equal(readMessagePopup(), null);
   });
 });

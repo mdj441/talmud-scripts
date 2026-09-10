@@ -627,7 +627,17 @@ async function absorbHidePopup(gen) {
     await Promise.race([hide.wait, sleep(ABSORB_POPUP_HIDE_MS)]);
     await sleepCheckStop(150, gen);
   }
+  // ‏W3: הודעת-הצלחה עם "המשך" בלבד ובלי extender — אין דרך לסגור בלי ללחוץ "המשך", וזה
+  // אסור. ממשיכים בכל זאת (האימות מול הגריד הוא מקור-האמת); רושמים כדי שנדע מהבדיקה הרטובה.
+  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית (בלי ללחוץ "המשך") — ממשיכים');
   return hide;
+}
+
+// ‏W3: לוג אחיד להודעת-מערכת — הטקסט ממוסך, הסיווג ותוויות הכפתורים (בלי מזהים) כדי
+// שהבדיקה הרטובה תספר לנו מה האתר מציג בפועל.
+function absorbLogPopup(where, pop) {
+  const buttons = Array.isArray(pop.buttons) ? pop.buttons.join(', ') : '';
+  log(`[הודעה] ${where}: ${maskIdsInText(pop.text)} · סוג=${pop.kind || '?'} · כפתורים=[${buttons}]`);
 }
 
 async function absorbCloseAcceptModal() {
@@ -1036,13 +1046,16 @@ async function absorbHandleNewStudentPage(task, identity, mk, gen, myIdx) {
   await sleepCheckStop(400, gen);
 
   const pop = readMessagePopup();
+  let saveDetail = '';
   if (pop) {
-    log(`[הודעה] אחרי שמירת תלמיד חדש: ${maskIdsInText(pop.text)}`);
+    absorbLogPopup('אחרי שמירת תלמיד חדש', pop);
     await absorbHidePopup(gen);
-    if (pop.hasContinue) {
+    // ‏W3: הודעת-הצלחה אינפורמטיבית — נסגרה, ממשיכים לאימות. "המשך" עם טקסט אחר = נחסם.
+    if (pop.hasContinue && pop.kind !== 'success') {
       return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text,
         'המערכת מבקשת אישור "המשך" בשמירת התלמיד — הסקריפט לא מאשר לבד; השלם ידנית');
     }
+    saveDetail = pop.text;
     await sleepCheckStop(300, gen);
   }
 
@@ -1061,7 +1074,7 @@ async function absorbHandleNewStudentPage(task, identity, mk, gen, myIdx) {
       if (!search.executed) {
         return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(search), ABSORB_SEARCH_FAILED_ACTION);
       }
-      if (analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(search)).found) return mk(ABSORB_STATUS.OK_NEW, '', '');
+      if (analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(search)).found) return mk(ABSORB_STATUS.OK_NEW, saveDetail, '');
     }
   }
   return mk(ABSORB_STATUS.SAVED_UNVERIFIED, 'התלמיד נשמר; הקליטה לא אומתה בגריד',
@@ -1159,9 +1172,11 @@ export async function processStudent(task, gen) {
     const popAfterOpen = readMessagePopup();
     if (popAfterOpen) {
       popupDetail = popAfterOpen.text;
-      log(`[הודעה] אחרי "קליטה": ${maskIdsInText(popAfterOpen.text)}`);
+      absorbLogPopup('אחרי "קליטה"', popAfterOpen);
       await absorbHidePopup(gen);
-      if (popAfterOpen.hasContinue) {
+      // ‏W3: הודעת-הצלחה היא אינפורמטיבית — נסגרת (hide, לא "המשך") והזרימה ממשיכה למודאל.
+      // כל "המשך" אחר = בקשת-אישור → נחסם; לעולם לא נלחץ אוטומטית.
+      if (popAfterOpen.hasContinue && popAfterOpen.kind !== 'success') {
         return mk(`${ABSORB_STATUS.BLOCKED}: ${popAfterOpen.text}`, popAfterOpen.text,
           'המערכת מבקשת אישור "המשך" — הסקריפט לא מאשר לבד. בצע את הקליטה ידנית ובדוק את ההודעה');
       }
@@ -1249,12 +1264,16 @@ export async function processStudent(task, gen) {
     await sleepCheckStop(400, gen);
     const popAfterConfirm = readMessagePopup();
     if (popAfterConfirm) {
-      log(`[הודעה] אחרי אישור: ${maskIdsInText(popAfterConfirm.text)}`);
+      absorbLogPopup('אחרי אישור', popAfterConfirm);
       await absorbHidePopup(gen);
-      if (popAfterConfirm.hasContinue) {
+      // ‏W3 (F4): "הצלחה קליטת תלמיד הצליחה" מגיעה עם "המשך" גלוי — אינפורמטיבית. נסגרת
+      // (hide) וממשיכים לאימות מול הגריד → "נקלט" עם טקסט ההודעה כפירוט. "המשך" עם טקסט
+      // אחר (למשל מעבר בין מוסדות) נשאר "נחסם" — לעולם לא נלחץ אוטומטית.
+      if (popAfterConfirm.hasContinue && popAfterConfirm.kind !== 'success') {
         return mk(`${ABSORB_STATUS.BLOCKED}: ${popAfterConfirm.text}`, popAfterConfirm.text,
           'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות) — הסקריפט לא מאשר לבד. השלם ידנית');
       }
+      if (popAfterConfirm.kind === 'success') log('[הודעה] הודעת-הצלחה — ממשיכים לאימות בגריד');
       popupDetail = popAfterConfirm.text;
       await sleepCheckStop(300, gen);
     }
