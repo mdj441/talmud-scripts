@@ -35,6 +35,8 @@ const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — ל�
 export function absorbSetHooks(hooks) { S.hooks = hooks || {}; }
 export function absorbGetResults() { return S.results.slice(); }
 export function absorbIsRunning() { return S.running; }
+// "עסוק" = רץ, או שנורה ניווט מלא והריצה ממתינה לטעינת הדף (S.running=false בכוונה, אך אסור להתחיל ריצה חדשה).
+export function absorbIsBusy() { return S.running || watchdogTimer !== null; }
 function hook(name, ...args) { try { if (S.hooks[name]) S.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
 
 // ─── ניווט מלא: האם הדף מתחיל להיפרק, וכלב-שומר אם לא ─────────────────────

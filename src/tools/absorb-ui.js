@@ -15,7 +15,7 @@ import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsT
 import { clearAbsorbStop } from './absorb-state.js';
 import {
   absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults,
-  absorbIsRunning, absorbSavedQueueInfo, absorbDiscardSavedQueue,
+  absorbIsRunning, absorbIsBusy, absorbSavedQueueInfo, absorbDiscardSavedQueue,
 } from './absorb-flow.js';
 import { esc, buttonHtml, buttonsRowHtml, fieldHtml, resultsTableHtml, reportBoxHtml, flash, setHtml, setText, show, setDisabled, bindDateMask, todayDMY } from '../ui/widgets.js';
 
@@ -255,7 +255,8 @@ function resetStartButton() {
 
 // ─── פעולות ─────────────────────────────────────────────────────────────────
 async function start() {
-  if (absorbIsRunning()) return;
+  if (absorbIsBusy()) { ui.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
+  if (absorbHasSavedQueue()) { ui.status('יש תור שמור שממתין להמשך. לחץ "המשך" או "נקה" למעלה, או "עצור"'); return; }
   const v = renderTable();
   if (!v.filled.length) { ui.status('אין שורות להרצה. הדבק מאקסל, טען קובץ, או מלא שורה בטבלה'); return; }
   if (v.errors.length && !awaitingErrorConfirm) {
@@ -423,7 +424,7 @@ export const absorbTool = {
   title: 'קליטת תלמידים',
   pages: ['institute', 'studyType', 'newStudent'],
   hasPendingRun: absorbHasSavedQueue,
-  isRunning: absorbIsRunning,
+  isRunning: absorbIsBusy,
   onStop: stop,
   mount,
 };

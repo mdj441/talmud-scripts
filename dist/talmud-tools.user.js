@@ -2538,6 +2538,8 @@ const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — ל�
 function absorbSetHooks(hooks) { S.hooks = hooks || {}; }
 function absorbGetResults() { return S.results.slice(); }
 function absorbIsRunning() { return S.running; }
+// "עסוק" = רץ, או שנורה ניווט מלא והריצה ממתינה לטעינת הדף (S.running=false בכוונה, אך אסור להתחיל ריצה חדשה).
+function absorbIsBusy() { return S.running || watchdogTimer !== null; }
 function hook(name, ...args) { try { if (S.hooks[name]) S.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
 
 // ─── ניווט מלא: האם הדף מתחיל להיפרק, וכלב-שומר אם לא ─────────────────────
@@ -3371,7 +3373,8 @@ function resetStartButton() {
 
 // ─── פעולות ─────────────────────────────────────────────────────────────────
 async function start() {
-  if (absorbIsRunning()) return;
+  if (absorbIsBusy()) { ui.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
+  if (absorbHasSavedQueue()) { ui.status('יש תור שמור שממתין להמשך. לחץ "המשך" או "נקה" למעלה, או "עצור"'); return; }
   const v = renderTable();
   if (!v.filled.length) { ui.status('אין שורות להרצה. הדבק מאקסל, טען קובץ, או מלא שורה בטבלה'); return; }
   if (v.errors.length && !awaitingErrorConfirm) {
@@ -3539,51 +3542,2512 @@ const absorbTool = {
   title: 'קליטת תלמידים',
   pages: ['institute', 'studyType', 'newStudent'],
   hasPendingRun: absorbHasSavedQueue,
-  isRunning: absorbIsRunning,
+  isRunning: absorbIsBusy,
   onStop: stop,
   mount,
 };
 
+// ─── src/tools/depart.js ───
+// עזיבת תלמידים: הזרימה + הפונקציות הטהורות. העברה מכנית מ"תלמוד - עזיבת תלמידים" v5.0
+// (979 שורות): אותם מזהי-DOM, אותם postbacks, אותו סדר צעדים. הליבה (PRM, חלונית ההודעה,
+// ניווט, יומן) משותפת. דף מוסד, לשונית 3 "תלמידים למוסד".
+// לכל תלמיד: לשונית 3 → חיפוש → ניתוח הגריד → בחירת שורה → "עזיבה" → מודאל (תאריך + סיבה) →
+// "אישור" → חלונית הודעה → "שמירה" → הודעה אחרי שמירה → אימות בחיפוש חוזר.
+// רב-סניפי: ניווט מלא לדף המוסד של הסניף, התור ב-sessionStorage, המשך אחרי הטעינה.
+// אין גישה ל-document/window/sessionStorage ברמת המודול (import תקין ב-Node).
+
+
+// ─── מזהי הפקדים (כמו בסקריפט הישן, שורות 15-29) ─────────────────────────────
+const DEPART_BASE = 'ContentPlaceHolder1_tabInstituteDetails_TabPanel1_ucStudentsSearch';
+const DEPART_IDS = {
+  tabContainer: 'ContentPlaceHolder1_tabInstituteDetails', // לשונית 3 = "תלמידים למוסד"
+  idField: `${DEPART_BASE}_txtStudenPassport`,
+  searchBtn: `${DEPART_BASE}_btnSearch`,
+  countLabel: `${DEPART_BASE}_lblCountSearch`,
+  grid: `${DEPART_BASE}_gvIStudents`, // 11 עמודות: ת.ז. באינדקס 3, תאריך עזיבה באינדקס 9
+  deptBtn: 'ContentPlaceHolder1_btnStudentDeparture3',
+  saveBtn: 'ContentPlaceHolder1_btnSaveTab3',
+  modal: `${DEPART_BASE}_ucStudentClose_DivCloseStudent`,
+  dateField: `${DEPART_BASE}_ucStudentClose_ctlLeaveDate_txtDate`,
+  reasonDropdown: `${DEPART_BASE}_ucStudentClose_ddlLeaveReason`,
+  confirmBtn: `${DEPART_BASE}_ucStudentClose_btnDepartureStudent`,
+  cancelBtn: `${DEPART_BASE}_ucStudentClose_btnClose`,
+};
+const DEPART_TAB_INDEX = 3;
+
+const DEPART_REASONS = [
+  { value: '1', label: 'הפסקת לימודים' },
+  { value: '3', label: 'מעבר בין ישיבות' },
+  { value: '4', label: 'מעבר בין יחידות צבאיות' },
+  { value: '6', label: 'אחר' },
+  { value: '7', label: 'גיוס לצה"ל' },
+];
+const DEPART_DEFAULT_REASON = '1';
+
+// ─── סטטוסים (כמו בישן; "דולג" ו"סניף לא נמצא" חדשים לרשת-הביטחון) ───────────
+const DEPART_STATUS = {
+  OK: 'הצליח',
+  NOT_FOUND: 'לא נמצא',
+  ALREADY: 'כבר בוצעה עזיבה', // בפועל: "כבר בוצעה עזיבה (DD/MM/YYYY)"
+  BLOCKED: 'נחסם', // בפועל: "נחסם: <טקסט ההודעה>"
+  UNVERIFIED: 'עזיבה בוצעה אך לא אומתה',
+  BRANCH_NOT_FOUND: 'סניף לא נמצא',
+  ERROR: 'שגיאה',
+  SKIPPED: 'דולג',
+  STOPPED: 'נעצר',
+};
+
+const DEPART_TSV_HEADER = ['סניף', 'ת.ז.', 'סטטוס', 'מה לעשות'];
+const DEPART_CSV_HEADER = ['סניף', 'ת.ז.', 'סטטוס', 'פירוט', 'מה לעשות'];
+
+// הוראות אופרטיביות לדוח "מה נשאר"
+const DEPART_ACTIONS = {
+  notFound: 'בדוק שהת.ז. והסניף נכונים. אם התלמיד רשום בסניף אחר, הרץ אותו עם הסניף הנכון',
+  blocked: 'פתח את דף המוסד, לשונית "תלמידים למוסד", חפש את התלמיד ולחץ "עזיבה" ידנית. קרא את ההודעה של האתר והחלט',
+  unverified: 'חפש את התלמיד בלשונית "תלמידים למוסד" ובדוק את עמודת "תאריך עזיבה". אם היא ריקה, בצע את העזיבה ידנית',
+  error: 'בצע את העזיבה ידנית באתר. אם זה חוזר, העתק את היומן (מזהים ממוסכים) ושלח',
+  stopped: 'הרץ שוב את השורות שנותרו',
+  searchFailed: 'רענן את דף המוסד, ודא שהלשונית "תלמידים למוסד" נפתחת, והרץ שוב את השורה',
+};
+
+function departManualBranchAction(branch) {
+  return `פתח ידנית את דף המוסד של סניף ${branch} (בעץ הסניפים בצד) והרץ שוב את השורה`;
+}
+
+// "נחסם: טקסט" → "נחסם"; "כבר בוצעה עזיבה (תאריך)" → "כבר בוצעה עזיבה"
+function departStatusKey(status) {
+  const s = String(status == null ? '' : status);
+  const cut = s.search(/:|\s\(/);
+  return (cut === -1 ? s : s.slice(0, cut)).trim();
+}
+
+// "הצליח" ו"כבר בוצעה עזיבה" = אין מה לעשות (לא נכנסים לדוח "מה נשאר")
+function isDepartSuccess(status) {
+  const k = departStatusKey(status);
+  return k === DEPART_STATUS.OK || k === DEPART_STATUS.ALREADY;
+}
+
+// ─── קלט: טורים "סניף" "ת.ז." (טאבים / פסיקים / רווחים; שורת כותרת אופציונלית; # מדולג) ─
+const DEPART_WRAP_QUOTES = /^["'״׳“”‘’]+|["'״׳“”‘’]+$/g;
+const DEPART_HEADER_BRANCH = /^סניף$/;
+const DEPART_HEADER_ID = /^(ת\.?ז\.?(\/דרכון)?|תז|מזהה|דרכון|ת\.ז\. ?\/ ?דרכון)$/;
+
+function departSplitCells(line, delimiter) {
+  let cells;
+  if (delimiter === 'tab') cells = line.split('\t');
+  else if (delimiter === 'comma') cells = line.split(',');
+  else cells = line.trim().split(/\s+/).filter((c) => c !== '');
+  return cells.map((c) => String(c).trim().replace(DEPART_WRAP_QUOTES, '').trim());
+}
+
+function departHeaderMap(cells) {
+  const map = { branch: -1, identity: -1 };
+  cells.forEach((c, i) => {
+    const t = c.replace(/\s+/g, ' ').toLowerCase();
+    if (map.branch === -1 && DEPART_HEADER_BRANCH.test(t)) map.branch = i;
+    else if (map.identity === -1 && DEPART_HEADER_ID.test(t)) map.identity = i;
+  });
+  return map.branch !== -1 || map.identity !== -1 ? map : null;
+}
+
+// ת.ז.: ספרות (5-9) → ריפוד ל-9; דרכון: אותיות+ספרות (4-20) → אותיות גדולות; אחרת שגיאה.
+function departNormalizeIdentity(raw) {
+  const s = String(raw == null ? '' : raw).replace(/[\s-]/g, '');
+  if (!s) return { value: '', error: 'חסרה ת.ז.' };
+  if (/^\d+$/.test(s)) {
+    if (s.length < 5 || s.length > 9) return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+    return { value: padId9(s), error: null };
+  }
+  if (/^[A-Za-z0-9]{4,20}$/.test(s)) return { value: s.toUpperCase(), error: null };
+  return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+}
+
+function parseDepartInput(text) {
+  const src = String(text == null ? '' : text);
+  const rawLines = src.split(/\r\n|\r|\n/);
+  const delimiter = src.includes('\t') ? 'tab' : (src.includes(',') ? 'comma' : 'whitespace');
+  const tasks = [];
+  const errors = [];
+  let headerMap = null;
+  let sawContent = false;
+
+  for (let i = 0; i < rawLines.length; i++) {
+    const raw = rawLines[i];
+    const trimmed = raw.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const lineNo = i + 1;
+    const cells = departSplitCells(raw, delimiter);
+
+    if (!sawContent) {
+      sawContent = true;
+      if (!/^\d+$/.test(cells[0] || '')) {
+        const map = departHeaderMap(cells);
+        if (map) { headerMap = map; continue; }
+      }
+    }
+
+    const bi = headerMap && headerMap.branch !== -1 ? headerMap.branch : 0;
+    const ii = headerMap && headerMap.identity !== -1 ? headerMap.identity : 1;
+    const branchRaw = cells[bi] || '';
+    const idRaw = cells[ii] || '';
+    if (!branchRaw || !idRaw) { errors.push({ line: lineNo, text: raw, reason: 'חסרים שדות חובה: סניף / ת.ז.' }); continue; }
+    const branch = normalizeBranch(branchRaw);
+    if (!branch) { errors.push({ line: lineNo, text: raw, reason: `סניף לא תקין: ${branchRaw}` }); continue; }
+    const id = departNormalizeIdentity(idRaw);
+    if (id.error) { errors.push({ line: lineNo, text: raw, reason: id.error }); continue; }
+    tasks.push({ line: lineNo, branch, identity: id.value });
+  }
+  return { tasks, errors };
+}
+
+// ─── תאריך DD/MM/YYYY ─────────────────────────────────────────────────────────
+function departIsValidDate(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return false;
+  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
+  return d <= new Date(y, mo, 0).getDate();
+}
+
+function departTodayDMY() {
+  const d = new Date();
+  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
+}
+
+// ─── ניתוח הגריד (פורט של analyzeGrid הישן, שורות 183-218) ───────────────────
+// rows = שורות-תאים (td בלבד; שורת הכותרת עם th יוצאת ריקה ונדחית ב-length<10).
+// count = "נמצאו N": 0 → לא נמצא; 1 → מותר fallback לשורת-הנתונים הראשונה (כמו בישן);
+// null → אין תווית: התאמה מדויקת, ו-fallback רק כשיש שורת-נתונים אחת בלבד.
+function departParseCount(text) {
+  const m = /נמצאו\s*(\d+)/.exec(String(text == null ? '' : text));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+const departNormId = (s) => String(s == null ? '' : s).trim().replace(/^0+/, '').toUpperCase();
+
+function analyzeDepartGrid(rows, identity, count) {
+  const none = { found: false, departed: false, departDate: '', matchType: null };
+  if (count === 0) return none;
+  if (!Array.isArray(rows)) return none;
+  const target = departNormId(identity);
+  if (!target) return none;
+  let firstDataRow = null;
+  let dataRows = 0;
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length < 10) continue;
+    const rowId = String(row[3] == null ? '' : row[3]).trim();
+    if (!rowId) continue;
+    dataRows++;
+    const departDate = String(row[9] == null ? '' : row[9]).trim();
+    if (!firstDataRow) firstDataRow = { rowId, departDate };
+    if (departNormId(rowId) === target) return { found: true, departed: !!departDate, departDate, matchType: 'exact' };
+  }
+  // count=1 ובלי התאמה (למשל ריפוד שונה) → השורה היחידה, כמו בישן
+  if (firstDataRow && (count === 1 || (count == null && dataRows === 1))) {
+    return { found: true, departed: !!firstDataRow.departDate, departDate: firstDataRow.departDate, matchType: 'single-row-fallback' };
+  }
+  return none;
+}
+
+// onclick="selectedRowStudents('N')" → N
+function departSelectRowIndex(onclickText) {
+  if (typeof onclickText !== 'string') return null;
+  const m = /selectedRowStudents\s*\(\s*['"]?(\d+)['"]?\s*\)/.exec(onclickText);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+// href/onclick → {target, arg, group, validate}. תומך ב-__doPostBack ישיר, בעטיפת setTimeout
+// של תיבת-סימון (`setTimeout('__doPostBack(\'x\',\'\')', 0)`) וב-WebForm_DoPostBackWithOptions.
+function departParsePostback(text) {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  const direct = parsePostbackHref(text);
+  if (direct) return { target: direct.target, arg: direct.arg, group: '', validate: false };
+  const wrapped = /__doPostBack\(\s*(?:\\)?'([^'\\]*)(?:\\)?'\s*,\s*(?:\\)?'([^'\\]*)(?:\\)?'\s*\)/.exec(text);
+  if (wrapped) return { target: wrapped[1], arg: wrapped[2], group: '', validate: false };
+  const opts = /WebForm_PostBackOptions\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*(true|false)\s*,\s*"([^"]*)"/.exec(text);
+  if (opts) return { target: opts[1], arg: opts[2], group: opts[4], validate: opts[3] === 'true' };
+  return null;
+}
+
+// ─── תוצאות: TSV / CSV / דוח "מה נשאר" ───────────────────────────────────────
+function makeDepartResult(task, status, detail, action) {
+  const t = task || {};
+  return { line: t.line, branch: t.branch, identity: t.identity, status, detail: detail || '', action: action || '' };
+}
+
+const departFlat = (v) => String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ').trim();
+
+function buildDepartTsv(results) {
+  const lines = [DEPART_TSV_HEADER.join('\t')];
+  for (const r of Array.isArray(results) ? results : []) {
+    lines.push([r.branch, r.identity, r.status, r.action].map(departFlat).join('\t'));
+  }
+  return lines.join('\n');
+}
+
+function buildDepartCsvRows(results) {
+  const rows = [DEPART_CSV_HEADER.slice()];
+  for (const r of Array.isArray(results) ? results : []) rows.push([r.branch, r.identity, r.status, r.detail || '', r.action || '']);
+  return rows;
+}
+
+function summarizeDepartResults(results) {
+  const counts = {};
+  for (const r of Array.isArray(results) ? results : []) {
+    const key = departStatusKey(r && r.status) || '?';
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return counts;
+}
+
+function buildDepartReport(results) {
+  const list = Array.isArray(results) ? results : [];
+  const counts = summarizeDepartResults(list);
+  const lines = list
+    .filter((r) => !isDepartSuccess(r && r.status))
+    .map((r) => [r.branch, r.identity, r.status, r.action || 'אין הוראה'].map(departFlat).join(' · '));
+  const summary = Object.keys(counts).map((k) => `${k}=${counts[k]}`).join(' · ');
+  return { lines, summary, counts };
+}
+
+function departQueueIsStale(startedAt, now, maxAgeMs) {
+  const t0 = Date.parse(startedAt);
+  if (!startedAt || Number.isNaN(t0)) return false;
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  if (Number.isNaN(nowMs)) return false;
+  return nowMs - t0 > (typeof maxAgeMs === 'number' ? maxAgeMs : DEPART_MAX_QUEUE_AGE_MS);
+}
+
+// ═══ מצב הריצה (sessionStorage: שורד טעינת-דף) ═══════════════════════════════
+const DEPART_QUEUE_KEY = 'talmud.depart.queue';
+const DEPART_STOP_KEY = 'talmud.depart.stop';
+const DEPART_LANDINGS_KEY = 'talmud.depart.landings';
+const DEPART_STOP_PREFIX = '__DEPART_STOPPED__@';
+const DEPART_MAX_LANDINGS = 6; // טעינות-דף לתלמיד אחד; מעל זה "דולג"
+const DEPART_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // תור שמור ישן מזה לא ממשיך לבד
+const DEPART_STUDENT_TIMEOUT_MS = 60000;
+const DEPART_NAV_WAIT_MS = 12000;
+const DEPART_POPUP_HIDE_MS = 5000;
+const DEPART_FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
+const DEPART_SELECT_WAIT = { startTimeoutMs: 1000, totalTimeoutMs: 10000 };
+const DEPART_NAVIGATED = { __navigated: true };
+
+const DEPART_S = {
+  queue: [], results: [], curIdx: 0, running: false, startedAt: null,
+  settings: { leaveDate: '', leaveReason: DEPART_DEFAULT_REASON },
+  hooks: {},
+};
+
+function departSetHooks(hooks) { DEPART_S.hooks = hooks || {}; }
+function departGetResults() { return DEPART_S.results.slice(); }
+function departIsRunning() { return DEPART_S.running; }
+function departGetSettings() { return Object.assign({}, DEPART_S.settings); }
+function departHook(name, ...args) { try { if (DEPART_S.hooks[name]) DEPART_S.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
+
+function departIsStopped() { try { return sessionStorage.getItem(DEPART_STOP_KEY) === '1'; } catch (e) { return false; } }
+function departSetStop() { try { sessionStorage.setItem(DEPART_STOP_KEY, '1'); } catch (e) { /* noop */ } }
+function departClearStop() { try { sessionStorage.removeItem(DEPART_STOP_KEY); } catch (e) { /* noop */ } }
+function departStopError(where) { return new Error(DEPART_STOP_PREFIX + where); }
+function departIsStopError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_STOP_PREFIX) === 0; }
+function departCheckStop(where) { if (departIsStopped()) throw departStopError(where); }
+
+function departSaveState() {
+  const state = {
+    queue: DEPART_S.queue, results: DEPART_S.results, curIdx: DEPART_S.curIdx,
+    startedAt: DEPART_S.startedAt || new Date().toISOString(), settings: DEPART_S.settings,
+  };
+  try { sessionStorage.setItem(DEPART_QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[עזיבה] שמירת המצב נכשלה: ' + (e && e.message)); }
+}
+function departLoadState() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(DEPART_QUEUE_KEY) || 'null');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch (e) { return null; }
+}
+function departClearState() {
+  try { sessionStorage.removeItem(DEPART_QUEUE_KEY); sessionStorage.removeItem(DEPART_LANDINGS_KEY); } catch (e) { /* noop */ }
+}
+function departBumpLandings(idx) {
+  let rec = { idx: -1, count: 0 };
+  try { const raw = sessionStorage.getItem(DEPART_LANDINGS_KEY); if (raw) rec = JSON.parse(raw) || rec; } catch (e) { /* ברירת מחדל */ }
+  rec = rec.idx === idx ? { idx, count: (rec.count || 0) + 1 } : { idx, count: 1 };
+  try { sessionStorage.setItem(DEPART_LANDINGS_KEY, JSON.stringify(rec)); } catch (e) { /* noop */ }
+  return rec.count;
+}
+function departResetLandings() { try { sessionStorage.removeItem(DEPART_LANDINGS_KEY); } catch (e) { /* noop */ } }
+
+function departResetRun() {
+  DEPART_S.queue = []; DEPART_S.results = []; DEPART_S.curIdx = 0; DEPART_S.running = false; DEPART_S.startedAt = null;
+}
+
+// ─── ניווט מלא: האם הדף מתחיל להיפרק ─────────────────────────────────────────
+let departUnloadSeen = false;
+let departUnloadWatched = false;
+function departWatchUnload() {
+  if (departUnloadWatched || typeof window === 'undefined') return;
+  departUnloadWatched = true;
+  const mark = () => { departUnloadSeen = true; };
+  try { window.addEventListener('beforeunload', mark, true); window.addEventListener('pagehide', mark, true); } catch (e) { /* noop */ }
+}
+
+// ═══ נגיעות ב-DOM (סדר postback קשיח: המתנה נרשמת לפני, הירי נדחה ל-setTimeout(0)) ═══
+
+// לחיצה על פקד: postback דרך ה-href/onclick אם יש (בלי eval), אחרת קליק נדחה.
+function departFireElement(el, opts) {
+  const href = (el && typeof el.getAttribute === 'function' && el.getAttribute('href')) || '';
+  const pb = departParsePostback(href);
+  if (pb && pb.target) {
+    if (pb.validate && typeof window !== 'undefined' && typeof window.Page_ClientValidate === 'function') {
+      let valid = true;
+      try { valid = !!window.Page_ClientValidate(pb.group || ''); } catch (e) { valid = true; }
+      if (!valid) {
+        try { window.Page_BlockSubmit = false; } catch (e) { /* noop */ }
+        return Promise.resolve({ ok: false, started: false, validationFailed: true, reason: 'ולידציה צד-לקוח נכשלה' });
+      }
+    }
+    return firePostback(pb.target, pb.arg, opts);
+  }
+  const wait = waitPRM(opts);
+  setTimeout(() => { try { el.click(); } catch (e) { log('[postback] כשל בלחיצה: ' + (e && e.message)); } }, 0);
+  return wait;
+}
+
+// כתיבה לשדה = פוטנציאלית postback (AutoPostBack): רושמים המתנה קודם, כותבים מ-setTimeout(0).
+function departSetAndWait(el, value, opts) {
+  const o = opts || {};
+  const wait = waitPRM(o.select ? DEPART_SELECT_WAIT : DEPART_FIELD_WAIT);
+  setTimeout(() => {
+    try {
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    } catch (e) { log('[שדה] כתיבה נכשלה: ' + (e && e.message)); }
+  }, 0);
+  return wait;
+}
+
+// שלב 1 (ישן 416-427): לשונית 3 "תלמידים למוסד" דרך ה-TabContainer של האתר.
+function departActivateStudentsTab() {
+  try {
+    if (typeof window === 'undefined' || typeof window.$find !== 'function') return false;
+    const tabs = window.$find(DEPART_IDS.tabContainer);
+    if (!tabs || typeof tabs.set_activeTabIndex !== 'function') { log('[לשונית] TabContainer לא נמצא'); return false; }
+    let active = -1;
+    try { active = tabs.get_activeTabIndex(); } catch (e) { /* ignore */ }
+    if (active !== DEPART_TAB_INDEX) {
+      log('[לשונית] מעבר ללשונית "תלמידים למוסד"');
+      tabs.set_activeTabIndex(DEPART_TAB_INDEX);
+      return true;
+    }
+  } catch (e) { log('[לשונית] שגיאה במעבר לשונית: ' + (e && e.message)); }
+  return false;
+}
+
+async function departWaitTabReady() {
+  try {
+    await waitFor(() => isVisible($el(DEPART_IDS.idField)), { timeout: 3000, interval: 50 });
+    return true;
+  } catch (e) { return isVisible($el(DEPART_IDS.idField)); }
+}
+
+function departReadGridRows() {
+  const grid = $el(DEPART_IDS.grid);
+  if (!grid || typeof grid.querySelectorAll !== 'function') return [];
+  return Array.from(grid.querySelectorAll('tr')).map(
+    (tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent || '').trim())
+  );
+}
+
+// שלב 2 (ישן searchFor 160-180): מילוי, חיפוש, והמתנה עד שהגריד באמת התרענן (endRequest
+// עלול להקדים את החלפת ה-DOM של ה-UpdatePanel). מבטלים את תוקף התווית לפני, כמו בישן.
+async function departSearch(identity) {
+  const input = $el(DEPART_IDS.idField);
+  const btn = $el(DEPART_IDS.searchBtn);
+  if (!input || !btn) return { executed: false, count: null, countText: '', reason: 'שדה או כפתור החיפוש לא נמצאו' };
+  const oldGrid = $el(DEPART_IDS.grid);
+  const cl = $el(DEPART_IDS.countLabel);
+  if (cl) cl.textContent = '';
+  await departSetAndWait(input, identity);
+  const res = await departFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  let settled = true;
+  try {
+    await waitFor(() => {
+      const grid = $el(DEPART_IDS.grid);
+      const cnt = (($el(DEPART_IDS.countLabel) || {}).textContent || '').trim();
+      return (grid && grid !== oldGrid) || cnt !== '';
+    }, { timeout: 6000, interval: 50 });
+  } catch (e) {
+    settled = false;
+    log('[חיפוש] הגריד לא התרענן תוך 6 שניות - מנתחים בכל זאת');
+  }
+  const countText = (($el(DEPART_IDS.countLabel) || {}).textContent || '').trim();
+  const count = departParseCount(countText);
+  const started = !!(res && res.started);
+  const ok = !res || res.ok !== false;
+  const executed = ok && (started || settled);
+  log(`[חיפוש] ${maskId(identity)} → "${countText || 'ללא תווית ספירה'}" · started=${started} ok=${ok} refreshed=${settled}`);
+  return { executed, started, ok, settled, count, countText, reason: res && res.reason };
+}
+
+function departSearchFailReason(res) {
+  if (!res) return 'החיפוש לא הופעל';
+  if (res.reason && !res.executed && res.count == null && !res.started && !res.settled && !res.ok) return 'החיפוש נכשל: ' + res.reason;
+  if (!res.ok) return 'החיפוש נכשל או פג-זמן בשרת' + (res.reason ? ` (${res.reason})` : '');
+  if (!res.started && !res.settled) return 'לחיצת החיפוש לא הפעילה בקשה לשרת והרשימה לא התרעננה';
+  return res.reason || 'החיפוש לא הופעל';
+}
+
+// שלב 4 (ישן selectFirstActiveRow 221-272): שורת-הנתונים הראשונה → selectedRowStudents(N)
+// (הפונקציה של האתר, בלי eval) → תיבת-הסימון (postback שמאפשר את "עזיבה" בצד השרת) →
+// המתנה שהכפתור יתאפשר, עם גיבוי של קריאה ישירה. אם עדיין מנוטרל: ממשיכים בכל זאת (כמו בישן).
+async function departSelectFirstActiveRow() {
+  const grid = $el(DEPART_IDS.grid);
+  if (!grid) return { ok: false, reason: 'הגריד לא נמצא' };
+  let dataRow = null;
+  for (const tr of Array.from(grid.querySelectorAll('tr'))) {
+    const cells = tr.querySelectorAll('td');
+    if (cells.length >= 10 && ((cells[3].textContent || '').trim())) { dataRow = tr; break; }
+  }
+  if (!dataRow) return { ok: false, reason: 'לא נמצאה שורת-נתונים בגריד' };
+
+  const trOnclick = dataRow.getAttribute('onclick') || '';
+  const rowIndex = departSelectRowIndex(trOnclick);
+  log(`[שורה] onclick="${trOnclick}" → אינדקס ${rowIndex === null ? '?' : rowIndex}`);
+  const callSelect = () => {
+    if (rowIndex !== null && typeof window !== 'undefined' && typeof window.selectedRowStudents === 'function') {
+      try { window.selectedRowStudents(rowIndex); return true; } catch (e) { log('[שורה] selectedRowStudents נכשלה: ' + (e && e.message)); }
+    }
+    return false;
+  };
+  if (!callSelect()) { try { dataRow.click(); } catch (e) { log('[שורה] קליק על השורה נכשל: ' + (e && e.message)); } }
+
+  const cb = dataRow.querySelector('input[type="checkbox"]');
+  if (!cb) return { ok: false, reason: 'תיבת הסימון בשורה לא נמצאה' };
+  const cbPb = departParsePostback(cb.getAttribute('onclick') || '');
+  if (cbPb && cbPb.target) {
+    cb.checked = true;
+    await firePostback(cbPb.target, cbPb.arg, { startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+  } else if (!cb.checked) {
+    const wait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+    setTimeout(() => { try { cb.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
+    await wait;
+  }
+
+  const btnEnabled = () => { const b = $el(DEPART_IDS.deptBtn); return !!b && !b.getAttribute('disabled'); };
+  try { await waitFor(btnEnabled, { timeout: 2000, interval: 50 }); } catch (e) { /* בודקים למטה */ }
+  if (!btnEnabled()) {
+    log('[שורה] כפתור "עזיבה" עדיין מנוטרל - גיבוי: selectedRowStudents ישירות');
+    callSelect();
+    try { await waitFor(btnEnabled, { timeout: 2000, interval: 50 }); } catch (e) { /* noop */ }
+    if (!btnEnabled()) log('[שורה] כפתור "עזיבה" עדיין מנוטרל - ממשיכים בכל זאת (כמו בישן)');
+  }
+  return { ok: true, rowIndex };
+}
+
+function departModalVisible() { return isVisible($el(DEPART_IDS.modal)); }
+
+// סגירת מודאל העזיבה (אחרי חסימה) כדי שהתלמיד הבא יתחיל מהרשימה, לא ממודאל חצי-פתוח.
+async function departCloseModalIfOpen() {
+  try {
+    if (!departModalVisible()) return false;
+    const cancel = $el(DEPART_IDS.cancelBtn);
+    if (!cancel) return false;
+    await departFireElement(cancel, { startTimeoutMs: 800, totalTimeoutMs: 8000 });
+    await sleep(200);
+    return true;
+  } catch (e) { log('[מודאל] סגירת חלון העזיבה נכשלה: ' + (e && e.message)); return false; }
+}
+
+async function departReadPopupAfter(ms) {
+  try { await waitFor(() => !!readMessagePopup(), { timeout: ms, interval: 60 }); } catch (e) { /* אין חלונית */ }
+  return readMessagePopup();
+}
+
+// סוגר את חלונית ההודעה בלי "המשך" (extender, ואם אין: "אישור").
+async function departHidePopup() {
+  const hide = hideMessagePopupAsync();
+  if (hide && hide.wait) await Promise.race([hide.wait, sleep(DEPART_POPUP_HIDE_MS)]);
+  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית בלי "המשך" - ממשיכים');
+  await sleep(150);
+  return hide;
+}
+
+// הכוונה המפורשת של הסקריפט הישן (v5.0 שלב 8, שורות 509-515): אחרי "אישור" במודאל העזיבה,
+// חלונית "המשך"/"לא" היא אישור-רך ולוחצים "המשך". זה המקום היחיד בכלי שבו btnMOK נלחץ.
+async function departClickContinue(popup) {
+  const buttons = Array.isArray(popup.buttons) ? popup.buttons.join(', ') : '';
+  log(`[אישור] חלונית אישור-רך: "${maskIdsInText(popup.text)}" · כפתורים=[${buttons}] → לוחצים "המשך" (כמו הסקריפט הישן)`);
+  const btn = $el('ucMessagePopUp_btnMOK');
+  if (!btn) { log('[אישור] כפתור "המשך" לא נמצא'); return { ok: false }; }
+  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 });
+  setTimeout(() => { try { btn.click(); } catch (e) { log('[אישור] לחיצת "המשך" נכשלה: ' + (e && e.message)); } }, 0);
+  const res = await wait;
+  await sleep(200);
+  return res;
+}
+
+// ═══ תלמיד יחיד (ישן processStudent 407-549, אותו סדר צעדים) ═══════════════════
+async function departProcessStudent(task) {
+  const identity = task.identity;
+  const mk = (status, detail, action) => makeDepartResult(task, status, detail, action);
+  log(`▶ סניף ${task.branch} · ${maskId(identity)}`);
+  departCheckStop('start');
+
+  // שלב 1: לשונית 3
+  departActivateStudentsTab();
+  if (!(await departWaitTabReady())) {
+    return mk(DEPART_STATUS.ERROR, 'שדה החיפוש בלשונית "תלמידים למוסד" לא נמצא', DEPART_ACTIONS.searchFailed);
+  }
+
+  // שלב 2: חיפוש
+  const search = await departSearch(identity);
+  if (!search.executed) return mk(DEPART_STATUS.ERROR, departSearchFailReason(search), DEPART_ACTIONS.searchFailed);
+
+  // שלב 3: ניתוח הגריד
+  const analysis = analyzeDepartGrid(departReadGridRows(), identity, search.count);
+  log(`[גריד] found=${analysis.found} departed=${analysis.departed} date="${analysis.departDate}"${analysis.matchType === 'single-row-fallback' ? ' (שורה יחידה)' : ''}`);
+  if (!analysis.found) return mk(DEPART_STATUS.NOT_FOUND, search.countText, DEPART_ACTIONS.notFound);
+  if (analysis.departed) return mk(`${DEPART_STATUS.ALREADY} (${analysis.departDate})`, '', '');
+
+  // נקודת-עצירה לפני החלק ההרסני (כמו בישן)
+  departCheckStop('before-depart');
+
+  // שלב 4: בחירת השורה
+  const sel = await departSelectFirstActiveRow();
+  if (!sel.ok) return mk(DEPART_STATUS.ERROR, sel.reason, DEPART_ACTIONS.error);
+
+  // שלב 5: "עזיבה" (postback דרך ה-href, בלי eval)
+  const deptBtn = $el(DEPART_IDS.deptBtn);
+  if (!deptBtn) return mk(DEPART_STATUS.ERROR, 'כפתור "עזיבה" לא נמצא', DEPART_ACTIONS.error);
+  const dres = await departFireElement(deptBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  if (dres && dres.ok === false) log(`[עזיבה] postback לא תקין: ${dres.reason}`);
+
+  // שלב 6: המודאל נפתח?
+  let opened = departModalVisible();
+  if (!opened) {
+    try { await waitFor(departModalVisible, { timeout: 4000, interval: 100 }); opened = true; } catch (e) { opened = false; }
+  }
+  log(`[מודאל] גלוי: ${opened}`);
+  if (!opened) {
+    const pop = readMessagePopup();
+    if (pop) {
+      log(`[עזיבה] הודעה במקום מודאל: "${maskIdsInText(pop.text)}"`);
+      await departHidePopup();
+      return mk(`${DEPART_STATUS.BLOCKED}: ${pop.text || 'הודעת מערכת'}`, pop.text, DEPART_ACTIONS.blocked);
+    }
+    return mk(DEPART_STATUS.ERROR, 'חלון העזיבה לא נפתח', 'לחץ "עזיבה" ידנית בלשונית "תלמידים למוסד" ובדוק אם מופיעה הודעה');
+  }
+
+  try {
+    // שלב 7: תאריך + סיבה
+    const leaveDate = DEPART_S.settings.leaveDate || departTodayDMY();
+    const leaveReason = DEPART_S.settings.leaveReason || DEPART_DEFAULT_REASON;
+    const dateEl = $el(DEPART_IDS.dateField);
+    if (!dateEl) return mk(DEPART_STATUS.ERROR, 'שדה תאריך העזיבה במודאל לא נמצא', DEPART_ACTIONS.error);
+    await departSetAndWait(dateEl, leaveDate);
+    const reasonEl = $el(DEPART_IDS.reasonDropdown);
+    let reasonText = '';
+    if (reasonEl) {
+      const has = Array.from(reasonEl.options || []).some((o) => o.value === leaveReason);
+      if (!has) return mk(DEPART_STATUS.ERROR, `סיבת העזיבה ${leaveReason} לא קיימת ברשימת האתר`, 'בחר סיבת עזיבה אחרת מהרשימה והרץ שוב');
+      await departSetAndWait(reasonEl, leaveReason, { select: true });
+      reasonText = (reasonEl.options[reasonEl.selectedIndex] || {}).text || '';
+    }
+    log(`[מודאל] תאריך="${dateEl.value}" סיבה=${leaveReason} ("${reasonText}")`);
+
+    // שלב 8: "אישור"
+    const confirmEl = $el(DEPART_IDS.confirmBtn);
+    if (!confirmEl) return mk(DEPART_STATUS.ERROR, 'כפתור "אישור" במודאל לא נמצא', DEPART_ACTIONS.error);
+    const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    if (cres && cres.validationFailed) return mk(DEPART_STATUS.ERROR, 'ולידציה בחלון העזיבה נכשלה (תאריך או סיבה)', 'בדוק את תאריך העזיבה (DD/MM/YYYY) ואת הסיבה והרץ שוב');
+    await sleep(300);
+
+    // שלב 8ב: חלונית ההודעה אחרי "אישור"
+    const popup = await departReadPopupAfter(1200);
+    let softConfirm = '';
+    if (popup && !popup.hasContinue) {
+      // רק "אישור": חסימה/ולידציה. מציגים למשתמש ומדלגים; לעולם לא לוחצים "המשך".
+      log(`[אישור] נחסם: "${maskIdsInText(popup.text)}"`);
+      await departHidePopup();
+      await departCloseModalIfOpen();
+      return mk(`${DEPART_STATUS.BLOCKED}: ${popup.text || 'הודעת מערכת'}`, popup.text, DEPART_ACTIONS.blocked);
+    }
+    if (popup && popup.hasContinue) {
+      softConfirm = popup.text;
+      await departClickContinue(popup);
+    }
+
+    // שלב 9: "שמירה"
+    const saveEl = $el(DEPART_IDS.saveBtn);
+    if (!saveEl) return mk(DEPART_STATUS.ERROR, 'כפתור "שמירה" לא נמצא', DEPART_ACTIONS.unverified);
+    log(`[שמירה] class="${saveEl.className}" disabled=${saveEl.getAttribute('disabled')}`);
+    const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    if (sres && sres.ok === false) log(`[שמירה] postback לא תקין: ${sres.reason}`);
+    await sleep(300);
+
+    // הודעה אחרי שמירה: "הצלחה תהליך עידכון תלמיד הצליח" = אינפורמטיבי; אחרת נחסם. סוגרים בלי "המשך".
+    const savePopup = await departReadPopupAfter(800);
+    let saveBlocked = '';
+    if (savePopup) {
+      log(`[שמירה] הודעה: "${maskIdsInText(savePopup.text)}" · סוג=${savePopup.kind}`);
+      await departHidePopup();
+      if (savePopup.kind !== 'success' && savePopup.text && !/הצל/.test(savePopup.text)) saveBlocked = savePopup.text;
+    }
+
+    // שלב 10: אימות. מקור האמת: תאריך עזיבה בגריד אחרי חיפוש חוזר.
+    const verify = await departSearch(identity);
+    const v = verify.executed ? analyzeDepartGrid(departReadGridRows(), identity, verify.count) : { found: false, departed: false, departDate: '' };
+    log(`[אימות] departed=${v.departed} date="${v.departDate}"`);
+    if (v.departed) { log('◀ הצליח'); return mk(DEPART_STATUS.OK, softConfirm ? `אושר "המשך": ${softConfirm}` : '', ''); }
+    if (saveBlocked) return mk(`${DEPART_STATUS.BLOCKED}: ${saveBlocked}`, saveBlocked, DEPART_ACTIONS.blocked);
+    return mk(DEPART_STATUS.UNVERIFIED, verify.executed ? (softConfirm || '') : departSearchFailReason(verify), DEPART_ACTIONS.unverified);
+  } finally {
+    try { if (departModalVisible()) await departCloseModalIfOpen(); } catch (e) { /* אצווה לא נתקעת */ }
+  }
+}
+
+function departWithTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`תהליך תקוע: חרג מ-${Math.round(ms / 1000)} שניות`)), ms);
+    promise.then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
+async function departProcessStudentSafe(task) {
+  try {
+    return await departWithTimeout(departProcessStudent(task), DEPART_STUDENT_TIMEOUT_MS);
+  } catch (err) {
+    if (departIsStopError(err)) throw err;
+    log(`▶ שגיאה: ${err && err.message}`);
+    try { const pop = readMessagePopup(); if (pop) await departHidePopup(); } catch (e) { /* noop */ }
+    try { await departCloseModalIfOpen(); } catch (e) { /* noop */ }
+    return makeDepartResult(task, `${DEPART_STATUS.ERROR}: ${err && err.message}`, err && err.message, DEPART_ACTIONS.error);
+  }
+}
+
+// ═══ הסניף הנכון: דף המוסד של task.branch (הסניף נקרא מה-h1 של הדף, לא מזיכרון) ═══
+// מחזיר {ok:true} כשאנחנו בדף הנכון; {navigated:true} כשהדף נטען מחדש (ההמשך אחרי הטעינה);
+// {ok:false, status, detail, action} כשאי-אפשר להגיע.
+async function departEnsureBranch(task) {
+  const branch = normalizeBranch(task.branch);
+  const page = getPage();
+  if (page.kind === 'institute' && page.branch === branch) return { ok: true };
+  log(`[ניווט] דף ${page.kind}${page.branch ? ` · סניף ${page.branch}` : ''} → צריך דף מוסד של סניף ${branch}`);
+  departCheckStop('before-nav');
+  departSaveState();
+  departUnloadSeen = false;
+  departHook('onNavigating', branch);
+  const res = await gotoInstitute(branch);
+  if (!res || res.ok === false) {
+    if (res && res.notFound) return { ok: false, status: DEPART_STATUS.BRANCH_NOT_FOUND, detail: res.reason, action: 'בדוק את מספר הסניף. אם הוא קיים, פתח את דף המוסד שלו ידנית והרץ שוב את השורה' };
+    return { ok: false, status: DEPART_STATUS.ERROR, detail: (res && res.reason) || 'הניווט לסניף נכשל', action: departManualBranchAction(branch) };
+  }
+  const how = res.method === 'url' ? `כתובת ידועה${res.hop ? ' (קפיצה לדף מוסד ידוע, ומשם העץ)' : ''}` : res.method === 'tree' ? 'עץ הסניפים' : (res.method || '?');
+  log(`[ניווט] → סניף ${branch} · ${how}`);
+  // ממתינים לטעינת-דף (הדף נפרק) או לרינדור-במקום של הסניף הנכון; לא קופאים על "ממתין".
+  const t0 = Date.now();
+  while (Date.now() - t0 < DEPART_NAV_WAIT_MS) {
+    if (departUnloadSeen) return { navigated: true };
+    const p = getPage();
+    if (p.kind === 'institute' && p.branch === branch) { log('[ניווט] הדף התעדכן בלי טעינה מלאה - ממשיכים במקום'); return { ok: true }; }
+    await sleep(150);
+  }
+  return { ok: false, status: DEPART_STATUS.ERROR, detail: `הניווט לסניף ${branch} לא הביא טעינת דף תוך ${Math.round(DEPART_NAV_WAIT_MS / 1000)} שניות`, action: departManualBranchAction(branch) };
+}
+
+// ═══ התור ═══════════════════════════════════════════════════════════════════
+function departRecordResult(result, idx) {
+  DEPART_S.results.push(result);
+  DEPART_S.curIdx = Math.max(DEPART_S.curIdx, idx + 1);
+  departResetLandings();
+  departSaveState();
+  departHook('onResult', result, DEPART_S.results);
+}
+
+function departFillRemaining(status, detail, action) {
+  while (DEPART_S.curIdx < DEPART_S.queue.length) {
+    DEPART_S.results.push(makeDepartResult(DEPART_S.queue[DEPART_S.curIdx], status, detail, action));
+    DEPART_S.curIdx++;
+  }
+  departSaveState();
+}
+
+function departFinishRun() {
+  DEPART_S.running = false;
+  departClearState();
+  departClearStop();
+  const report = buildDepartReport(DEPART_S.results);
+  log(`═══ סיום עזיבה · ${report.summary}`);
+  departHook('onDone', DEPART_S.results, report);
+}
+
+function departReasonLabel(value) {
+  const r = DEPART_REASONS.find((x) => x.value === String(value));
+  return r ? r.label : String(value);
+}
+
+async function departRunQueue() {
+  DEPART_S.running = true;
+  departWatchUnload();
+  const st = DEPART_S.settings;
+  log(`🚀 עזיבה: ${DEPART_S.queue.length} תלמידים, מתחילים בשורה ${DEPART_S.curIdx + 1} · תאריך "${st.leaveDate || 'היום'}" · סיבה ${st.leaveReason} (${departReasonLabel(st.leaveReason)})`);
+  departHook('onStart', DEPART_S.queue, DEPART_S.curIdx);
+
+  while (DEPART_S.curIdx < DEPART_S.queue.length) {
+    if (departIsStopped()) {
+      log('⛔ נעצר - ממלאים את שארית התור');
+      departFillRemaining(DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped);
+      break;
+    }
+    const idx = DEPART_S.curIdx;
+    const task = DEPART_S.queue[idx];
+    departHook('onProgress', idx, DEPART_S.queue.length, task);
+
+    let result;
+    try {
+      const nav = await departEnsureBranch(task);
+      if (nav.navigated) {
+        DEPART_S.running = false;
+        log('… טעינת דף - ההמשך אחרי הטעינה');
+        return DEPART_NAVIGATED;
+      }
+      if (!nav.ok) result = makeDepartResult(task, nav.status, nav.detail, nav.action);
+      else result = await departProcessStudentSafe(task);
+    } catch (err) {
+      if (departIsStopError(err)) {
+        log(`⛔ נעצר לפני החלק ההרסני: ${err.message}`);
+        departRecordResult(makeDepartResult(task, DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped), idx);
+        departFillRemaining(DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped);
+        break;
+      }
+      result = makeDepartResult(task, `${DEPART_STATUS.ERROR}: ${err && err.message}`, err && err.message, DEPART_ACTIONS.error);
+    }
+    departRecordResult(result, idx);
+    await sleep(150);
+  }
+  departFinishRun();
+  return null;
+}
+
+async function departStartRun(tasks, settings) {
+  departClearStop();
+  departResetRun();
+  departResetLandings();
+  DEPART_S.queue = Array.isArray(tasks) ? tasks.slice() : [];
+  DEPART_S.settings = {
+    leaveDate: settings && settings.leaveDate ? String(settings.leaveDate).trim() : '',
+    leaveReason: settings && settings.leaveReason ? String(settings.leaveReason) : DEPART_DEFAULT_REASON,
+  };
+  DEPART_S.startedAt = new Date().toISOString();
+  departSaveState();
+  return departRunQueue();
+}
+
+function departHasSavedQueue() {
+  const st = departLoadState();
+  return !!(st && Array.isArray(st.queue) && st.queue.length && (st.curIdx || 0) < st.queue.length);
+}
+
+function departSavedQueueInfo() {
+  const st = departLoadState();
+  if (!st || !Array.isArray(st.queue) || !st.queue.length) return null;
+  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS) };
+}
+
+function departDiscardSavedQueue() {
+  departResetRun();
+  departClearState();
+  departClearStop();
+  log('[עזיבה] התור השמור נמחק לבקשת המשתמש');
+  return true;
+}
+
+// בטעינת דף: תור שמור → ממשיכים (אחרי שה-MS AJAX מסיים לאתחל). תור ישן (>30 דק') ממשיך
+// רק אחרי "המשך" בפאנל. רשת-ביטחון: מעל DEPART_MAX_LANDINGS טעינות לתלמיד → "דולג".
+async function departResumeIfPending(opts) {
+  if (DEPART_S.running) return false;
+  const allowStale = !!(opts && opts.allowStale);
+  const st = departLoadState();
+  if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
+
+  if (departIsStopped()) { log('[המשך] דגל עצירה - מנקים מצב'); departClearState(); departClearStop(); return false; }
+  if (!allowStale && departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור עזיבה שמור מ-${st.startedAt} ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
+    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: true });
+    return false;
+  }
+
+  DEPART_S.queue = st.queue;
+  DEPART_S.results = Array.isArray(st.results) ? st.results : [];
+  DEPART_S.curIdx = st.curIdx || 0;
+  DEPART_S.startedAt = st.startedAt || null;
+  DEPART_S.settings = Object.assign({ leaveDate: '', leaveReason: DEPART_DEFAULT_REASON }, st.settings || {});
+  if (DEPART_S.curIdx >= DEPART_S.queue.length) { departFinishRun(); return false; }
+
+  const landings = departBumpLandings(DEPART_S.curIdx);
+  log(`[המשך] שורה ${DEPART_S.curIdx + 1}/${DEPART_S.queue.length} · טעינה ${landings} · דף ${getPage().kind}`);
+  if (landings > DEPART_MAX_LANDINGS) {
+    const stuck = DEPART_S.queue[DEPART_S.curIdx];
+    log(`⚠️ תלמיד ${maskId(stuck.identity)}: ${landings} טעינות דף בלי סיום - מדלגים`);
+    departRecordResult(makeDepartResult(stuck, DEPART_STATUS.SKIPPED, `לולאת ניווט: ${landings} טעינות דף ללא התקדמות`, departManualBranchAction(stuck.branch)), DEPART_S.curIdx);
+    if (DEPART_S.curIdx >= DEPART_S.queue.length) { departFinishRun(); return false; }
+  }
+
+  departHook('onResume', DEPART_S.queue, DEPART_S.results, DEPART_S.curIdx, DEPART_S.settings);
+  DEPART_S.running = true; // לפני ההמתנה, שלחיצת "התחל" בשנייה הזו לא תפתח ריצה מקבילה
+  try {
+    await sleep(900);
+    await departRunQueue();
+  } catch (e) {
+    DEPART_S.running = false;
+    throw e;
+  }
+  return true;
+}
+
+// עצירה: הדגל נשמר ב-sessionStorage (שורד טעינת-דף). כשלא רצים (למשל בהמתנה לטעינה) -
+// סוגרים את הריצה מיד; כשרצים - הלולאה עוצרת בנקודת-הבדיקה הבאה, לפני החלק ההרסני.
+function departStop() {
+  departSetStop();
+  log('⛔ בקשת עצירה (עזיבה)');
+  if (!DEPART_S.running) {
+    if (DEPART_S.queue.length && DEPART_S.curIdx < DEPART_S.queue.length) {
+      departFillRemaining(DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped);
+      departFinishRun();
+    } else {
+      departClearState();
+      departClearStop();
+    }
+  }
+}
+
 // ─── src/tools/depart-ui.js ───
-// לשונית "עזיבת תלמידים" — שלד זמני עד שההעברה מהסקריפט הישן תושלם (המיישם מחליף את הקובץ הזה).
+// לשונית "עזיבת תלמידים" בחלונית המאוחדת. הזרימה עצמה ב-depart.js; כאן רק הממשק:
+// קלט (טורים סניף · ת.ז.), שגיאות-פרסור, תאריך וסיבת עזיבה, התחל/עצור, תוצאות, דוח "מה נשאר".
+// כל השמות ברמה-עליונה בקידומת depart (סקופ משותף בבאנדל). אין גישה ל-document ברמת המודול.
+
+
+const DEPART_P = 'tt-depart';
+let departUi = null;
+let departAwaitingErrorConfirm = false;
+let departResults = [];
+let departTotal = 0;
+
+const DEPART_COLUMNS = [
+  { key: 'branch', label: 'סניף', center: true, width: '44px' },
+  { key: 'identity', label: 'ת.ז.', mono: true },
+  { key: 'status', label: 'סטטוס' },
+];
+
+function departClassify(r) {
+  if (isDepartSuccess(r.status)) return 'ok';
+  const key = departStatusKey(r.status);
+  if (key === DEPART_STATUS.STOPPED || key === DEPART_STATUS.SKIPPED || key === DEPART_STATUS.NOT_FOUND) return 'warn';
+  return 'bad';
+}
+
+function departRenderResults() {
+  setHtml(`${DEPART_P}-results`, resultsTableHtml({ columns: DEPART_COLUMNS, rows: departResults, classify: departClassify }));
+}
+
+function departRenderErrors(errors, validCount) {
+  if (!errors || !errors.length) { show(`${DEPART_P}-errors`, false); setHtml(`${DEPART_P}-errors`, ''); return; }
+  const items = errors.slice(0, 25).map((e) => `<li>שורה ${esc(e.line)}: ${esc(e.reason)}</li>`).join('');
+  setHtml(`${DEPART_P}-errors`, `<b>${errors.length} שורות לא יורצו</b> (${validCount} תקינות):<ul>${items}${errors.length > 25 ? `<li>ועוד ${errors.length - 25}</li>` : ''}</ul>`);
+  show(`${DEPART_P}-errors`, true);
+}
+
+function departRenderReport(report) {
+  if (!report) { show(`${DEPART_P}-report`, false); setHtml(`${DEPART_P}-report`, ''); return; }
+  setHtml(`${DEPART_P}-report`, reportBoxHtml(report));
+  show(`${DEPART_P}-report`, true);
+}
+
+function departRenderStaleQueue(info) {
+  if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
+  const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
+  const startedMs = Date.parse(info.startedAt);
+  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  setHtml(`${DEPART_P}-stale`, `<b>נמצא תור עזיבה שמור${ageMin === null ? '' : ` מלפני ${esc(ageMin)} דקות`}</b>: ${esc(left)} שורות טרם עובדו (${esc(info.curIdx || 0)} מתוך ${esc(info.total || 0)} הושלמו). התור ישן מדי להמשך אוטומטי.
+    ${buttonsRowHtml([
+      { id: `${DEPART_P}-stale-go`, label: 'המשך את התור', kind: 'primary', size: 'small' },
+      { id: `${DEPART_P}-stale-clear`, label: 'נקה את התור', kind: 'danger', size: 'small' },
+    ])}`);
+  show(`${DEPART_P}-stale`, true);
+  $el(`${DEPART_P}-stale-go`).addEventListener('click', () => {
+    departRenderStaleQueue(null);
+    departUi.status('ממשיך את התור השמור…');
+    departSetRunning(true);
+    Promise.resolve().then(() => departResumeIfPending({ allowStale: true })).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
+  });
+  $el(`${DEPART_P}-stale-clear`).addEventListener('click', () => {
+    departDiscardSavedQueue();
+    departRenderStaleQueue(null);
+    departSetRunning(false);
+    departUi.status('התור השמור נמחק. אפשר להתחיל ריצה חדשה');
+  });
+}
+
+function departSetRunning(on) {
+  setDisabled(`${DEPART_P}-start`, !!on);
+  departUi.running(!!on);
+}
+
+function departReadSettings() {
+  const dateEl = $el(`${DEPART_P}-date`);
+  const reasonEl = $el(`${DEPART_P}-reason`);
+  return {
+    leaveDate: dateEl ? String(dateEl.value || '').trim() : '',
+    leaveReason: reasonEl && reasonEl.value ? String(reasonEl.value) : DEPART_DEFAULT_REASON,
+  };
+}
+
+function departApplySettings(settings) {
+  if (!settings) return;
+  const dateEl = $el(`${DEPART_P}-date`);
+  if (dateEl && settings.leaveDate !== undefined) dateEl.value = settings.leaveDate || '';
+  const reasonEl = $el(`${DEPART_P}-reason`);
+  if (reasonEl && settings.leaveReason) reasonEl.value = String(settings.leaveReason);
+}
+
+function departResetStartButton() {
+  departAwaitingErrorConfirm = false;
+  setText(`${DEPART_P}-start`, 'התחל עזיבה');
+  departRenderErrors([], 0);
+}
+
+async function departStart() {
+  if (departIsRunning()) return;
+  const text = (($el(`${DEPART_P}-input`) || {}).value || '').trim();
+  if (!text) { departUi.status('הדבק רשימה: סניף ות.ז. בכל שורה (טורים מאקסל)'); return; }
+  const settings = departReadSettings();
+  if (settings.leaveDate && !departIsValidDate(settings.leaveDate)) {
+    departUi.status('תאריך העזיבה לא תקין. הפורמט: DD/MM/YYYY, או השאר ריק (= היום)');
+    return;
+  }
+  const parsed = parseDepartInput(text);
+  if (parsed.errors.length && !departAwaitingErrorConfirm) {
+    departRenderErrors(parsed.errors, parsed.tasks.length);
+    departAwaitingErrorConfirm = true;
+    setText(`${DEPART_P}-start`, parsed.tasks.length ? `הרץ בכל זאת את ${parsed.tasks.length} התקינות` : 'התחל עזיבה');
+    departUi.status(`${parsed.errors.length} שורות בעייתיות. תקן אותן, או לחץ שוב כדי להריץ רק את התקינות`);
+    log(`[עזיבה] פרסור: ${parsed.tasks.length} תקינות · ${parsed.errors.length} שגויות`);
+    return;
+  }
+  if (!parsed.tasks.length) { departRenderErrors(parsed.errors, 0); departUi.status('אין שורות תקינות להרצה'); return; }
+  departResetStartButton();
+  departRenderReport(null);
+  departRenderStaleQueue(null);
+  departResults = [];
+  departRenderResults();
+  departSetRunning(true);
+  departUi.progress(0, parsed.tasks.length);
+  departUi.status(`מריץ עזיבה ל-${parsed.tasks.length} תלמידים…`);
+  log(`[עזיבה] התחלה: ${parsed.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
+  await departStartRun(parsed.tasks, settings);
+}
+
+function departStopClick() {
+  departUi.status('עוצר… (מסיים את התלמיד הנוכחי אם כבר התחיל)');
+  log('⛔ עצירה לבקשת המשתמש');
+  departStop();
+  departSetRunning(false);
+}
+
+function departCurrentRows() {
+  const live = departGetResults();
+  return live.length ? live : departResults;
+}
+
+function departCopyTsv() {
+  const rows = departCurrentRows();
+  if (!rows.length) { departUi.status('אין תוצאות להעתקה'); return; }
+  copyTextToClipboard(buildDepartTsv(rows)).then((ok) => {
+    flash(`${DEPART_P}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק לאקסל');
+    departUi.status(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן. השתמש בייצוא CSV');
+  });
+}
+
+function departExportCsv() {
+  const rows = departCurrentRows();
+  if (!rows.length) { departUi.status('אין תוצאות לייצוא'); return; }
+  const name = `departures_${new Date().toISOString().slice(0, 10)}.csv`;
+  departUi.status(downloadCsv(name, buildDepartCsvRows(rows)) ? `הורד ${name}` : 'הייצוא נכשל');
+}
+
+function departMount(container, panelUi, page) {
+  departUi = panelUi;
+  container.innerHTML = `
+    <div class="tt-box tt-box-info">
+      <b>טורים כמו באקסל</b> (טאבים, פסיקים או רווחים; שורת כותרת אופציונלית; שורה שמתחילה ב-# מדולגת): סניף · ת.ז.
+      התלמיד מחופש בלשונית "תלמידים למוסד" של הסניף; מי שכבר עזב מדווח ולא נוגעים בו.
+    </div>
+    <textarea id="${DEPART_P}-input" class="tt-textarea" placeholder="00&#9;012345678&#10;16&#9;023456789"></textarea>
+    <div id="${DEPART_P}-errors" class="tt-box tt-box-error" hidden></div>
+    <div id="${DEPART_P}-stale" class="tt-box tt-box-warn" hidden></div>
+    <div class="tt-row">
+      ${fieldHtml('תאריך עזיבה (ריק = היום)', `<input id="${DEPART_P}-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}">`)}
+      ${fieldHtml('סיבת עזיבה', selectHtml({ id: `${DEPART_P}-reason`, options: DEPART_REASONS, value: DEPART_DEFAULT_REASON }))}
+    </div>
+    ${buttonsRowHtml([
+      { id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' },
+      { id: `${DEPART_P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
+    ])}
+    ${buttonsRowHtml([
+      { id: `${DEPART_P}-tsv`, label: 'העתק לאקסל', kind: 'ghost', size: 'small' },
+      { id: `${DEPART_P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' },
+    ])}
+    <div id="${DEPART_P}-results" class="tt-scroll"></div>
+    <div id="${DEPART_P}-report" class="tt-box tt-box-warn" hidden></div>`;
+
+  bindDateMask(`${DEPART_P}-date`);
+  $el(`${DEPART_P}-input`).addEventListener('input', () => { if (departAwaitingErrorConfirm) departResetStartButton(); });
+  $el(`${DEPART_P}-start`).addEventListener('click', () => {
+    Promise.resolve().then(departStart).catch((e) => {
+      log('[עזיבה] ההרצה נכשלה: ' + (e && e.message));
+      departSetRunning(false);
+      departUi.status('ההרצה נכשלה. בדוק את היומן ונסה שוב');
+    });
+  });
+  $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
+  $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
+  $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
+
+  departSetHooks({
+    onStart: (queue, idx) => { departTotal = queue.length; departUi.progress(idx, departTotal); departSetRunning(true); },
+    onResume: (queue, res, idx, settings) => {
+      departTotal = queue.length; departResults = res.slice(); departRenderResults(); departUi.progress(idx, departTotal); departSetRunning(true);
+      const ta = $el(`${DEPART_P}-input`);
+      if (ta) ta.value = queue.map((t) => `${t.branch}\t${t.identity}`).join('\n');
+      departApplySettings(settings);
+      departUi.status(`ממשיך אחרי טעינת דף: ${idx + 1} מתוך ${departTotal}`);
+      departUi.open();
+    },
+    onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); departUi.status(`מעבד ${idx + 1}/${tot}: סניף ${task.branch} · ${task.identity}`); },
+    onResult: (result, all) => { departResults = all.slice(); departRenderResults(); departUi.progress(all.length, Math.max(departTotal, all.length)); },
+    onNavigating: (branch) => { departUi.status(`מנווט לסניף ${branch}… ממתין לטעינת דף`); },
+    onStaleQueue: (info) => { departSetRunning(false); departUi.status('יש תור עזיבה שמור ישן. בחר "המשך" או "נקה"'); departRenderStaleQueue(info); departUi.open(); },
+    onDone: (all, report) => {
+      departResults = all.slice(); departRenderResults(); departRenderReport(report); departSetRunning(false); departUi.progress(all.length, all.length);
+      departUi.status(report.lines.length ? `הסתיים. ${report.lines.length} שורות דורשות טיפול (ראה "מה נשאר")` : 'הסתיים. הכול טופל');
+    },
+  });
+
+  log(`[עזיבה] דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}`);
+  departResults = departGetResults();
+  departRenderResults();
+  const saved = departSavedQueueInfo();
+  if (departHasSavedQueue()) departUi.status(saved && saved.stale ? 'נמצא תור עזיבה שמור ישן. בודק…' : 'נמצא תור עזיבה פתוח. ממשיך…');
+  Promise.resolve().then(() => departResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
+}
+
 const departTool = {
   id: 'depart',
   title: 'עזיבת תלמידים',
   pages: ['institute'],
-  hasPendingRun: () => false,
-  isRunning: () => false,
-  onStop() {},
-  mount(container) {
-    container.innerHTML = '<div class="tt-box tt-box-info">הכלי הזה בהעברה לסקריפט המאוחד. בינתיים השתמש בסקריפט הישן.</div>';
-  },
+  hasPendingRun: departHasSavedQueue,
+  isRunning: departIsRunning,
+  onStop: departStopClick,
+  mount: departMount,
 };
 
+// ─── src/tools/report.js ───
+// דיווח חודשי אוטומטי: הזרימה + הפונקציות הטהורות. הועבר מ"תלמוד - דיווח חודשי אוטומטי" v4.0.
+// לכל סניף שבעץ-הצד: ניווט לדף המוסד (טעינה מלאה) → אימות שה-h1 מציג את הסניף → כפתור
+// btnReport מנוטרל? "דולג (כבר דווח)" → אחרת: לשונית "מצב תמיכה" → postback של הכפתור דרך ה-href
+// (בלי eval) → חלונית אזהרה → לחיצה על "המשך" בכוונה (זו פעולת הדיווח עצמה, כמו בישן) →
+// חלונית הצלחה → סגירה → "נשלח". המצב ב-sessionStorage (talmud.report.state) והמשך אחרי טעינת דף.
+// חדש מול הישן: "עצור" (נכנס לתוקף לפני הסניף הבא), חיווי "אם נתקע, רענן", רשת-ביטחון של 3 טעינות
+// לסניף, בלי alert ובלי reload בסוף. אין גישה ל-document/window ברמת המודול.
+
+
+const REPORT_STATE_KEY = 'talmud.report.state';
+const REPORT_STATUS = {
+  SENT: 'נשלח',
+  SKIPPED: 'דולג (כבר דווח)',
+  ERROR: 'שגיאה',
+  STOPPED: 'נעצר',
+};
+const REPORT_MAX_LANDINGS = 3; // טעינות-דף לאותו סניף; מעל זה: "שגיאה" והמשך
+const REPORT_STUCK_MS = 20000; // בלי צעד במשך זמן זה: "אם נתקע, רענן את הדף"
+const REPORT_IDS = {
+  button: 'ContentPlaceHolder1_btnReport',
+  supportTab: '__tab_ContentPlaceHolder1_tabInstituteDetails_TabInstituteEntitlement',
+  popupContinue: 'ucMessagePopUp_btnMOK',
+};
+const REPORT_TSV_HEADER = ['סניף', 'סטטוס', 'פירוט', 'מה לעשות'];
+const REPORT_PAGE_WAIT_MS = 15000; // כמו הישן: המתנה ל-h1 ולכפתור
+const REPORT_POPUP_WAIT_MS = 10000; // כמו הישן: המתנה לחלונית
+const REPORT_NAV_WATCHDOG_MS = 12000; // ניווט שלא הביא טעינת דף
+
+function reportManualAction(branch) {
+  return `פתח את דף המוסד של סניף ${branch}, לשונית "מצב תמיכה", ולחץ "שליחת דיווח חודשי" ידנית`;
+}
+
+// ─── טהורות ─────────────────────────────────────────────────────────────────
+
+// האם כפתור הדיווח פעיל. הישן: disabled!=="true" וגם class בלי "disabled". כאן קצת רחב יותר:
+// כל תכונת disabled (חוץ מ-"false"), ו-class שמכיל disabled בכל רישיות (ASP.NET: aspNetDisabled).
+function reportIsButtonEnabled(btn) {
+  if (!btn || typeof btn !== 'object') return false;
+  let attr = null;
+  if (typeof btn.getAttribute === 'function') attr = btn.getAttribute('disabled');
+  else attr = btn.disabled ? 'true' : null;
+  if (attr !== null && attr !== undefined && String(attr).trim().toLowerCase() !== 'false') return false;
+  const cls = String(btn.className == null ? '' : btn.className).toLowerCase();
+  return cls.indexOf('disabled') === -1;
+}
+
+function reportMakeResult(branch, status, detail, action) {
+  return { branch: String(branch == null ? '' : branch), status, detail: detail || '', action: action || '' };
+}
+
+function reportFlatCell(value) {
+  return String(value == null ? '' : value).replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+// סיכום "נשלחו X, דולגו Y, שגיאות Z" (+ "נעצרו W" כשיש) ושורות "מה נשאר" לשגיאות ולנעצרים.
+function reportSummary(results) {
+  const list = Array.isArray(results) ? results.filter((r) => r && typeof r === 'object') : [];
+  const count = (status) => list.filter((r) => r.status === status).length;
+  const sent = count(REPORT_STATUS.SENT);
+  const skipped = count(REPORT_STATUS.SKIPPED);
+  const errors = count(REPORT_STATUS.ERROR);
+  const stopped = count(REPORT_STATUS.STOPPED);
+  let summary = `נשלחו ${sent}, דולגו ${skipped}, שגיאות ${errors}`;
+  if (stopped) summary += `, נעצרו ${stopped}`;
+  const lines = list
+    .filter((r) => r.status === REPORT_STATUS.ERROR || r.status === REPORT_STATUS.STOPPED)
+    .map((r) => [`סניף ${r.branch}`, r.status, r.detail, r.action].map(reportFlatCell).filter(Boolean).join(' · '));
+  return { sent, skipped, errors, stopped, total: list.length, summary, lines };
+}
+
+// TSV להדבקה באקסל (עם כותרת).
+function reportBuildTsv(results) {
+  const lines = [REPORT_TSV_HEADER.join('\t')];
+  for (const r of Array.isArray(results) ? results : []) {
+    if (!r) continue;
+    lines.push([r.branch, r.status, r.detail, r.action].map(reportFlatCell).join('\t'));
+  }
+  return lines.join('\n');
+}
+
+// מונה טעינות לסניף הנוכחי: {idx, count}. סניף אחר מאפס.
+function reportBumpLandings(rec, idx) {
+  const same = rec && typeof rec === 'object' && rec.idx === idx;
+  return { idx, count: same ? (Number(rec.count) || 0) + 1 : 1 };
+}
+
+// האם עבר יותר מדי זמן מאז הצעד האחרון.
+function reportIsStuck(lastStepAt, now, thresholdMs) {
+  const t = typeof lastStepAt === 'number' ? lastStepAt : Number(lastStepAt);
+  if (!lastStepAt || !Number.isFinite(t)) return false;
+  const n = typeof now === 'number' ? now : Date.now();
+  const th = typeof thresholdMs === 'number' ? thresholdMs : REPORT_STUCK_MS;
+  return n - t > th;
+}
+
+// האינדקס הבא לביצוע מתוך מצב שמור; -1 כשאין (סיום או מצב לא תקין).
+function reportNextIndexToRun(state) {
+  if (!state || !Array.isArray(state.branches) || !state.branches.length) return -1;
+  const idx = Number.isFinite(Number(state.curIdx)) ? Math.max(0, Math.floor(Number(state.curIdx))) : 0;
+  return idx < state.branches.length ? idx : -1;
+}
+
+// טקסט הודעה שנראה ככישלון (אחרי "המשך"). הישן סימן "נשלח" בלי לקרוא; כאן קוראים כדי לא לשקר.
+function reportPopupLooksLikeFailure(text) {
+  return /שגיאה|נכשל|לא הצליח|לא ניתן|לא בוצע/.test(String(text == null ? '' : text));
+}
+
+// ─── מצב חי + sessionStorage ────────────────────────────────────────────────
+
+const reportLive = { running: false, stop: false, hooks: {}, lastStepAt: null, lastResults: [] };
+
+function reportSetHooks(hooks) { reportLive.hooks = hooks || {}; }
+function reportHook(name, ...args) { try { if (reportLive.hooks[name]) reportLive.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
+
+function reportLoadState() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(REPORT_STATE_KEY) || 'null');
+    return parsed && typeof parsed === 'object' && Array.isArray(parsed.branches) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+// שומר; דגל העצירה שכבר נשמר (מהלשונית או מטעינה אחרת) לעולם לא נדרס.
+function reportSaveState(state) {
+  try {
+    const stored = reportLoadState();
+    if (stored && stored.stop === true) state.stop = true;
+    sessionStorage.setItem(REPORT_STATE_KEY, JSON.stringify(state));
+  } catch (e) { log('[דיווח] שמירת המצב נכשלה: ' + (e && e.message)); }
+}
+
+function reportClearState() {
+  try { sessionStorage.removeItem(REPORT_STATE_KEY); } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+function reportHasPendingRun() {
+  const st = reportLoadState();
+  return !!(st && st.running && reportNextIndexToRun(st) !== -1);
+}
+
+// "רץ" גם כשממתינים לטעינת דף (כדי ש-Escape/"עצור" יעבדו באמצע ניווט).
+function reportIsRunning() {
+  return reportLive.running || reportHasPendingRun();
+}
+
+function reportGetResults() {
+  const st = reportLoadState();
+  if (st && Array.isArray(st.results)) return st.results.slice();
+  return reportLive.lastResults.slice();
+}
+
+function reportLastStepAt() {
+  if (reportLive.lastStepAt) return reportLive.lastStepAt;
+  const st = reportLoadState();
+  return st && st.lastStepAt ? st.lastStepAt : null;
+}
+
+function reportTouch(state) {
+  state.lastStepAt = Date.now();
+  reportLive.lastStepAt = state.lastStepAt;
+}
+
+function reportStopRequested(state) {
+  if (reportLive.stop || (state && state.stop === true)) return true;
+  const stored = reportLoadState();
+  return !!(stored && stored.stop === true);
+}
+
+// "עצור": מסמן דגל במצב השמור. הריצה נעצרת לפני הסניף הבא (לא באמצע שליחה).
+// אם אין ריצה חיה בדף הזה אך יש מצב שמור (למשל טעינה שלא הגיעה): מסיימים כאן.
+function reportRequestStop() {
+  reportLive.stop = true;
+  log('⛔ בקשת עצירה: הריצה תיעצר לפני הסניף הבא');
+  const st = reportLoadState();
+  if (st) { st.stop = true; reportSaveState(st); }
+  if (!reportLive.running && st && st.running) {
+    reportFillRemaining(st);
+    reportFinish(st);
+  }
+}
+
+// ─── רישום תוצאות וסיום ─────────────────────────────────────────────────────
+
+function reportRecord(state, idx, result) {
+  state.results = Array.isArray(state.results) ? state.results : [];
+  state.results.push(result);
+  state.curIdx = idx + 1;
+  state.landings = null;
+  state.pendingSend = null;
+  reportTouch(state);
+  reportSaveState(state);
+  log(`◀ סניף ${result.branch}: ${result.status}${result.detail ? ' · ' + result.detail : ''}`);
+  reportHook('onResult', result, state.results.slice());
+}
+
+function reportFillRemaining(state) {
+  state.results = Array.isArray(state.results) ? state.results : [];
+  let idx = reportNextIndexToRun(state);
+  while (idx !== -1) {
+    state.results.push(reportMakeResult(state.branches[idx], REPORT_STATUS.STOPPED, 'נעצר לפני השליחה', 'הרץ שוב; סניפים שכבר דווחו ידולגו אוטומטית'));
+    state.curIdx = idx + 1;
+    idx = reportNextIndexToRun(state);
+  }
+  reportSaveState(state);
+}
+
+function reportFinish(state) {
+  reportLive.running = false;
+  reportLive.stop = false;
+  reportLive.lastResults = Array.isArray(state.results) ? state.results.slice() : [];
+  reportClearState();
+  const summary = reportSummary(reportLive.lastResults);
+  log(`═══ סיום דיווח חודשי · ${summary.summary}`);
+  reportHook('onDone', reportLive.lastResults.slice(), summary);
+}
+
+// ─── צעדים מול הדף ──────────────────────────────────────────────────────────
+
+async function reportWaitPopup(predicate) {
+  try {
+    return await waitFor(() => {
+      const pop = readMessagePopup();
+      if (!pop) return false;
+      return predicate && !predicate(pop) ? false : pop;
+    }, { timeout: REPORT_POPUP_WAIT_MS, interval: 100 });
+  } catch (e) {
+    return null;
+  }
+}
+
+async function reportHidePopup() {
+  const hid = hideMessagePopupAsync();
+  if (hid.wait) await hid.wait;
+  try { await waitFor(() => !readMessagePopup(), { timeout: 5000, interval: 100 }); } catch (e) { /* ממשיכים */ }
+  await sleep(400); // כמו הישן
+}
+
+function reportOnRightPage(branch) {
+  const page = getPage();
+  return page.kind === 'institute' && page.branch === branch;
+}
+
+// ניווט לסניף. טעינה מלאה הורגת את ההקשר (ההמשך ב-mount); רינדור-במקום ממשיך כאן.
+// מחזיר null כשהדף מתאים, או תוצאת-שגיאה.
+async function reportEnsureBranchPage(state, idx, branch) {
+  if (reportOnRightPage(branch)) return null;
+  const landings = reportBumpLandings(state.landings, idx);
+  state.landings = landings;
+  if (landings.count > REPORT_MAX_LANDINGS) {
+    return reportMakeResult(branch, REPORT_STATUS.ERROR, `הדף לא הגיע לסניף ${branch} אחרי ${REPORT_MAX_LANDINGS} טעינות`, reportManualAction(branch));
+  }
+  reportTouch(state);
+  reportSaveState(state);
+  reportHook('onNavigating', branch);
+  log(`[ניווט] → סניף ${branch} (טעינה ${landings.count}/${REPORT_MAX_LANDINGS})`);
+  const res = await gotoInstitute(branch);
+  if (!res || res.ok === false) {
+    if (res && res.notFound) return reportMakeResult(branch, REPORT_STATUS.ERROR, res.reason, `ודא שסניף ${branch} מופיע בעץ-הצד, ושלח ידנית`);
+    return reportMakeResult(branch, REPORT_STATUS.ERROR, (res && res.reason) || 'הניווט נכשל', reportManualAction(branch));
+  }
+  const t0 = Date.now();
+  while (Date.now() - t0 < REPORT_NAV_WATCHDOG_MS) {
+    await sleep(200);
+    if (reportOnRightPage(branch)) { log('[ניווט] הדף התעדכן בלי טעינה מלאה: ממשיכים במקום'); return null; }
+  }
+  return reportMakeResult(branch, REPORT_STATUS.ERROR, `הניווט לסניף ${branch} לא הביא טעינת דף תוך ${Math.round(REPORT_NAV_WATCHDOG_MS / 1000)} שניות`, reportManualAction(branch));
+}
+
+async function reportFireButton(btn) {
+  const pb = parsePostbackHref(btn.getAttribute('href') || '');
+  const opts = { startTimeoutMs: 3000, totalTimeoutMs: 20000 };
+  if (pb) return firePostback(pb.target, pb.arg, opts);
+  const wait = waitPRM(opts); // (1) נרשם קודם
+  setTimeout(() => { try { btn.click(); } catch (e) { log('[דיווח] לחיצה על הכפתור נכשלה: ' + (e && e.message)); } }, 0); // (2) נדחה
+  return wait;
+}
+
+// סניף אחד. מחזיר תוצאה. ניווט שמביא טעינה מלאה לא חוזר (הדף נפרק).
+async function reportProcessBranch(state, idx, branch) {
+  const mk = (status, detail, action) => reportMakeResult(branch, status, detail, action);
+
+  const navFail = await reportEnsureBranchPage(state, idx, branch);
+  if (navFail) return navFail;
+
+  // כמו הישן: המתנה לכפתור (ה-h1 כבר אומת), ואז שנייה חצי להתייצבות
+  let btn = null;
+  try { btn = await waitFor(() => $el(REPORT_IDS.button), { timeout: REPORT_PAGE_WAIT_MS, interval: 200 }); } catch (e) { btn = null; }
+  if (!btn) return mk(REPORT_STATUS.ERROR, 'כפתור "שליחת דיווח חודשי" לא נמצא בדף המוסד', `בדוק שבדף המוסד של סניף ${branch} יש לשונית "מצב תמיכה" עם כפתור הדיווח, ושלח ידנית`);
+  await sleep(500);
+
+  // "המשך" נלחץ ואז הדף נטען מחדש: האמת בכפתור
+  if (state.pendingSend && state.pendingSend.idx === idx) {
+    state.pendingSend = null;
+    if (!reportIsButtonEnabled(btn)) { log('[דיווח] אחרי "המשך" הדף נטען מחדש והכפתור מנוטרל → נשלח'); return mk(REPORT_STATUS.SENT, 'אומת אחרי טעינת הדף: כפתור הדיווח מנוטרל'); }
+    return mk(REPORT_STATUS.ERROR, 'נלחץ "המשך" אך אחרי טעינת הדף כפתור הדיווח עדיין פעיל', `בדוק בדף המוסד של סניף ${branch} אם הדיווח נשלח; אם לא, שלח ידנית`);
+  }
+
+  if (!reportIsButtonEnabled(btn)) {
+    log(`[דיווח] סניף ${branch}: כפתור הדיווח מנוטרל, כבר דווח`);
+    return mk(REPORT_STATUS.SKIPPED, 'כפתור הדיווח מנוטרל');
+  }
+  if (reportStopRequested(state)) return mk(REPORT_STATUS.STOPPED, 'נעצר לפני השליחה', 'הרץ שוב; סניפים שכבר דווחו ידולגו אוטומטית');
+
+  // לשונית "מצב תמיכה" (חובה לפני השליחה, כמו הישן: קליק צד-לקוח)
+  const tab = $el(REPORT_IDS.supportTab);
+  if (tab) { try { tab.click(); } catch (e) { /* לא קריטי */ } } else log('[דיווח] לשונית "מצב תמיכה" לא נמצאה; מנסים לשלוח בכל זאת');
+  await sleep(300);
+  reportTouch(state);
+  reportSaveState(state);
+
+  // postback של הכפתור דרך ה-href (הישן: eval; כאן parsePostbackHref + firePostback)
+  log(`[דיווח] סניף ${branch}: לוחצים "שליחת דיווח חודשי"`);
+  const fired = await reportFireButton(btn);
+  if (fired && fired.ok === false) log(`[דיווח] postback הכפתור: ${fired.reason}`);
+
+  // חלונית האזהרה עם "המשך"
+  const confirm = await reportWaitPopup();
+  if (!confirm) return mk(REPORT_STATUS.ERROR, 'לא הופיעה חלונית אחרי לחיצה על "שליחת דיווח חודשי"', reportManualAction(branch));
+  log(`[הודעה] "${confirm.text}" [${confirm.buttons.join(', ')}]`);
+  if (!confirm.hasContinue) {
+    await reportHidePopup();
+    if (confirm.kind === 'success') return mk(REPORT_STATUS.SENT, confirm.text);
+    return mk(REPORT_STATUS.ERROR, confirm.text || 'האתר החזיר הודעה בלי "המשך"', reportManualAction(branch));
+  }
+
+  // לחיצה על "המשך" בכוונה: זו פעולת הדיווח עצמה (הסקריפט הישן v4.0 עושה זאת, שורה 110).
+  await sleep(200);
+  const contBtn = $el(REPORT_IDS.popupContinue);
+  if (!isVisible(contBtn)) return mk(REPORT_STATUS.ERROR, 'כפתור "המשך" בחלונית לא זמין', reportManualAction(branch));
+  state.pendingSend = { idx, branch };
+  reportTouch(state);
+  reportSaveState(state); // "המשך" עלול לטעון דף מחדש; ההמשך יאמת לפי הכפתור
+  log(`[דיווח] סניף ${branch}: לוחצים "המשך" (אישור שליחת הדיווח)`);
+  const contWait = waitPRM({ startTimeoutMs: 3000, totalTimeoutMs: 20000 }); // (1) נרשם קודם
+  setTimeout(() => { try { contBtn.click(); } catch (e) { log('[דיווח] לחיצת "המשך" נכשלה: ' + (e && e.message)); } }, 0); // (2) נדחה
+  const contRes = await contWait;
+  if (contRes && contRes.ok === false) log(`[דיווח] postback של "המשך": ${contRes.reason}`);
+
+  // חלונית ההצלחה ("אישור" בלבד): ממתינים לחלונית שאינה חלונית האזהרה
+  const done = await reportWaitPopup((pop) => pop.text !== confirm.text || !pop.hasContinue);
+  state.pendingSend = null;
+  if (!done) {
+    return mk(REPORT_STATUS.ERROR, 'לא הופיעה הודעת הצלחה תוך 10 שניות אחרי "המשך"', `בדוק בדף המוסד של סניף ${branch} אם כפתור הדיווח הפך מנוטרל (סימן שנשלח); אם לא, שלח ידנית`);
+  }
+  log(`[הודעה] "${done.text}" [${done.buttons.join(', ')}]`);
+  if (done.hasContinue && done.kind !== 'success') {
+    // בקשת-אישור נוספת שאינה מוכרת: לא לוחצים לבד
+    return mk(REPORT_STATUS.ERROR, `המערכת מבקשת אישור נוסף: "${done.text}"`, `פתח את דף המוסד של סניף ${branch}, קרא את ההודעה והחלט ידנית`);
+  }
+  await sleep(200);
+  await reportHidePopup();
+  if (done.kind !== 'success' && reportPopupLooksLikeFailure(done.text)) {
+    return mk(REPORT_STATUS.ERROR, done.text, reportManualAction(branch));
+  }
+  return mk(REPORT_STATUS.SENT, done.text);
+}
+
+// ─── הלולאה ─────────────────────────────────────────────────────────────────
+
+// מריץ סניף אחרי סניף מתוך המצב השמור. ניווט מלא פורק את הדף; ההמשך ב-reportResumeIfPending.
+async function reportRunLoop() {
+  const state = reportLoadState();
+  if (!state || !state.running) { reportLive.running = false; return false; }
+  reportLive.running = true;
+  reportHook('onStart', state.branches.slice(), reportNextIndexToRun(state));
+  for (;;) {
+    const idx = reportNextIndexToRun(state);
+    if (idx === -1) { reportFinish(state); return true; }
+    if (reportStopRequested(state)) {
+      log('⛔ נעצר: הסניפים שנותרו מסומנים "נעצר"');
+      reportFillRemaining(state);
+      reportFinish(state);
+      return true;
+    }
+    const branch = state.branches[idx];
+    reportHook('onProgress', idx, state.branches.length, branch);
+    let result;
+    try {
+      result = await reportProcessBranch(state, idx, branch);
+    } catch (e) {
+      log(`[דיווח] תקלה בסניף ${branch}: ${e && e.message}`);
+      result = reportMakeResult(branch, REPORT_STATUS.ERROR, `תקלה: ${(e && e.message) || 'לא ידועה'}`, reportManualAction(branch));
+    }
+    reportRecord(state, idx, result);
+    await sleep(400);
+  }
+}
+
+// "התחל": אוסף את הסניפים מעץ-הצד ומתחיל. מחזיר {ok, count} או {ok:false, reason}.
+async function reportStart() {
+  if (reportIsRunning()) return { ok: false, reason: 'ריצה כבר פעילה' };
+  const branches = readBranchesFromTree();
+  if (!branches.length) return { ok: false, reason: 'לא נמצאו סניפים בעץ-הצד. ודא שאתה בדף פרטי מוסד' };
+  reportLive.stop = false;
+  reportLive.lastResults = [];
+  const state = {
+    running: true, branches, curIdx: 0, results: [], stop: false, landings: null, pendingSend: null,
+    startedAt: new Date().toISOString(), lastStepAt: Date.now(),
+  };
+  reportClearState(); // דגל עצירה ישן לא ייקלט לתוך הריצה החדשה
+  reportSaveState(state);
+  reportLive.lastStepAt = state.lastStepAt;
+  log(`🚀 דיווח חודשי: ${branches.length} סניפים (${branches.join(', ')})`);
+  await reportRunLoop();
+  return { ok: true, count: branches.length };
+}
+
+// בטעינת דף: אם יש מצב שמור, ממשיכים (כמו הישן: המתנה ל-h1, ואז הצעד הבא).
+async function reportResumeIfPending() {
+  if (reportLive.running) return false;
+  const state = reportLoadState();
+  if (!state || !state.running) return false;
+  if (reportNextIndexToRun(state) === -1) { reportFinish(state); return true; }
+  if (reportStopRequested(state)) {
+    log('⛔ דגל עצירה במצב השמור: הסניפים שנותרו מסומנים "נעצר"');
+    reportFillRemaining(state);
+    reportFinish(state);
+    return true;
+  }
+  reportLive.running = true; // לפני ההמתנה, כדי ש"התחל" לא יפתח ריצה מקבילה
+  reportLive.lastStepAt = state.lastStepAt || Date.now();
+  reportHook('onResume', state);
+  try {
+    await waitFor(() => {
+      const h1 = document.querySelector('h1');
+      return !!(h1 && String(h1.textContent || '').trim().length > 3);
+    }, { timeout: REPORT_PAGE_WAIT_MS, interval: 200 });
+  } catch (e) { /* הצעד עצמו ינווט או ידווח שגיאה */ }
+  await sleep(900); // MS AJAX מסיים לאתחל
+  log(`[המשך] סניף ${reportNextIndexToRun(state) + 1}/${state.branches.length} · דף ${getPage().kind}`);
+  return reportRunLoop();
+}
+
 // ─── src/tools/report-ui.js ───
-// לשונית "דיווח חודשי" — שלד זמני עד שההעברה מהסקריפט הישן תושלם (המיישם מחליף את הקובץ הזה).
+// לשונית "דיווח חודשי" בחלונית המאוחדת. הזרימה ב-report.js; כאן רק הממשק: רשימת הסניפים שנמצאו,
+// התחל/עצור, טבלת תוצאות (סניף, סטטוס, פירוט), "העתק לאקסל", סיכום "מה נשאר", וחיווי
+// "אם נתקע, רענן את הדף" אחרי 20 שניות בלי צעד. אין גישה ל-document ברמת המודול.
+
+
+const RP = 'tt-report';
+let reportUi = null;
+let reportRows = [];
+let reportBaseStatus = 'מוכן';
+let reportStuckTimer = null;
+
+const REPORT_COLUMNS = [
+  { key: 'branch', label: 'סניף', center: true, width: '52px' },
+  { key: 'status', label: 'סטטוס', width: '130px' },
+  { key: 'detail', label: 'פירוט' },
+];
+
+function reportClassify(r) {
+  if (r.status === REPORT_STATUS.SENT) return 'ok';
+  if (r.status === REPORT_STATUS.SKIPPED || r.status === REPORT_STATUS.STOPPED) return 'warn';
+  return 'bad';
+}
+
+function reportRenderRows() {
+  setHtml(`${RP}-results`, resultsTableHtml({ columns: REPORT_COLUMNS, rows: reportRows, classify: reportClassify }));
+}
+
+function reportRenderSummary(summary) {
+  if (!summary) { show(`${RP}-report`, false); setHtml(`${RP}-report`, ''); return; }
+  setHtml(`${RP}-report`, reportBoxHtml({ summary: summary.summary, lines: summary.lines }, { idsWarning: false }));
+  show(`${RP}-report`, true);
+}
+
+// שורת הסטטוס: הטקסט הבסיסי + "אם נתקע, רענן את הדף" כשעברו 20 שניות בלי צעד
+function reportRenderStatus() {
+  if (!reportUi) return;
+  let stuck = false;
+  try { stuck = reportIsRunning() && reportIsStuck(reportLastStepAt(), Date.now()); } catch (e) { stuck = false; }
+  reportUi.status(stuck ? `${reportBaseStatus} · אם נתקע, רענן את הדף` : reportBaseStatus);
+}
+
+function reportSetStatus(msg) {
+  reportBaseStatus = msg;
+  reportRenderStatus();
+}
+
+function reportSetRunning(on) {
+  setDisabled(`${RP}-start`, !!on);
+  if (reportUi) reportUi.running(!!on);
+  if (on) {
+    if (!reportStuckTimer) reportStuckTimer = setInterval(reportRenderStatus, 1000);
+  } else if (reportStuckTimer) {
+    clearInterval(reportStuckTimer);
+    reportStuckTimer = null;
+  }
+}
+
+async function reportUiStart() {
+  if (reportIsRunning()) { reportSetStatus('ריצה כבר פעילה'); return; }
+  reportRows = [];
+  reportRenderRows();
+  reportRenderSummary(null);
+  reportSetRunning(true);
+  reportSetStatus('מתחיל…');
+  const res = await reportStart();
+  if (!res.ok) {
+    reportSetRunning(false);
+    reportSetStatus(res.reason);
+  }
+}
+
+function reportUiStop() {
+  if (!reportIsRunning()) { reportSetStatus('אין ריצה פעילה'); return; }
+  reportSetStatus('עוצר… הריצה תיעצר לפני הסניף הבא');
+  reportRequestStop();
+}
+
+function reportCopyTsv() {
+  const rows = reportRows.length ? reportRows : reportGetResults();
+  if (!rows.length) { reportSetStatus('אין תוצאות להעתקה'); return; }
+  copyTextToClipboard(reportBuildTsv(rows)).then((ok) => {
+    flash(`${RP}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק לאקסל');
+    reportSetStatus(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן');
+  });
+}
+
+function reportUiMount(container, panelUi, page) {
+  reportUi = panelUi;
+  const branches = page && page.kind === 'institute' ? readBranchesFromTree() : [];
+  container.innerHTML = `
+    <div class="tt-box tt-box-info">
+      שולח דיווח חודשי לכל הסניפים שבעץ-הצד, סניף אחרי סניף. סניף שכפתור הדיווח שלו מנוטרל (כבר דווח) מדולג.
+      הריצה עוברת בין דפי-מוסד; "עצור" נכנס לתוקף לפני הסניף הבא, לא באמצע שליחה.
+    </div>
+    <div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים בעץ-הצד של הדף הזה'}</div>
+    ${buttonsRowHtml([
+      { id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length },
+      { id: `${RP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
+    ])}
+    ${buttonsRowHtml([
+      { id: `${RP}-tsv`, label: 'העתק לאקסל', kind: 'ghost', size: 'small' },
+    ])}
+    <div id="${RP}-results" class="tt-scroll"></div>
+    <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>`;
+
+  $el(`${RP}-start`).addEventListener('click', () => {
+    Promise.resolve().then(reportUiStart).catch((e) => {
+      log('[דיווח] ההרצה נכשלה: ' + (e && e.message));
+      reportSetRunning(false);
+      reportSetStatus('ההרצה נכשלה. בדוק את היומן ונסה שוב');
+    });
+  });
+  $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
+  $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+
+  reportSetHooks({
+    onStart: (list, idx) => { reportSetRunning(true); reportUi.progress(idx, list.length); },
+    onResume: (state) => {
+      reportRows = Array.isArray(state.results) ? state.results.slice() : [];
+      reportRenderRows();
+      reportSetRunning(true);
+      reportUi.progress(reportRows.length, state.branches.length);
+      reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${state.branches.length}`);
+      reportUi.open();
+    },
+    onProgress: (idx, total, branch) => { reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1}/${total})`); },
+    onNavigating: (branch) => { reportSetStatus(`ממתין לטעינת דף המוסד של סניף ${branch}…`); },
+    onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(all.length, reportRows.length)); },
+    onDone: (all, summary) => {
+      reportRows = all.slice();
+      reportRenderRows();
+      reportRenderSummary(summary);
+      reportSetRunning(false);
+      reportUi.progress(all.length, all.length);
+      reportSetStatus(`הסתיים. ${summary.summary}`);
+    },
+  });
+
+  reportRows = reportGetResults();
+  reportRenderRows();
+  if (reportHasPendingRun()) { reportSetStatus('נמצאה ריצה פתוחה. ממשיך…'); reportSetRunning(true); }
+  Promise.resolve().then(() => reportResumeIfPending()).catch((e) => {
+    log('[דיווח] ההמשך נכשל: ' + (e && e.message));
+    reportSetRunning(false);
+    reportSetStatus('ההמשך אחרי טעינת הדף נכשל. בדוק את היומן');
+  });
+}
+
 const reportTool = {
   id: 'report',
   title: 'דיווח חודשי',
   pages: ['institute'],
-  hasPendingRun: () => false,
-  isRunning: () => false,
-  onStop() {},
-  mount(container) {
-    container.innerHTML = '<div class="tt-box tt-box-info">הכלי הזה בהעברה לסקריפט המאוחד. בינתיים השתמש בסקריפט הישן.</div>';
-  },
+  hasPendingRun: reportHasPendingRun,
+  isRunning: reportIsRunning,
+  onStop: reportUiStop,
+  mount: reportUiMount,
 };
 
+// ─── src/tools/messages.js ───
+// כלי "טיפול בהודעות": הזרימה והפונקציות הטהורות. העברה מכנית מ"תלמוד - טיפול בהודעות" v5.0
+// (extractIdFromBody:247, makeUID:258, getMessagesOnPage:265, פייג'ר:293-343, ensureSentFilter:345,
+// runScan:364, XLSX:409, loadPastedTable:476, runBulkMode:519, runTableMode:585, recordReport:664).
+// דף ההודעות: /Association/Default.aspx. כל הפעולות בדף הן postback א-סינכרוני (אין טעינת-דף),
+// ולכן אין כאן מצב שמור ב-sessionStorage; דגל-העצירה בזיכרון והלולאות בודקות אותו בכל סבב.
+// שינויים מכוונים מול הישן: (1) הסדר הקשיח של הליבה לכל postback (firePostback / waitPRM לפני הירי);
+// (2) אחרי כל פעולה מאמתים מול הגריד שההודעה כבר לא "נשלחה", כדי שפעולה שלא נתפסה תסומן "נכשל"
+// ולא תיכנס ללולאה על אותה הודעה; (3) קריאת חלונית-ההודעה דרך הליבה, סגירה בלי "המשך", עם שורת-יומן.
+// אין גישה ל-document/window ברמת המודול (import תקין ב-Node).
+
+
+// ─── קבועים ─────────────────────────────────────────────────────────────────
+
+const MESSAGES_ACTION = {
+  APPROVE: 'אישור מעבר',
+  DECLINE: 'דחיית מעבר',
+  HANDLED: 'שנה מצב הודעה לטופל',
+  SKIP: 'דלג',
+};
+const MESSAGES_ALL_ACTIONS = [MESSAGES_ACTION.APPROVE, MESSAGES_ACTION.DECLINE, MESSAGES_ACTION.HANDLED, MESSAGES_ACTION.SKIP];
+
+// הכינויים של הסקריפט הישן (v5.0 שורות 22-27), כמות שהם.
+const MESSAGES_ACTION_ALIASES = {
+  'אשר': MESSAGES_ACTION.APPROVE, 'אישור': MESSAGES_ACTION.APPROVE, 'אישור מעבר': MESSAGES_ACTION.APPROVE, 'approve': MESSAGES_ACTION.APPROVE,
+  'דחה': MESSAGES_ACTION.DECLINE, 'דחיה': MESSAGES_ACTION.DECLINE, 'דחייה': MESSAGES_ACTION.DECLINE, 'דחיית מעבר': MESSAGES_ACTION.DECLINE, 'decline': MESSAGES_ACTION.DECLINE,
+  'טופל': MESSAGES_ACTION.HANDLED, 'טופלה': MESSAGES_ACTION.HANDLED, 'סגור': MESSAGES_ACTION.HANDLED, 'שנה': MESSAGES_ACTION.HANDLED, 'שנה מצב הודעה לטופל': MESSAGES_ACTION.HANDLED,
+  'דלג': MESSAGES_ACTION.SKIP, 'skip': MESSAGES_ACTION.SKIP, '': MESSAGES_ACTION.SKIP,
+};
+
+const MESSAGES_POSTBACK_TARGETS = {
+  [MESSAGES_ACTION.APPROVE]: 'ctl00$ContentPlaceHolder1$btnTransferApprove',
+  [MESSAGES_ACTION.DECLINE]: 'ctl00$ContentPlaceHolder1$btnTransferDecline',
+  [MESSAGES_ACTION.HANDLED]: 'ctl00$ContentPlaceHolder1$btnChangeMessageStatus',
+};
+
+const MESSAGES_IDS = {
+  grid: 'ContentPlaceHolder1_GVMessages',
+  pager: 'ContentPlaceHolder1_GPager_pager',
+  hidRowId: 'ContentPlaceHolder1_HidMessageRowID',
+};
+
+const MESSAGES_TRANSFER_HEADER = 'בקשת מעבר תלמיד';
+const MESSAGES_STATUS_SENT = 'נשלחה';
+const MESSAGES_STATUS_HANDLED = 'טופלה';
+const MESSAGES_TSV_HEADER = ['UID', 'נושא', 'ת.ז./דרכון', 'תאריך', 'גוף ההודעה', 'פעולה'];
+const MESSAGES_REPORT_HEADER = ['UID', 'ת.ז./דרכון', 'נושא', 'פעולה', 'סטטוס', 'גוף ההודעה'];
+const MESSAGES_RESULT = { DONE: 'בוצע', SKIPPED: 'דילוג', FAILED_PREFIX: 'נכשל: ' };
+
+const MESSAGES_URL_MARK = /Association\/Default\.aspx/i;
+const MESSAGES_MAX_LOOPS = 5000;
+const MESSAGES_MAX_EMPTY_PAGES = 30;
+const MESSAGES_MAX_SCAN_PAGES = 300;
+
+// ─── טהורות ─────────────────────────────────────────────────────────────────
+
+function messagesIsMessagesUrl(url) {
+  return typeof url === 'string' && MESSAGES_URL_MARK.test(url);
+}
+
+function messagesFlat(s) {
+  return String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+}
+
+// זהה ל-makeUID של הישן: hash של כותרת+גוף, 'M' + base36.
+function messagesMakeUid(header, body) {
+  const s = (header || '') + '|' + (body || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  return 'M' + (h >>> 0).toString(36);
+}
+
+// זהה ל-extractIdFromBody של הישן: "ת.ז. 012345678" → ת.ז.; "דרכון AB12345" → דרכון (אותיות גדולות);
+// אחרת רצף של 8-9 ספרות; אין → ''.
+function messagesExtractId(body) {
+  const b = String(body == null ? '' : body);
+  if (!b) return '';
+  let m = b.match(/ת\.?\s*ז\.?\s*\.?\s*([0-9]{7,9})/);
+  if (m) return m[1];
+  m = b.match(/דרכון\s+([A-Za-z0-9]{5,12})/);
+  if (m) return m[1].toUpperCase();
+  m = b.match(/\b([0-9]{8,9})\b/);
+  if (m) return m[1] || '';
+  return '';
+}
+
+// כינוי → פעולה קנונית. לא מוכר / ריק → "דלג" (כמו בישן).
+function messagesNormalizeAction(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  return MESSAGES_ACTION_ALIASES[s.toLowerCase()] || MESSAGES_ACTION_ALIASES[s] || MESSAGES_ACTION.SKIP;
+}
+
+// הפעולה שהמצב הגורף מבצע: בקשת מעבר → אישור מעבר; כל השאר → סמן כטופל.
+function messagesSuggestAction(header) {
+  return messagesFlat(header) === MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.APPROVE : MESSAGES_ACTION.HANDLED;
+}
+
+function messagesActionCountKey(action) {
+  if (action === MESSAGES_ACTION.APPROVE) return 'approve';
+  if (action === MESSAGES_ACTION.DECLINE) return 'decline';
+  if (action === MESSAGES_ACTION.HANDLED) return 'handled';
+  return 'skip';
+}
+
+// פרסור הטבלה המודבקת (שלב ב): טאבים (מאקסל) או פסיקים. שורת כותרת עם עמודות UID ו"פעולה" (בכל
+// סדר), או בלי כותרת כשהעמודה הראשונה היא UID (M...) והפעולה בעמודה האחרונה. UID כפול: השורה
+// האחרונה מנצחת (כמו Map בישן). מחזיר {ok, reason, entries:[{uid, action, line}], counts}.
+function messagesParseTable(text) {
+  const raw = String(text == null ? '' : text);
+  const counts = { approve: 0, decline: 0, handled: 0, skip: 0 };
+  const fail = (reason) => ({ ok: false, reason, entries: [], counts });
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return fail('תיבת הטקסט ריקה');
+  const delim = raw.includes('\t') ? '\t' : ',';
+  const split = (l) => l.split(delim).map((c) => c.trim());
+  const head = split(lines[0]);
+  let uidIdx = head.findIndex((h) => /uid|מזהה/i.test(h));
+  let actionIdx = head.findIndex((h) => /פעולה|action/i.test(h));
+  let first = 1;
+  if (uidIdx === -1 && actionIdx === -1 && /^M[0-9a-z]+$/.test(head[0] || '')) {
+    uidIdx = 0; actionIdx = -1; first = 0; // בלי כותרת: UID ראשון, פעולה אחרונה
+  } else if (uidIdx === -1 || actionIdx === -1) {
+    return fail('חסרה עמודת UID או "פעולה" בשורת הכותרת');
+  }
+  if (lines.length <= first) return fail('צריך כותרת + שורה אחת לפחות');
+  const map = new Map();
+  for (let i = first; i < lines.length; i++) {
+    const cells = split(lines[i]);
+    const uid = cells[uidIdx] || '';
+    if (!uid) continue;
+    const aIdx = actionIdx === -1 ? cells.length - 1 : actionIdx;
+    const actionRaw = aIdx === uidIdx ? '' : (cells[aIdx] || '');
+    map.set(uid, { uid, action: messagesNormalizeAction(actionRaw), line: i + 1 });
+  }
+  const entries = Array.from(map.values());
+  for (const e of entries) counts[messagesActionCountKey(e.action)]++;
+  if (!entries.length) return fail('לא נמצאו שורות עם UID');
+  return { ok: true, reason: '', entries, counts };
+}
+
+function messagesLoadSummary(parsed) {
+  const c = parsed.counts;
+  return `נטענו ${parsed.entries.length}: אישור=${c.approve}, דחיה=${c.decline}, טופל=${c.handled}, דילוג=${c.skip}`;
+}
+
+function messagesTsvCell(v) {
+  return String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ').trim();
+}
+
+// טבלת ההודעות הסרוקות כ-TSV עם כותרת (להדבקה באקסל; העמודה האחרונה "פעולה" נערכת שם).
+function messagesBuildTsv(list) {
+  const lines = [MESSAGES_TSV_HEADER.join('\t')];
+  for (const r of list || []) {
+    lines.push([r.uid, r.header, r.personId, r.date, messagesFlat(r.body), r.suggestedAction || MESSAGES_ACTION.SKIP].map(messagesTsvCell).join('\t'));
+  }
+  return lines.join('\n');
+}
+
+// דוח הביצוע כ-TSV עם כותרת (העתק דוח).
+function messagesBuildReportTsv(rows) {
+  const lines = [MESSAGES_REPORT_HEADER.join('\t')];
+  for (const r of rows || []) lines.push([r.uid, r.id, r.header, r.action, r.status, r.body].map(messagesTsvCell).join('\t'));
+  return lines.join('\n');
+}
+
+// דוח "מה נשאר": סיכום + שורה אופרטיבית לכל הודעה שלא הצליחה / לא נמצאה, ושורה על עצירה.
+function messagesBuildReport(rows, opts) {
+  const o = opts || {};
+  const counts = { done: 0, failed: 0, skipped: 0 };
+  const lines = [];
+  for (const r of rows || []) {
+    if (r.status === MESSAGES_RESULT.DONE) counts.done++;
+    else if (r.status === MESSAGES_RESULT.SKIPPED) counts.skipped++;
+    else {
+      counts.failed++;
+      lines.push(`הודעה ${r.uid} "${r.header}"${r.id ? ` (${r.id})` : ''}: ${r.status}. טפל בה ידנית בדף ההודעות`);
+    }
+  }
+  const notFound = Array.isArray(o.notFound) ? o.notFound : [];
+  for (const nf of notFound) {
+    lines.push(`UID ${nf.uid} (${nf.action}): לא נמצא בהודעות במצב "נשלחה". אולי כבר טופל; סרוק מחדש ובדוק`);
+  }
+  if (o.stopped) lines.push('הריצה נעצרה לבקשתך. הודעות שטרם טופלו נשארו במצב "נשלחה"; הפעל שוב כדי להמשיך');
+  let summary = `בוצעו=${counts.done} · נכשלו=${counts.failed} · דולגו=${counts.skipped}`;
+  if (notFound.length) summary += ` · לא נמצאו=${notFound.length}`;
+  if (o.stopped) summary += ' · נעצר';
+  return { summary, lines, counts, stopped: !!o.stopped, notFound: notFound.length };
+}
+
+// ─── מצב הריצה + hooks לפאנל ─────────────────────────────────────────────────
+
+const MSG = {
+  running: false,
+  stop: false,
+  mode: null, // 'bulk' | 'scan' | 'table'
+  scanned: [],
+  report: [],
+  lastReport: null,
+  hooks: {},
+};
+
+function messagesSetHooks(hooks) { MSG.hooks = hooks || {}; }
+function messagesIsRunning() { return MSG.running; }
+function messagesGetScanned() { return MSG.scanned.slice(); }
+function messagesGetReportRows() { return MSG.report.slice(); }
+function messagesRequestStop() {
+  if (!MSG.running) return false;
+  MSG.stop = true;
+  log('⛔ [הודעות] בקשת עצירה; הריצה תיעצר אחרי הפעולה הנוכחית');
+  return true;
+}
+
+function messagesHook(name, ...args) {
+  try { if (MSG.hooks[name]) MSG.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+function messagesBeginRun(mode) {
+  MSG.running = true;
+  MSG.stop = false;
+  MSG.mode = mode;
+  if (mode !== 'scan') MSG.report = [];
+  messagesHook('onStart', mode);
+}
+
+function messagesFinishRun(opts) {
+  const report = messagesBuildReport(MSG.report, opts);
+  MSG.lastReport = report;
+  MSG.running = false;
+  messagesHook('onDone', MSG.report.slice(), report, MSG.mode);
+  return report;
+}
+
+function messagesRecord(m, action, status) {
+  const row = { uid: m.uid || '', id: m.personId || '', header: m.header || '', action: action || '', status, body: messagesFlat(m.body), date: m.date || '' };
+  MSG.report.push(row);
+  messagesHook('onResult', row, MSG.report.slice());
+}
+
+// ─── קריאת הגריד (getMessagesOnPage של הישן) ─────────────────────────────────
+
+function messagesReadPage() {
+  const grid = $el(MESSAGES_IDS.grid);
+  if (!grid) return [];
+  const out = [];
+  for (const tr of Array.from(grid.querySelectorAll('tr'))) {
+    const m = /selectedRowSearch\(\s*'?(\d+)'?\s*\)/.exec(tr.getAttribute('onclick') || '');
+    if (!m) continue;
+    const idx = m[1];
+    const hdBody = $el(`${MESSAGES_IDS.grid}_hdID_${idx}`);
+    const hdHeader = $el(`${MESSAGES_IDS.grid}_hidMessageHeader_${idx}`);
+    const body = hdBody ? hdBody.value : '';
+    const header = hdHeader ? hdHeader.value : '';
+    const cell = (i) => (tr.cells && tr.cells[i] ? messagesFlat(tr.cells[i].innerText || tr.cells[i].textContent) : '');
+    out.push({ rowIndex: idx, header, body, status: cell(3), date: cell(4), personId: messagesExtractId(body), uid: messagesMakeUid(header, body) });
+  }
+  return out;
+}
+
+const messagesIsSent = (m) => !m.status || m.status === MESSAGES_STATUS_SENT;
+
+function messagesPageSignature(list) {
+  return list.map((m) => m.uid + ':' + m.status).join('|');
+}
+
+// ─── פייג'ר (« ‹ › ») ───────────────────────────────────────────────────────
+
+function messagesPagerLinks() {
+  const links = { next: null, first: null, prev: null, last: null };
+  const pager = $el(MESSAGES_IDS.pager);
+  if (!pager) return links;
+  for (const a of Array.from(pager.querySelectorAll('a'))) {
+    const t = messagesFlat(a.innerText || a.textContent);
+    if (t === '›') links.next = a;
+    else if (t === '»') links.last = a;
+    else if (t === '«') links.first = a;
+    else if (t === '‹') links.prev = a;
+  }
+  return links;
+}
+
+function messagesCurrentPage() {
+  const pager = $el(MESSAGES_IDS.pager);
+  if (!pager) return 1;
+  for (const s of Array.from(pager.querySelectorAll('span'))) {
+    const t = messagesFlat(s.innerText || s.textContent);
+    if (/^\d+$/.test(t)) return parseInt(t, 10);
+  }
+  return 1;
+}
+
+// לחיצה על קישור-פייג'ר: postback לפי ה-href (סדר קשיח), אחרת קליק עם המתנה. מחזיר true רק אם
+// העמוד אכן השתנה (מספר או תוכן), כדי שלולאה לא תסתובב על פייג'ר שלא מתקדם.
+async function messagesClickPager(a) {
+  if (!a) return false;
+  const before = messagesCurrentPage() + '#' + messagesPageSignature(messagesReadPage());
+  const parsed = parsePostbackHref(a.getAttribute('href') || '');
+  let res;
+  if (parsed) {
+    res = await firePostback(parsed.target, parsed.arg);
+  } else {
+    const wait = waitPRM();
+    setTimeout(() => { try { a.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
+    res = await wait;
+  }
+  if (!res.ok) { log(`[הודעות] דפדוף נכשל: ${res.reason || ''}`); return false; }
+  const after = messagesCurrentPage() + '#' + messagesPageSignature(messagesReadPage());
+  if (after === before) { log('[הודעות] הדפדוף לא שינה את העמוד'); return false; }
+  return true;
+}
+
+async function messagesGotoFirstPage() {
+  const { first, prev } = messagesPagerLinks();
+  const target = first || prev;
+  if (!target) return true;
+  return messagesClickPager(target);
+}
+
+async function messagesGotoNextPage() {
+  const { next } = messagesPagerLinks();
+  if (!next) return false;
+  return messagesClickPager(next);
+}
+
+// ─── סינון "נשלחה" ──────────────────────────────────────────────────────────
+
+function messagesFindFilterSelect() {
+  if (typeof document === 'undefined') return null;
+  for (const s of Array.from(document.querySelectorAll('select'))) {
+    const texts = Array.from(s.options).map((o) => messagesFlat(o.text));
+    if (texts.includes(MESSAGES_STATUS_SENT) && texts.includes(MESSAGES_STATUS_HANDLED)) return s;
+  }
+  return null;
+}
+
+async function messagesEnsureSentFilter() {
+  const s = messagesFindFilterSelect();
+  if (!s) { log('[הודעות] לא נמצאה תיבת-סינון מצב (נשלחה/טופלה); ממשיכים עם הסינון הנוכחי'); return { ok: true, found: false }; }
+  const opt = Array.from(s.options).find((o) => messagesFlat(o.text) === MESSAGES_STATUS_SENT);
+  const want = opt ? opt.value : '1';
+  if (s.value === want) return { ok: true, found: true, changed: false };
+  log('[הודעות] משנה סינון ל"נשלחה"');
+  const wait = waitPRM(); // (1) נרשם קודם
+  setTimeout(() => { // (2) נדחה
+    try { s.value = want; s.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) { /* אצווה לא נתקעת */ }
+  }, 0);
+  const res = await wait;
+  if (!res.ok) log(`[הודעות] שינוי הסינון נכשל: ${res.reason || ''}`);
+  return { ok: res.ok !== false, found: true, changed: true };
+}
+
+// ─── חלונית ההודעה ואת הפעולה עצמה ──────────────────────────────────────────
+
+// קורא את החלונית (אם גלויה), רושם ביומן (ממוסך) וסוגר בלי "המשך". מחזיר את מה שנקרא או null.
+async function messagesClosePopupIfOpen(where) {
+  const popup = readMessagePopup();
+  if (!popup) return null;
+  log(`[הודעות] חלונית ${where} (${popup.kind}): "${maskIdsInText(popup.text)}" [${popup.buttons.join(', ')}]`);
+  if (popup.kind === 'confirm') log('[הודעות] שים לב: האתר ביקש אישור ("המשך"). לא נלחץ אוטומטית; החלונית נסגרת והתוצאה נבדקת מול הגריד');
+  const { hidden, wait } = hideMessagePopupAsync();
+  if (wait) await wait;
+  if (!hidden) log('[הודעות] לא הצלחתי לסגור את החלונית');
+  return popup;
+}
+
+// פעולה אחת (performActionFast של הישן): סגירת חלונית ישנה → HidMessageRowID → postback → סגירת
+// חלונית ההצלחה → אימות מול הגריד (מספר המופעים של ההודעה במצב "נשלחה" צריך לרדת).
+async function messagesPerformAction(msg, action) {
+  const target = MESSAGES_POSTBACK_TARGETS[action];
+  if (!target) return { ok: false, reason: 'פעולה לא מוכרת: ' + action };
+  await messagesClosePopupIfOpen('לפני הפעולה');
+  const hid = $el(MESSAGES_IDS.hidRowId);
+  if (!hid) return { ok: false, reason: 'לא נמצא השדה הנסתר של שורת ההודעה (HidMessageRowID)' };
+  const countSent = () => messagesReadPage().filter((m) => m.uid === msg.uid && messagesIsSent(m)).length;
+  const before = countSent();
+  hid.value = String(msg.rowIndex);
+  const res = await firePostback(target, '');
+  if (!res.ok) return { ok: false, reason: res.reason || 'הפעולה נכשלה בשרת' };
+  if (res.started === false) return { ok: false, reason: 'הלחיצה לא הפעילה בקשה לשרת' };
+  const popup = await messagesClosePopupIfOpen('אחרי הפעולה');
+  if (before > 0 && countSent() >= before) {
+    const why = popup && popup.kind !== 'success' ? `האתר הודיע: "${messagesFlat(popup.text)}"` : 'ההודעה עדיין במצב "נשלחה" אחרי הפעולה';
+    return { ok: false, reason: why };
+  }
+  return { ok: true };
+}
+
+// ─── מצב גורף ───────────────────────────────────────────────────────────────
+
+async function messagesRunBulk() {
+  if (MSG.running) return null;
+  messagesBeginRun('bulk');
+  const t0 = Date.now();
+  log('[הודעות] ▶ מצב גורף: בקשת מעבר → אישור מעבר; אחרת → סמן כטופל');
+  await messagesEnsureSentFilter();
+  await messagesGotoFirstPage();
+  const failed = new Set();
+  let processed = 0, skipped = 0, consecutiveEmpty = 0;
+  for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
+    await messagesClosePopupIfOpen('בין פעולות');
+    const list = messagesReadPage();
+    if (!list.length) { log('[הודעות] אין הודעות בעמוד'); break; }
+    const target = list.find((m) => messagesIsSent(m) && !failed.has(m.uid));
+    if (!target) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty > MESSAGES_MAX_EMPTY_PAGES) { log('[הודעות] עצירת בטיחות: יותר מדי עמודים בלי הודעה לטיפול'); break; }
+      const moved = await messagesGotoNextPage();
+      if (!moved) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+    const action = messagesSuggestAction(target.header);
+    messagesHook('onStatus', `טופלו ${processed}${skipped ? ` (נכשלו ${skipped})` : ''} · מטפל: ${action} · ${target.header}`);
+    const t1 = Date.now();
+    const res = await messagesPerformAction(target, action);
+    if (res.ok) {
+      processed++;
+      messagesRecord(target, action, MESSAGES_RESULT.DONE);
+      log(`[הודעות] ✓ ${Date.now() - t1}ms · ${action} · ${maskId(target.personId) || '-'} · ${target.header}`);
+    } else {
+      skipped++;
+      failed.add(target.uid);
+      messagesRecord(target, action, MESSAGES_RESULT.FAILED_PREFIX + res.reason);
+      log(`[הודעות] ✗ ${res.reason} · ${target.header} · ${maskId(target.personId) || '-'}`);
+    }
+  }
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  log(`[הודעות] מצב גורף הסתיים${MSG.stop ? ' (נעצר)' : ''}: בוצעו ${processed}, נכשלו ${skipped} (${dt} שניות)`);
+  return messagesFinishRun({ stopped: MSG.stop });
+}
+
+// ─── סריקה (שלב א) ──────────────────────────────────────────────────────────
+
+async function messagesScan() {
+  if (MSG.running) return null;
+  messagesBeginRun('scan');
+  MSG.scanned = [];
+  const t0 = Date.now();
+  log('[הודעות] סריקה: מתחיל');
+  await messagesEnsureSentFilter();
+  await messagesGotoFirstPage();
+  const seen = new Set();
+  let pages = 0;
+  for (let i = 0; i < MESSAGES_MAX_SCAN_PAGES && !MSG.stop; i++) {
+    pages++;
+    const list = messagesReadPage();
+    log(`[הודעות] עמוד ${messagesCurrentPage()}: ${list.length} הודעות`);
+    for (const m of list) {
+      if (!messagesIsSent(m)) continue;
+      if (seen.has(m.uid)) continue;
+      seen.add(m.uid);
+      MSG.scanned.push({ uid: m.uid, header: m.header, personId: m.personId, body: m.body, date: m.date, status: m.status, suggestedAction: messagesSuggestAction(m.header) });
+    }
+    messagesHook('onStatus', `סריקה: ${pages} עמודים, ${MSG.scanned.length} הודעות`);
+    messagesHook('onScanProgress', MSG.scanned.slice(), pages);
+    const moved = await messagesGotoNextPage();
+    if (!moved) break;
+  }
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  log(`[הודעות] סריקה הסתיימה${MSG.stop ? ' (נעצר)' : ''}: ${MSG.scanned.length} הודעות מ-${pages} עמודים (${dt} שניות)`);
+  MSG.running = false;
+  const info = { pages, stopped: MSG.stop };
+  messagesHook('onScanDone', MSG.scanned.slice(), info);
+  return MSG.scanned.slice();
+}
+
+// ─── ביצוע לפי טבלה (שלב ב) ──────────────────────────────────────────────────
+
+async function messagesRunTable(entries) {
+  if (MSG.running) return null;
+  const pending = new Map();
+  for (const e of entries || []) if (e && e.uid) pending.set(e.uid, e.action);
+  if (!pending.size) { log('[הודעות] אין טבלה טעונה'); return null; }
+  messagesBeginRun('table');
+  const t0 = Date.now();
+  let toDo = 0;
+  for (const a of pending.values()) if (a !== MESSAGES_ACTION.SKIP) toDo++;
+  log(`[הודעות] ▶ ביצוע לפי טבלה: ${toDo} פעולות מתוך ${pending.size} שורות`);
+  await messagesEnsureSentFilter();
+  await messagesGotoFirstPage();
+  const handled = new Set();
+  let processed = 0, failedCount = 0, consecutiveEmpty = 0;
+  for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
+    await messagesClosePopupIfOpen('בין פעולות');
+    const list = messagesReadPage();
+    if (!list.length) break;
+    let target = null, targetAction = null;
+    for (const m of list) {
+      if (handled.has(m.uid)) continue;
+      const action = pending.get(m.uid);
+      if (!action) continue;
+      if (action === MESSAGES_ACTION.SKIP) {
+        handled.add(m.uid);
+        messagesRecord(m, MESSAGES_ACTION.SKIP, MESSAGES_RESULT.SKIPPED);
+        continue;
+      }
+      target = m;
+      targetAction = action;
+      break;
+    }
+    if (!target) {
+      consecutiveEmpty++;
+      if (consecutiveEmpty > MESSAGES_MAX_EMPTY_PAGES) { log('[הודעות] עצירת בטיחות: יותר מדי עמודים בלי הודעה מהטבלה'); break; }
+      const moved = await messagesGotoNextPage();
+      if (!moved) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+    messagesHook('onStatus', `מבצע ${processed + failedCount + 1}/${toDo}: ${targetAction} · ${target.header}`);
+    messagesHook('onProgress', processed + failedCount, toDo);
+    const t1 = Date.now();
+    const res = await messagesPerformAction(target, targetAction);
+    handled.add(target.uid);
+    if (res.ok) {
+      processed++;
+      messagesRecord(target, targetAction, MESSAGES_RESULT.DONE);
+      log(`[הודעות] ✓ ${Date.now() - t1}ms · ${targetAction} · ${maskId(target.personId) || '-'}`);
+    } else {
+      failedCount++;
+      messagesRecord(target, targetAction, MESSAGES_RESULT.FAILED_PREFIX + res.reason);
+      log(`[הודעות] ✗ ${res.reason} · ${target.header} · ${maskId(target.personId) || '-'}`);
+    }
+    messagesHook('onProgress', processed + failedCount, toDo);
+  }
+  const notFound = [];
+  for (const [uid, action] of pending.entries()) if (action !== MESSAGES_ACTION.SKIP && !handled.has(uid)) notFound.push({ uid, action });
+  const dt = ((Date.now() - t0) / 1000).toFixed(1);
+  log(`[הודעות] ביצוע לפי טבלה הסתיים${MSG.stop ? ' (נעצר)' : ''}: בוצעו ${processed}, נכשלו ${failedCount}, לא נמצאו ${notFound.length} (${dt} שניות)`);
+  return messagesFinishRun({ stopped: MSG.stop, notFound: MSG.stop ? [] : notFound });
+}
+
+// ─── הורדת אקסל (XLSX אם הספרייה נטענה, אחרת TSV) ───────────────────────────
+
+function messagesDownloadXlsx(list) {
+  if (!list || !list.length) return { ok: false, reason: 'אין נתונים' };
+  const rows = [MESSAGES_TSV_HEADER.slice()];
+  for (const r of list) rows.push([r.uid, r.header || '', r.personId || '', r.date || '', messagesFlat(r.body), r.suggestedAction || MESSAGES_ACTION.SKIP]);
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const XLSX = globalThis.XLSX;
+  if (XLSX && XLSX.utils && typeof XLSX.writeFile === 'function') {
+    try {
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws['!cols'] = [{ wch: 12 }, { wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 70 }, { wch: 22 }];
+      ws['!views'] = [{ RTL: true }];
+      ws['!dataValidation'] = [{
+        sqref: `F2:F${rows.length}`, type: 'list', formula1: `"${MESSAGES_ALL_ACTIONS.join(',')}"`,
+        allowBlank: true, showErrorMessage: true, errorTitle: 'ערך לא חוקי', error: `מותר: ${MESSAGES_ALL_ACTIONS.join(', ')}`,
+      }];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'הודעות');
+      const help = XLSX.utils.aoa_to_sheet([['פעולות אפשריות:'], ...MESSAGES_ALL_ACTIONS.map((a) => [a]), [], ['אל תשנה את עמודת UID']]);
+      help['!views'] = [{ RTL: true }];
+      help['!cols'] = [{ wch: 60 }];
+      XLSX.utils.book_append_sheet(wb, help, 'עזרה');
+      XLSX.writeFile(wb, `הודעות_${stamp}.xlsx`);
+      log(`[הודעות] הורד אקסל: ${list.length} שורות`);
+      return { ok: true, format: 'xlsx' };
+    } catch (e) {
+      log(`[הודעות] יצירת אקסל נכשלה (${e && e.message}); מוריד TSV במקום`);
+    }
+  }
+  const ok = downloadText(`הודעות_${stamp}.tsv`, '﻿' + messagesBuildTsv(list), 'text/tab-separated-values;charset=utf-8');
+  if (ok) log(`[הודעות] הורד TSV: ${list.length} שורות`);
+  return { ok, format: 'tsv' };
+}
+
 // ─── src/tools/messages-ui.js ───
-// לשונית "הודעות" — שלד זמני עד שההעברה מהסקריפט הישן תושלם (המיישם מחליף את הקובץ הזה).
+// לשונית "הודעות" בחלונית המאוחדת. הזרימה ב-messages.js; כאן רק הממשק: שני מצבים (גורף / לפי טבלה),
+// סריקה → טבלה → העתקה/הורדה לאקסל → הדבקה → טעינה → ביצוע, טבלת-תוצאות, דוח "מה נשאר", "העתק דוח".
+// הלשונית מופיעה בדפי 'other' (getPage לא מכיר את דף ההודעות); ב-mount בודקים את הכתובת.
+// אין גישה ל-document ברמת המודול.
+
+
+const MP = 'tt-messages';
+let msgUi = null;
+let msgMode = 'bulk';
+let msgPending = [];
+let msgResults = [];
+
+const MESSAGES_SCAN_COLUMNS = [
+  { key: 'uid', label: 'UID', mono: true, width: '84px' },
+  { key: 'header', label: 'נושא' },
+  { key: 'personId', label: 'ת.ז./דרכון', mono: true },
+  { key: 'date', label: 'תאריך', center: true },
+  { key: 'suggestedAction', label: 'פעולה מוצעת' },
+];
+
+const MESSAGES_RESULT_COLUMNS = [
+  { key: 'uid', label: 'UID', mono: true, width: '84px' },
+  { key: 'header', label: 'נושא' },
+  { key: 'id', label: 'ת.ז./דרכון', mono: true },
+  { key: 'action', label: 'פעולה' },
+  { key: 'status', label: 'סטטוס' },
+];
+
+function messagesClassify(r) {
+  if (r.status === MESSAGES_RESULT.DONE) return 'ok';
+  if (r.status === MESSAGES_RESULT.SKIPPED) return 'warn';
+  return 'bad';
+}
+
+function messagesRenderScanned(list) {
+  const rows = (list || []).map((r) => Object.assign({}, r, { detail: r.body }));
+  setHtml(`${MP}-scanned`, resultsTableHtml({ columns: MESSAGES_SCAN_COLUMNS, rows, emptyText: '' }));
+}
+
+function messagesRenderResults() {
+  const rows = msgResults.map((r) => Object.assign({}, r, { detail: r.body }));
+  setHtml(`${MP}-results`, resultsTableHtml({ columns: MESSAGES_RESULT_COLUMNS, rows, classify: messagesClassify }));
+}
+
+function messagesRenderReport(report) {
+  if (!report) { show(`${MP}-report`, false); setHtml(`${MP}-report`, ''); return; }
+  setHtml(`${MP}-report`, reportBoxHtml(report));
+  show(`${MP}-report`, true);
+}
+
+function messagesSetRunning(on) {
+  for (const id of ['bulk-run', 'scan', 'load', 'run-table']) setDisabled(`${MP}-${id}`, !!on);
+  if (!on) setDisabled(`${MP}-run-table`, !msgPending.length);
+  msgUi.running(!!on);
+}
+
+function messagesSetMode(mode) {
+  msgMode = mode === 'table' ? 'table' : 'bulk';
+  show(`${MP}-bulk`, msgMode === 'bulk');
+  show(`${MP}-table`, msgMode === 'table');
+  for (const m of ['bulk', 'table']) {
+    const b = $el(`${MP}-mode-${m}`);
+    if (!b) continue;
+    b.classList.toggle('tt-btn-primary', m === msgMode);
+    b.classList.toggle('tt-btn-ghost', m !== msgMode);
+  }
+}
+
+function messagesGuardRun(fn, what) {
+  if (messagesIsRunning()) { msgUi.status('יש ריצה פעילה. עצור אותה קודם'); return; }
+  Promise.resolve().then(fn).catch((e) => {
+    log(`[הודעות] ${what} נכשל: ${e && e.message}`);
+    messagesSetRunning(false);
+    msgUi.status(`${what} נכשל. בדוק את היומן ונסה שוב`);
+  });
+}
+
+function messagesStop() {
+  if (!messagesIsRunning()) return;
+  msgUi.status('עוצר… (אחרי הפעולה הנוכחית)');
+  messagesRequestStop();
+}
+
+function messagesLoadTable() {
+  const text = (($el(`${MP}-input`) || {}).value || '');
+  const parsed = messagesParseTable(text);
+  if (!parsed.ok) {
+    msgPending = [];
+    setText(`${MP}-load-status`, `✗ ${parsed.reason}`);
+    setDisabled(`${MP}-run-table`, true);
+    msgUi.status(parsed.reason);
+    log(`[הודעות] טעינת טבלה: ${parsed.reason}`);
+    return;
+  }
+  msgPending = parsed.entries;
+  const summary = messagesLoadSummary(parsed);
+  setText(`${MP}-load-status`, `✓ ${summary}`);
+  setDisabled(`${MP}-run-table`, false);
+  msgUi.status(`${summary}. לחץ "בצע"`);
+  log(`[הודעות] ${summary}`);
+}
+
+function messagesCopyTsv() {
+  const list = messagesGetScanned();
+  if (!list.length) { msgUi.status('אין הודעות סרוקות להעתקה. לחץ "סרוק" קודם'); return; }
+  copyTextToClipboard(messagesBuildTsv(list)).then((ok) => {
+    flash(`${MP}-copy-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק לאקסל');
+    msgUi.status(ok ? `הועתקו ${list.length} הודעות. הדבק באקסל (Ctrl+V), ערוך את עמודת "פעולה" והדבק חזרה` : 'ההעתקה נחסמה בדפדפן. השתמש ב"הורד אקסל"');
+  });
+}
+
+function messagesDownload() {
+  const list = messagesGetScanned();
+  if (!list.length) { msgUi.status('אין הודעות סרוקות להורדה. לחץ "סרוק" קודם'); return; }
+  const res = messagesDownloadXlsx(list);
+  msgUi.status(res.ok ? `הורד קובץ ${res.format === 'xlsx' ? 'אקסל' : 'TSV'} עם ${list.length} הודעות` : `ההורדה נכשלה: ${res.reason || ''}`);
+}
+
+function messagesCopyReport() {
+  const rows = messagesGetReportRows();
+  if (!rows.length) { msgUi.status('אין דוח להעתקה'); return; }
+  const text = messagesBuildReportTsv(rows);
+  copyTextToClipboard(text).then((ok) => {
+    flash(`${MP}-copy-report`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק דוח');
+    if (ok) { msgUi.status(`הועתקו ${rows.length} שורות דוח`); return; }
+    const ta = $el(`${MP}-input`);
+    if (ta) ta.value = text;
+    messagesSetMode('table');
+    msgUi.status('ההעתקה נחסמה בדפדפן. הדוח הוצג בתיבת הטקסט להעתקה ידנית');
+  });
+}
+
+function messagesMount(container, panelUi, page) {
+  msgUi = panelUi;
+  const url = (page && page.url) || (typeof location !== 'undefined' ? location.href : '');
+  if (!messagesIsMessagesUrl(url)) {
+    container.innerHTML = '<div class="tt-box tt-box-info">הכלי עובד בדף ההודעות בלבד.</div>';
+    return;
+  }
+  container.innerHTML = `
+    <div class="tt-row">
+      ${buttonHtml({ id: `${MP}-mode-bulk`, label: 'מצב גורף', kind: 'primary' })}
+      ${buttonHtml({ id: `${MP}-mode-table`, label: 'לפי טבלה', kind: 'ghost' })}
+    </div>
+    <div id="${MP}-bulk">
+      <div class="tt-box tt-box-warn">
+        עובר על <b>כל ההודעות</b> במצב "נשלחה", בכל העמודים:
+        <ul>
+          <li>"${esc('בקשת מעבר תלמיד')}": <b>אישור מעבר</b></li>
+          <li>כל הודעה אחרת: <b>שנה מצב הודעה לטופל</b></li>
+        </ul>
+        "דחיית מעבר" לא נלחץ אוטומטית. לדחייה השתמש ב"לפי טבלה".
+      </div>
+      ${buttonsRowHtml([{ id: `${MP}-bulk-run`, label: 'הפעל מצב גורף', kind: 'primary' }])}
+    </div>
+    <div id="${MP}-table" hidden>
+      <div class="tt-box tt-box-info">
+        <b>שלב א</b>: "סרוק" עובר על כל ההודעות במצב "נשלחה" ובונה טבלה; "העתק לאקסל" או "הורד אקסל".
+        <b>שלב ב</b>: ערוך באקסל את עמודת "פעולה" (${esc(MESSAGES_ALL_ACTIONS.join(' / '))}), הדבק כאן, "טען" ואז "בצע".
+        אל תשנה את עמודת UID.
+      </div>
+      ${buttonsRowHtml([
+        { id: `${MP}-scan`, label: 'סרוק', kind: 'primary' },
+        { id: `${MP}-copy-tsv`, label: 'העתק לאקסל', kind: 'ghost' },
+        { id: `${MP}-xlsx`, label: 'הורד אקסל', kind: 'ghost' },
+      ])}
+      <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
+      <div id="${MP}-scanned" class="tt-scroll"></div>
+      <textarea id="${MP}-input" class="tt-textarea" placeholder="UID&#9;נושא&#9;ת.ז./דרכון&#9;תאריך&#9;גוף ההודעה&#9;פעולה"></textarea>
+      ${buttonsRowHtml([
+        { id: `${MP}-load`, label: 'טען', kind: 'ghost' },
+        { id: `${MP}-run-table`, label: 'בצע', kind: 'primary', disabled: true },
+      ])}
+      <div id="${MP}-load-status" class="tt-hint">טבלה לא טעונה.</div>
+    </div>
+    ${buttonsRowHtml([
+      { id: `${MP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
+      { id: `${MP}-copy-report`, label: 'העתק דוח', kind: 'ghost', size: 'small' },
+    ])}
+    <div id="${MP}-results" class="tt-scroll"></div>
+    <div id="${MP}-report" class="tt-box tt-box-warn" hidden></div>`;
+
+  $el(`${MP}-mode-bulk`).addEventListener('click', () => messagesSetMode('bulk'));
+  $el(`${MP}-mode-table`).addEventListener('click', () => messagesSetMode('table'));
+  $el(`${MP}-bulk-run`).addEventListener('click', () => messagesGuardRun(messagesRunBulk, 'מצב גורף'));
+  $el(`${MP}-scan`).addEventListener('click', () => messagesGuardRun(messagesScan, 'הסריקה'));
+  $el(`${MP}-copy-tsv`).addEventListener('click', messagesCopyTsv);
+  $el(`${MP}-xlsx`).addEventListener('click', messagesDownload);
+  $el(`${MP}-load`).addEventListener('click', messagesLoadTable);
+  $el(`${MP}-run-table`).addEventListener('click', () => messagesGuardRun(() => messagesRunTable(msgPending), 'הביצוע לפי טבלה'));
+  $el(`${MP}-stop`).addEventListener('click', messagesStop, true);
+  $el(`${MP}-copy-report`).addEventListener('click', messagesCopyReport);
+
+  messagesSetHooks({
+    onStart: (mode) => {
+      messagesSetRunning(true);
+      if (mode !== 'scan') { msgResults = []; messagesRenderResults(); messagesRenderReport(null); }
+      msgUi.progress(0, 0);
+      msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי טבלה…');
+    },
+    onStatus: (msg) => msgUi.status(msg),
+    onProgress: (cur, total) => msgUi.progress(cur, total),
+    onResult: (row, all) => { msgResults = all; messagesRenderResults(); },
+    onScanProgress: (list, pages) => setText(`${MP}-scan-status`, `סריקה: ${pages} עמודים, ${list.length} הודעות עד כה…`),
+    onScanDone: (list, info) => {
+      messagesRenderScanned(list);
+      setText(`${MP}-scan-status`, `✓ נסרקו ${list.length} הודעות מ-${info.pages} עמודים${info.stopped ? ' (נעצר)' : ''}.`);
+      messagesSetRunning(false);
+      msgUi.status(list.length ? `נסרקו ${list.length} הודעות. "העתק לאקסל" או "הורד אקסל", ערוך את עמודת "פעולה" והדבק חזרה` : 'לא נמצאו הודעות במצב "נשלחה"');
+    },
+    onDone: (rows, report) => {
+      msgResults = rows;
+      messagesRenderResults();
+      messagesRenderReport(report);
+      messagesSetRunning(false);
+      msgUi.progress(0, 0);
+      msgUi.status(`${report.stopped ? 'נעצר' : 'הסתיים'}. ${report.summary}${report.lines.length ? ' (ראה "מה נשאר")' : ''}`);
+    },
+  });
+
+  messagesSetMode(msgMode);
+  msgResults = messagesGetReportRows();
+  messagesRenderResults();
+  messagesRenderScanned(messagesGetScanned());
+  log('[הודעות] דף ההודעות זוהה');
+  msgUi.status('מוכן. בחר מצב: גורף או לפי טבלה');
+}
+
 const messagesTool = {
   id: 'messages',
   title: 'הודעות',
-  pages: ['messages'],
+  pages: ['other'],
   hasPendingRun: () => false,
-  isRunning: () => false,
-  onStop() {},
-  mount(container) {
-    container.innerHTML = '<div class="tt-box tt-box-info">הכלי הזה בהעברה לסקריפט המאוחד. בינתיים השתמש בסקריפט הישן.</div>';
-  },
+  isRunning: messagesIsRunning,
+  onStop: messagesStop,
+  mount: messagesMount,
 };
 
 // ─── src/main.js ───
