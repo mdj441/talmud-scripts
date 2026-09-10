@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ABSORB_STATUS, ABSORB_TSV_HEADER, ABSORB_TEMPLATE_HEADER,
+  ABSORB_STATUS, ABSORB_TSV_HEADER, ABSORB_CSV_HEADER, ABSORB_TEMPLATE_HEADER,
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
-  buildResultsTsv, buildRemainingReport, summarizeAbsorbResults,
+  buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
+  absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
 } from '../src/tools/absorb.js';
-import { maskId, log, getLogText, clearLog } from '../src/core/log.js';
+import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
 
 // כל הת.ז. כאן בדויות (337386692 / 206136871 / 6136871 — דוגמאות התוכנית).
@@ -176,7 +177,9 @@ test('log/getLogText/clearLog: טבעת של 500 שורות', () => {
   const lines = getLogText().split('\n');
   assert.equal(lines.length, 500);
   assert.ok(lines[lines.length - 1].includes('שורה 519'));
-  assert.ok(!getLogText().includes('שורה 5\n') || true);
+  // 520 נרשמו, 500 נשמרו → השורה הראשונה שנותרה היא "שורה 20", ו-19 הראשונות נמחקו.
+  assert.ok(lines[0].endsWith('שורה 20'), `שורה ראשונה לא צפויה: ${lines[0]}`);
+  assert.ok(!getLogText().includes('שורה 19\n'), 'שורות ישנות היו אמורות ליפול מהטבעת');
   clearLog();
   assert.equal(getLogText(), '');
 });
@@ -193,4 +196,94 @@ test('toCsv: ערכים ריקים/חסרים = תא ריק', () => {
 
 test('toCsv: בלי שורות = מחרוזת ריקה', () => {
   assert.equal(toCsv([]), '');
+});
+
+// ─── buildResultsCsvRows (כותרת + פירוט) ─────────────────────────────────────
+test('buildResultsCsvRows: כותרת + שורה אחת עם עמודת פירוט', () => {
+  const rows = buildResultsCsvRows([RESULTS[1]]);
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], ABSORB_CSV_HEADER);
+  assert.deepEqual(rows[0], ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'פירוט', 'מה לעשות']);
+  assert.deepEqual(rows[1], ['02', '720', '337386692', 'שגיאה', 'כפתור קליטה לא נמצא', 'בצע ידנית באתר']);
+});
+
+test('buildResultsCsvRows: בלי תוצאות = כותרת בלבד; detail/action חסרים = תא ריק', () => {
+  assert.deepEqual(buildResultsCsvRows([]), [ABSORB_CSV_HEADER]);
+  const rows = buildResultsCsvRows([{ branch: '01', studyType: '600', identity: '006136871', status: 'נקלט' }]);
+  assert.deepEqual(rows[1], ['01', '600', '006136871', 'נקלט', '', '']);
+});
+
+// ─── absorbParsePostbackFromHref (אם נשבר — הוולידציה לא רצה, C1/I5) ─────────
+test('absorbParsePostbackFromHref: WebForm_DoPostBackWithOptions → target + קבוצת ולידציה', () => {
+  const href = 'javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions("ctl00$ContentPlaceHolder1$x$LinkButton1", "", true, "grpX", "", false, true))';
+  assert.deepEqual(absorbParsePostbackFromHref(href), {
+    target: 'ctl00$ContentPlaceHolder1$x$LinkButton1', arg: '', group: 'grpX', validate: true,
+  });
+});
+
+test('absorbParsePostbackFromHref: __doPostBack ישיר → בלי קבוצה ובלי ולידציה', () => {
+  assert.deepEqual(absorbParsePostbackFromHref("javascript:__doPostBack('ctl00$ContentPlaceHolder1$btnX','arg1')"), {
+    target: 'ctl00$ContentPlaceHolder1$btnX', arg: 'arg1', group: '', validate: false,
+  });
+});
+
+test('absorbParsePostbackFromHref: href שאינו postback → null', () => {
+  assert.equal(absorbParsePostbackFromHref('#'), null);
+  assert.equal(absorbParsePostbackFromHref('https://talmud.edu.gov.il/x.aspx'), null);
+  assert.equal(absorbParsePostbackFromHref(''), null);
+  assert.equal(absorbParsePostbackFromHref(null), null);
+  assert.equal(absorbParsePostbackFromHref(undefined), null);
+});
+
+// ─── absorbParseCount (עדות שהחיפוש באמת רץ — C4) ───────────────────────────
+test('absorbParseCount: "נמצאו N" → N, כולל 0', () => {
+  assert.equal(absorbParseCount('נמצאו 3 רשומות'), 3);
+  assert.equal(absorbParseCount('נמצאו 0 רשומות'), 0);
+  assert.equal(absorbParseCount('נמצאו  12  רשומות'), 12);
+});
+
+test('absorbParseCount: תווית ריקה/חסרה → null (אין עדות שהחיפוש רץ)', () => {
+  assert.equal(absorbParseCount(''), null);
+  assert.equal(absorbParseCount(null), null);
+  assert.equal(absorbParseCount(undefined), null);
+  assert.equal(absorbParseCount('רשומות'), null);
+});
+
+// ─── makeAbsorbResult (מקור אחד לרשומת התוצאה — M2) ─────────────────────────
+test('makeAbsorbResult: ת.ז. מרופדת ל-9, detail/action ריקים כברירת מחדל', () => {
+  assert.deepEqual(makeAbsorbResult({ line: 3, branch: '01', studyType: '600', idType: 'tz', identity: '6136871' }, ABSORB_STATUS.OK), {
+    line: 3, branch: '01', studyType: '600', idType: 'tz', identity: '006136871',
+    status: 'נקלט', detail: '', action: '',
+  });
+});
+
+test('makeAbsorbResult: דרכון לא מרופד; detail/action עוברים כמו שהם', () => {
+  assert.deepEqual(makeAbsorbResult({ line: 7, branch: '12', studyType: '720', idType: 'passport', identity: ' AB1234567 ' }, ABSORB_STATUS.ERROR, 'פירוט', 'מה לעשות'), {
+    line: 7, branch: '12', studyType: '720', idType: 'passport', identity: 'AB1234567',
+    status: 'שגיאה', detail: 'פירוט', action: 'מה לעשות',
+  });
+});
+
+// ─── absorbQueueIsStale (אין resume אוטומטי לתור ישן — M5) ──────────────────
+test('absorbQueueIsStale: מתחת לגיל המרבי = לא ישן, מעליו = ישן', () => {
+  const t0 = '2026-09-10T10:00:00.000Z';
+  const base = Date.parse(t0);
+  const halfHour = 30 * 60 * 1000;
+  assert.equal(absorbQueueIsStale(t0, base + 29 * 60 * 1000, halfHour), false);
+  assert.equal(absorbQueueIsStale(t0, base + halfHour, halfHour), false);
+  assert.equal(absorbQueueIsStale(t0, base + 31 * 60 * 1000, halfHour), true);
+});
+
+test('absorbQueueIsStale: חותמת חסרה/פגומה = לא ישן (לא חוסמים המשך)', () => {
+  assert.equal(absorbQueueIsStale(null, Date.now(), 1000), false);
+  assert.equal(absorbQueueIsStale('', Date.now(), 1000), false);
+  assert.equal(absorbQueueIsStale('לא-תאריך', Date.now(), 1000), false);
+});
+
+// ─── maskIdsInText (פרטיות: ת.ז. בתוך משפט חופשי) ───────────────────────────
+test('maskIdsInText: ממסך רצף של 5+ ספרות בתוך טקסט עברי, משאיר מספרים קצרים', () => {
+  assert.equal(maskIdsInText('התלמיד 337386692 קיים במוסד אחר'), 'התלמיד ******692 קיים במוסד אחר');
+  assert.equal(maskIdsInText('סניף 01 סוג לימוד 600 — אין שינוי'), 'סניף 01 סוג לימוד 600 — אין שינוי');
+  assert.equal(maskIdsInText('קוד 12345 וקוד 1234'), 'קוד **345 וקוד 1234');
+  assert.equal(maskIdsInText(null), '');
 });
