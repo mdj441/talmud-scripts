@@ -168,3 +168,75 @@ test('hideMessagePopupAsync: אין כפתור סגירה → {hidden:false, wai
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
   }
 });
+
+// ─── B8: ענפי השגיאה/ה-timeout של waitPRM (הם שמזינים את שערי-העדות ב-absorb) ──
+function makeFakePrm() {
+  const handlers = { begin: [], end: [] };
+  return {
+    handlers,
+    prm: {
+      add_beginRequest: (h) => handlers.begin.push(h),
+      add_endRequest: (h) => handlers.end.push(h),
+      remove_beginRequest: (h) => { handlers.begin = handlers.begin.filter((x) => x !== h); },
+      remove_endRequest: (h) => { handlers.end = handlers.end.filter((x) => x !== h); },
+    },
+  };
+}
+
+function withFakePrm(fake, fn) {
+  const prevSys = globalThis.Sys;
+  globalThis.Sys = { WebForms: { PageRequestManager: { getInstance: () => fake.prm } } };
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => {
+      if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
+    });
+}
+
+test('waitPRM: endRequest עם שגיאה → {ok:false, started:true}, set_errorHandled(true), וה-handlers מוסרים', async () => {
+  const fake = makeFakePrm();
+  await withFakePrm(fake, async () => {
+    const p = waitPRM({ startTimeoutMs: 500, totalTimeoutMs: 2000 });
+    assert.equal(fake.handlers.end.length, 1);
+    let handled = null;
+    fake.handlers.begin[0]({}, {});
+    fake.handlers.end[0]({}, {
+      get_error: () => new Error('שגיאת שרת'),
+      set_errorHandled: (v) => { handled = v; },
+    });
+    const res = await p;
+    assert.equal(res.ok, false, 'שגיאת postback אינה הצלחה');
+    assert.equal(res.started, true, 'הבקשה כן התחילה — זה לא "לחיצה שנבלעה"');
+    assert.match(res.reason, /PRM/);
+    assert.equal(handled, true, 'set_errorHandled(true) — אחרת MS AJAX מקפיץ alert למשתמש');
+    assert.equal(fake.handlers.begin.length, 0, 'beginRequest handler הוסר');
+    assert.equal(fake.handlers.end.length, 0, 'endRequest handler הוסר');
+  });
+});
+
+test('waitPRM: התחילה בקשה ולא נסגרה עד totalTimeout → {ok:false, started:true}, וה-handlers מוסרים', async () => {
+  const fake = makeFakePrm();
+  await withFakePrm(fake, async () => {
+    const p = waitPRM({ startTimeoutMs: 20, totalTimeoutMs: 60 });
+    fake.handlers.begin[0]({}, {}); // התחילה — startTimeout כבר לא רלוונטי
+    const res = await p;
+    assert.equal(res.ok, false);
+    assert.equal(res.started, true);
+    assert.match(res.reason, /timeout/i);
+    assert.equal(fake.handlers.begin.length, 0, 'beginRequest handler הוסר');
+    assert.equal(fake.handlers.end.length, 0, 'endRequest handler הוסר');
+  });
+});
+
+test('waitPRM: endRequest בלי שגיאה אחרי begin → {ok:true, started:true} וה-handlers מוסרים', async () => {
+  const fake = makeFakePrm();
+  await withFakePrm(fake, async () => {
+    const p = waitPRM({ startTimeoutMs: 500, totalTimeoutMs: 2000 });
+    fake.handlers.begin[0]({}, {});
+    fake.handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
+    const res = await p;
+    assert.deepEqual(res, { started: true, ok: true });
+    assert.equal(fake.handlers.begin.length, 0);
+    assert.equal(fake.handlers.end.length, 0);
+  });
+});
