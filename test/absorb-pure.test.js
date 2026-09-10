@@ -5,6 +5,7 @@ import {
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
+  absorbShouldRecord, absorbNavStateRestore,
 } from '../src/tools/absorb.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -286,4 +287,67 @@ test('maskIdsInText: ממסך רצף של 5+ ספרות בתוך טקסט עבר
   assert.equal(maskIdsInText('סניף 01 סוג לימוד 600 — אין שינוי'), 'סניף 01 סוג לימוד 600 — אין שינוי');
   assert.equal(maskIdsInText('קוד 12345 וקוד 1234'), 'קוד **345 וקוד 1234');
   assert.equal(maskIdsInText(null), '');
+});
+
+// ─── analyzeGrid עם ספירה (שער הספירה של v3.2 — ממצא #4) ────────────────────
+test('analyzeGrid: count=0 → לא נמצא, גם כששורה תואמת עדיין בגריד (גריד ישן)', () => {
+  assert.deepEqual(analyzeGrid(GRID_TWO, '006136871', 0), { found: false, matchType: null });
+  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '337386692', 0), { found: false, matchType: null });
+});
+
+test('analyzeGrid: count=1 → fallback לשורה יחידה מותר', () => {
+  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '337386692', 1), { found: true, matchType: 'single-row-fallback' });
+});
+
+test('analyzeGrid: count=2+ → רק התאמה מדויקת, בלי fallback', () => {
+  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '337386692', 2), { found: false, matchType: null });
+  assert.deepEqual(analyzeGrid(GRID_TWO, '006136871', 2), { found: true, matchType: 'exact' });
+});
+
+test('analyzeGrid: count=null/undefined → התנהגות תואמת-אחורה (fallback מותר)', () => {
+  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '337386692', null), { found: true, matchType: 'single-row-fallback' });
+  assert.deepEqual(analyzeGrid(single, '337386692', undefined), { found: true, matchType: 'single-row-fallback' });
+  assert.deepEqual(analyzeGrid(single, '337386692'), { found: true, matchType: 'single-row-fallback' });
+});
+
+// ─── absorbShouldRecord (רישום אידמפוטנטי לכל שורה בתור — ממצא #5) ───────────
+test('absorbShouldRecord: שורה חדשה נרשמת, אותה שורה פעם שנייה לא', () => {
+  assert.equal(absorbShouldRecord(-1, 0), true);
+  assert.equal(absorbShouldRecord(3, 4), true);
+  assert.equal(absorbShouldRecord(3, 3), false);
+  assert.equal(absorbShouldRecord(3, 2), false);
+});
+
+test('absorbShouldRecord: אינדקס לא-חוקי לא נרשם; lastIdx חסר = הכול חדש', () => {
+  assert.equal(absorbShouldRecord(-1, -1), false);
+  assert.equal(absorbShouldRecord(0, null), false);
+  assert.equal(absorbShouldRecord(0, 'x'), false);
+  assert.equal(absorbShouldRecord(null, 0), true);
+  assert.equal(absorbShouldRecord(undefined, 5), true);
+});
+
+// ─── absorbNavStateRestore (שחזור מצב-ניווט אחרי ניווט שנכשל — ממצא #1) ──────
+test('absorbNavStateRestore: מצב קודם עם סניף → משוחזר כמות שהוא', () => {
+  assert.deepEqual(absorbNavStateRestore({ currentBranch: '01' }), { currentBranch: '01' });
+  assert.deepEqual(absorbNavStateRestore({ currentBranch: '07', x: 1 }), { currentBranch: '07', x: 1 });
+});
+
+test('absorbNavStateRestore: בלי סניף קודם → null (כלומר לנקות את המצב)', () => {
+  assert.equal(absorbNavStateRestore({}), null);
+  assert.equal(absorbNavStateRestore(null), null);
+  assert.equal(absorbNavStateRestore(undefined), null);
+  assert.equal(absorbNavStateRestore({ currentBranch: '' }), null);
+  assert.equal(absorbNavStateRestore('01'), null);
+});
+
+// ─── absorbParseCount: בלי fallback רופף (ממצא M-c) ─────────────────────────
+test('absorbParseCount: ספרה בלי "נמצאו" → null (לא לוקחים כל מספר בטקסט)', () => {
+  assert.equal(absorbParseCount('5 רשומות'), null);
+  assert.equal(absorbParseCount('סה"כ: 7'), null);
+  assert.equal(absorbParseCount('עמוד 1 מתוך 3'), null);
+  assert.equal(absorbParseCount('נמצאו 4 רשומות'), 4);
 });
