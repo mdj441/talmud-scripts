@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         תלמוד - קליטת תלמידים v3.3
 // @namespace    https://github.com/mdj441/talmud-scripts
-// @version      3.3.0
+// @version      3.3.1
 // @description  קליטת תלמידים באצווה לתלמו"ד — v3.3 מודולרי
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
@@ -2989,6 +2989,9 @@ function absorbStop() {
 
 
 const PANEL_VERSION = '3.3';
+// ‏UX 11: שמות הארצות (עברית) בסדר אלפביתי — המשתמש צריך לדעת מה מותר לכתוב בעמודת "ארץ".
+// נתונים בלבד (בלי DOM) — בטוח ברמת המודול, המודול נטען גם ב-Node.
+const panelCountryNames = COUNTRIES.map((c) => c.he).sort((a, b) => a.localeCompare(b, 'he'));
 let panelAwaitingErrorConfirm = false;
 let panelResults = [];
 let panelTotal = 0;
@@ -3114,7 +3117,9 @@ function panelRenderReport(report) {
   const box = $el('tma3-report');
   if (!box) return;
   if (!report) { box.style.display = 'none'; box.innerHTML = ''; return; }
-  let html = `<div style="font-weight:bold;margin-bottom:4px">📊 סיכום: ${panelEsc(report.summary || '—')}</div>`;
+  // ‏12: הדוח והטבלה מציגים מזהים מלאים (צורך תפעולי) — אזהרה אחת מעל, כדי שלא יודבקו בצ'אט.
+  let html = `<div style="color:#8a1f11;font-size:10.5px;margin-bottom:4px">⚠️ הדוח מכיל מזהים מלאים — לא להדביק בצ'אט/בדיווחי-באג; ללוג יש 'העתק לוג' ממוסך</div>`;
+  html += `<div style="font-weight:bold;margin-bottom:4px">📊 סיכום: ${panelEsc(report.summary || '—')}</div>`;
   if (report.lines.length) {
     html += '<div style="font-weight:bold;margin:6px 0 3px">מה נשאר לעשות:</div><ul style="margin:0;padding-inline-start:18px">';
     for (const line of report.lines) html += `<li style="margin-bottom:2px">${panelEsc(line)}</li>`;
@@ -3235,6 +3240,44 @@ function panelHandleStop() {
   panelSetRunning(false);
 }
 
+// ─── UX 11: רשימת הארצות — לראות מה מותר לכתוב, לחיצה מעתיקה ────────────────
+
+function panelRenderCountries(filter) {
+  const list = $el('tma3-countries-list');
+  if (!list) return;
+  const q = String(filter || '').trim();
+  const names = q ? panelCountryNames.filter((n) => n.includes(q)) : panelCountryNames;
+  if (!names.length) {
+    list.innerHTML = '<div style="color:#999;padding:2px">אין ארץ שמתאימה לסינון</div>';
+    return;
+  }
+  list.innerHTML = names.map((n) => `<span class="tma3-country" data-name="${panelEsc(n)}" title="לחץ להעתקה"
+    style="display:inline-block;margin:1px 2px;padding:1px 7px;border:1px solid #c9dcef;border-radius:10px;
+           background:#fff;cursor:pointer;white-space:nowrap">${panelEsc(n)}</span>`).join('');
+}
+
+function panelToggleCountries() {
+  const box = $el('tma3-countries-box');
+  if (!box) return;
+  const open = box.style.display !== 'none';
+  box.style.display = open ? 'none' : 'block';
+  if (open) return;
+  const filter = $el('tma3-countries-filter');
+  panelRenderCountries(filter ? filter.value : '');
+  if (filter) { try { filter.focus(); } catch (e) { /* לא קריטי */ } }
+}
+
+function panelCopyCountry(e) {
+  const target = e && e.target;
+  const chip = target && typeof target.closest === 'function' ? target.closest('.tma3-country') : null;
+  if (!chip) return;
+  const name = chip.getAttribute('data-name') || (chip.textContent || '').trim();
+  if (!name) return;
+  copyTextToClipboard(name).then((ok) => {
+    panelSetStatus(ok ? `הועתק: ${name}` : `ההעתקה נחסמה בדפדפן — הקלד ידנית: ${name}`);
+  });
+}
+
 // ─── בניית הפאנל (נראות v3.2) ───────────────────────────────────────────────
 
 // ‏A3: מחזירה true רק כשהפאנל **הזה** נוצר עכשיו. פאנל שכבר קיים = מופע אחר של v3.3
@@ -3305,6 +3348,18 @@ function panelCreateUI() {
         <button id="tma3-xlsx" style="flex:1;background:#b9770e;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📥 טען מאקסל</button>
         <input id="tma3-xlsx-file" type="file" accept=".xlsx,.xls" style="display:none">
+      </div>
+      <div style="display:flex;gap:6px;margin:6px 0">
+        <button id="tma3-countries" style="flex:1;background:#2e4053;color:#fff;border:none;
+                padding:6px;border-radius:4px;cursor:pointer;font-size:12px">🌍 רשימת ארצות</button>
+      </div>
+      <div id="tma3-countries-box" style="display:none;font-size:11px;color:#333;background:#f7fbff;
+           border:1px solid #c9dcef;border-radius:4px;padding:6px 8px;margin:0 0 6px;direction:rtl">
+        <input id="tma3-countries-filter" type="text" placeholder="סינון — הקלד חלק מהשם"
+          style="width:100%;box-sizing:border-box;font-size:12px;padding:4px;border:1px solid #aaa;
+                 border-radius:4px;margin-bottom:4px;direction:rtl">
+        <div id="tma3-countries-list" style="max-height:150px;overflow-y:auto;direction:rtl;line-height:1.9;text-align:right"></div>
+        <div style="color:#777;margin-top:4px">לחיצה על שם מעתיקה אותו ללוח — הדבק בעמודת "ארץ". השמות כפי שהם באתר.</div>
       </div>
       <div id="tma3-results" style="max-height:170px;overflow-y:auto;margin-bottom:6px;
            border:1px solid #ddd;border-radius:4px;min-height:10px"></div>
@@ -3379,6 +3434,9 @@ function panelCreateUI() {
   $el('tma3-template').addEventListener('click', panelDownloadTemplate);
   $el('tma3-xlsx').addEventListener('click', () => { const f = $el('tma3-xlsx-file'); if (f) f.click(); });
   $el('tma3-xlsx-file').addEventListener('change', panelHandleXlsxFile);
+  $el('tma3-countries').addEventListener('click', panelToggleCountries);
+  $el('tma3-countries-filter').addEventListener('input', function () { panelRenderCountries(this.value); });
+  $el('tma3-countries-list').addEventListener('click', panelCopyCountry);
   $el('tma3-copy-log').addEventListener('click', () => {
     copyLog().then((ok) => panelFlash('tma3-copy-log', ok ? '✓ הועתק' : '✗ נכשל', '📋 העתק לוג'));
   });
@@ -3468,7 +3526,9 @@ function initAbsorbPanel() {
     },
   });
 
-  log(`[init] קליטת תלמידים v${PANEL_VERSION} · דף ${page.kind}${page.branch ? ' · סניף ' + page.branch : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
+  // ‏W1: מקור הסניף בלוג — "h1" (נקרא מהדף), או "שמור/h1" / "שמור/pending" (מ-sessionStorage).
+  const branchOrigin = page.branchSource === 'h1' ? 'h1' : `שמור/${page.navSource || 'ללא'}`;
+  log(`[init] קליטת תלמידים v${PANEL_VERSION} · דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${branchOrigin}]` : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
 
   panelResults = absorbGetResults();
   panelRenderResults();
