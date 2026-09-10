@@ -204,7 +204,7 @@ test('buildHeader: מכיל את כל השורות הנדרשות', () => {
   const header = buildHeader(pkg);
   assert.ok(header.startsWith('// ==UserScript=='));
   assert.ok(header.trim().endsWith('// ==/UserScript=='));
-  assert.match(header, /@name\s+תלמוד - קליטת תלמידים v3\.3/);
+  assert.match(header, /@names+תלמוד - כלי אוטומציה/);
   assert.match(header, /@namespace\s+https:\/\/github\.com\/mdj441\/talmud-scripts/);
   assert.match(header, /@version\s+9\.9\.9/);
   assert.match(header, /@description\s+\S/);
