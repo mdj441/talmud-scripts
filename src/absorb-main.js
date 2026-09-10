@@ -10,6 +10,7 @@ import { getPage } from './core/navigate.js';
 import { parseAbsorbInput } from './tools/absorb-parse.js';
 import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './tools/absorb.js';
 import { absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults, absorbIsRunning, clearAbsorbStop } from './tools/absorb.js';
+import { absorbSavedQueueInfo, absorbDiscardSavedQueue } from './tools/absorb.js';
 
 const PANEL_VERSION = '3.3';
 let panelAwaitingErrorConfirm = false;
@@ -92,6 +93,47 @@ function panelRenderResults() {
   container.innerHTML = html;
 }
 
+// M5: תור שמור ישן לא ממשיך מעצמו — מציגים אותו עם "המשך"/"נקה", בלי שום פעולה אוטומטית.
+function panelRenderStaleQueue(info) {
+  const box = $el('tma-stale');
+  if (!box) return;
+  if (!info) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
+  const startedMs = Date.parse(info.startedAt);
+  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  box.innerHTML = `
+    <div style="font-weight:bold;margin-bottom:4px">⏸ נמצא תור שמור${ageMin === null ? '' : ` מלפני ${panelEsc(ageMin)} דקות`}</div>
+    <div style="margin-bottom:6px">${panelEsc(left)} שורות טרם עובדו (${panelEsc(info.curIdx || 0)} מתוך ${panelEsc(info.total || 0)} הושלמו).
+      התור ישן מדי כדי להמשיך אוטומטית — בחר מה לעשות.</div>
+    <div style="display:flex;gap:6px">
+      <button id="tma-stale-go" style="flex:1;background:#0a5c0a;color:#fff;border:none;
+              padding:5px;border-radius:4px;cursor:pointer;font-size:12px">▶ המשך</button>
+      <button id="tma-stale-clear" style="flex:1;background:#922b21;color:#fff;border:none;
+              padding:5px;border-radius:4px;cursor:pointer;font-size:12px">🗑 נקה</button>
+    </div>`;
+  box.style.display = 'block';
+  const go = $el('tma-stale-go');
+  if (go) {
+    go.addEventListener('click', () => {
+      panelRenderStaleQueue(null);
+      panelSetStatus('ממשיך את התור השמור…');
+      panelSetRunning(true);
+      Promise.resolve()
+        .then(() => absorbResumeIfPending({ allowStale: true }))
+        .catch((e) => { log('[resume] כשל: ' + (e && e.message)); panelSetRunning(false); });
+    });
+  }
+  const clear = $el('tma-stale-clear');
+  if (clear) {
+    clear.addEventListener('click', () => {
+      absorbDiscardSavedQueue();
+      panelRenderStaleQueue(null);
+      panelSetRunning(false);
+      panelSetStatus('התור השמור נמחק — אפשר להתחיל ריצה חדשה');
+    });
+  }
+}
+
 function panelRenderReport(report) {
   const box = $el('tma-report');
   if (!box) return;
@@ -137,6 +179,7 @@ async function panelStart() {
   const btn = $el('tma-start');
   if (btn) btn.textContent = '▶ התחל';
   panelRenderReport(null);
+  panelRenderStaleQueue(null);
   panelResults = [];
   panelRenderResults();
   clearAbsorbStop();
@@ -219,6 +262,8 @@ function panelCreateUI() {
                border:1px solid #aaa;border-radius:4px;font-family:monospace"></textarea>
       <div id="tma-errors" style="display:none;font-size:11px;color:#8a1f11;background:#fff5f5;
            border:1px solid #f0c0c0;border-radius:4px;padding:5px 7px;margin:6px 0;max-height:110px;overflow-y:auto"></div>
+      <div id="tma-stale" style="display:none;font-size:11px;color:#5a4a00;background:#fffbe6;
+           border:1px solid #e8d9a0;border-radius:4px;padding:6px 8px;margin:6px 0"></div>
       <div style="display:flex;gap:8px;margin:6px 0;align-items:flex-end">
         <div style="flex:1">
           <label style="font-size:11px;color:#444;display:block;margin-bottom:2px">
@@ -336,6 +381,7 @@ function panelCreateUI() {
 export function initAbsorbPanel() {
   const page = getPage();
   const resumable = absorbHasSavedQueue();
+  const savedInfo = absorbSavedQueueInfo();
   // הפאנל עולה בדפי מוסד / סוג-לימוד / תלמיד-חדש. חריג מכוון: גם בדף לא-מוכר כשיש
   // תור שמור — אחרת אצווה שנחתה בדף לא-צפוי נתקעת בלי שום ממשק (global-constraints).
   if (page.kind === 'other' && !resumable) return false;
@@ -362,6 +408,12 @@ export function initAbsorbPanel() {
       panelRenderResults();
       panelSetProgress(all.length, Math.max(panelTotal, all.length));
     },
+    // M5: תור ישן — לא ממשיכים אוטומטית, נותנים למשתמש "המשך"/"נקה".
+    onStaleQueue: (info) => {
+      panelSetRunning(false);
+      panelSetStatus('יש תור שמור ישן — בחר "המשך" או "נקה"');
+      panelRenderStaleQueue(info);
+    },
     onDone: (results, report) => {
       panelResults = results.slice();
       panelRenderResults();
@@ -378,7 +430,8 @@ export function initAbsorbPanel() {
   panelResults = absorbGetResults();
   panelRenderResults();
 
-  if (resumable) panelSetStatus('נמצא תור פתוח — ממשיך…');
+  if (resumable && savedInfo && savedInfo.stale) panelSetStatus('נמצא תור שמור ישן — בודק…');
+  else if (resumable) panelSetStatus('נמצא תור פתוח — ממשיך…');
   // גם כשאין תור פתוח: הקריאה מנקה מצב שמור שנותר מריצה שהסתיימה (לא זורקת בלי מצב).
   Promise.resolve()
     .then(() => absorbResumeIfPending())
