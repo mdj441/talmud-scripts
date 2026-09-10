@@ -13,10 +13,13 @@ export function getPRM() {
 // שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
 // לעולם לא נזרק/נדחה — "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
 // {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
+// ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
+// "הפעולה לא הפעילה שום בקשה לשרת" — לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
+// אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
 export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
   return new Promise((resolve) => {
     const prm = getPRM();
-    if (!prm) { setTimeout(() => resolve({ ok: true }), 200); return; }
+    if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
 
     let started = false, done = false;
 
@@ -35,7 +38,7 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
       prm.remove_endRequest(onEnd);
       clearTimeout(startTimer);
       clearTimeout(totalTimer);
-      resolve(result);
+      resolve(Object.assign({ started }, result));
     }
 
     prm.add_beginRequest(onBegin);

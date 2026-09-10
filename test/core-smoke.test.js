@@ -75,12 +75,40 @@ test('firePostback: לא קורא ל-__doPostBack באופן סינכרוני, �
     assert.deepEqual(postbackCalledAt, { target: 'ctl00$targetX', arg: 'argY' });
     assert.equal(endRequestRegisteredBeforePostback, true);
 
+    handlers.begin[0]({}, {});
     handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
     const result = await p;
     assert.equal(result.ok, true);
+    // started = האם באמת נצפה beginRequest (C1: "postback שנבלע" חייב להיות מובחן מניווט מלא)
+    assert.equal(result.started, true);
   } finally {
     if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
     if (prevPostBack === undefined) delete globalThis.__doPostBack; else globalThis.__doPostBack = prevPostBack;
     if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
   }
+});
+
+test('waitPRM: כששום בקשה לא מתחילה עד ל-startTimeout → {ok:true, started:false} (postback שנבלע)', async () => {
+  const handlers = { begin: [], end: [] };
+  const fakePrm = {
+    add_beginRequest: (h) => handlers.begin.push(h),
+    add_endRequest: (h) => handlers.end.push(h),
+    remove_beginRequest: (h) => { handlers.begin = handlers.begin.filter(x => x !== h); },
+    remove_endRequest: (h) => { handlers.end = handlers.end.filter(x => x !== h); },
+  };
+  const prevSys = globalThis.Sys;
+  globalThis.Sys = { WebForms: { PageRequestManager: { getInstance: () => fakePrm } } };
+  try {
+    const result = await waitPRM({ startTimeoutMs: 20, totalTimeoutMs: 500 });
+    assert.equal(result.ok, true);
+    assert.equal(result.started, false, 'לא נצפה beginRequest — הקורא חייב לדעת שלא קרה כלום');
+  } finally {
+    if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
+  }
+});
+
+test('waitPRM: בלי PRM בכלל → {ok:true, started:false}', async () => {
+  const result = await waitPRM({ startTimeoutMs: 20, totalTimeoutMs: 100 });
+  assert.equal(result.ok, true);
+  assert.equal(result.started, false);
 });
