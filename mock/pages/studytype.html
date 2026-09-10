@@ -171,7 +171,14 @@
         if (D.findEnrolled(db, stId, id).length) {
           return { kind: 'async', apply: () => { closeModal(); C.showMessage('התלמיד כבר קיים בסוג לימוד זה', ['ok']); D.log(db, `confirm ${id} → already enrolled`); } };
         }
-        const known = db.known && db.known[id];
+        // "מוכר למערכת" = ברשימת המוכרים, או רשום בסוג-לימוד כלשהו (המערכת כבר מכירה אותו)
+        let known = db.known && db.known[id];
+        if (!known) {
+          for (const list of Object.values(db.enrolled || {})) {
+            const hit = list.find((s) => D.norm(s.id) === D.norm(id));
+            if (hit) { known = { first: hit.first, last: hit.last, birth: hit.birth }; break; }
+          }
+        }
         if (known) {
           return { kind: 'async', apply: () => {
             D.enroll(db, stId, { id, idType, first: known.first, last: known.last, birth: known.birth || birth, accepted, country: idType === '2' ? country : undefined });

@@ -123,18 +123,23 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
   const idInfo = detectIdType(identity);
 
   if (!columnMap) {
+    // בלי שורת-כותרת: 3 תאים = בסיס; 4–5 תאים = הפורמט הישן לדרכון (תאריך לידה, ארץ);
+    // 6+ תאים = סדר-התבנית (שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי) —
+    // כך העתקה מהתבנית של האקסל עובדת גם בלי הכותרת וגם עם תאים ריקים (W6).
     const rest = cells.slice(3).map((c) => (c ?? '').trim());
-    if (idInfo.type === 'passport') {
-      birthDateRaw = rest.length >= 1 ? rest[0] : undefined;
-      countryRaw = rest.length >= 2 ? rest[1] : undefined;
+    const opt = (i) => (rest.length > i && rest[i] !== '' ? rest[i] : undefined);
+    if (cells.length >= 6) {
+      firstNameRaw = opt(0);
+      lastNameRaw = opt(1);
+      birthDateRaw = opt(2);
+      countryRaw = opt(3);
+      genderRaw = opt(4);
+      statusRaw = opt(5);
+    } else if (idInfo.type === 'passport') {
+      birthDateRaw = opt(0);
+      countryRaw = opt(1);
     } else if (cells.length === 4 || cells.length === 5) {
-      return err('מספר עמודות לא צפוי');
-    } else if (cells.length >= 6) {
-      firstNameRaw = rest[0];
-      lastNameRaw = rest[1];
-      birthDateRaw = rest.length >= 3 ? rest[2] : undefined;
-      genderRaw = rest.length >= 4 ? rest[3] : undefined;
-      statusRaw = rest.length >= 5 ? rest[4] : undefined;
+      return err('מספר עמודות לא צפוי (לת.ז. עם פרטי תלמיד חדש צריך גם שם פרטי, שם משפחה ותאריך לידה)');
     }
   }
 

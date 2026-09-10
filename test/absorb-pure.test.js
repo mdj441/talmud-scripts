@@ -5,16 +5,15 @@ import {
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
-  absorbShouldRecord, absorbNavStateRestore, absorbPrecheckDecision,
-  absorbStoredBranchTrusted, absorbSameNavFailure, absorbReferrerMismatch,
-} from '../src/tools/absorb.js';
+  absorbShouldRecord, absorbPrecheckDecision,
+} from '../src/tools/absorb-report.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
 
 // כל הת.ז. כאן בדויות (337386692 / 206136871 / 6136871 — דוגמאות התוכנית).
 
 // ─── smoke: import ב-Node בלי DOM ────────────────────────────────────────────
-test('smoke: absorb.js נטען ב-Node והיצוא הטהור הוא פונקציות', () => {
+test('smoke: absorb-report.js נטען ב-Node והיצוא הטהור הוא פונקציות', () => {
   for (const fn of [analyzeGrid, isAbsorbSuccess, absorbStatusKey,
     buildResultsTsv, buildRemainingReport, summarizeAbsorbResults]) {
     assert.equal(typeof fn, 'function');
@@ -174,14 +173,14 @@ test('maskId: מ-5 תווים ומעלה — 3 אחרונים נשמרים, הש
 });
 
 // ─── לוג (ring buffer) ───────────────────────────────────────────────────────
-test('log/getLogText/clearLog: טבעת של 500 שורות', () => {
+test('log/getLogText/clearLog: טבעת של 400 שורות (נשמרת ב-sessionStorage כשיש)', () => {
   clearLog();
   for (let i = 0; i < 520; i++) log('שורה ' + i);
   const lines = getLogText().split('\n');
-  assert.equal(lines.length, 500);
+  assert.equal(lines.length, 400);
   assert.ok(lines[lines.length - 1].includes('שורה 519'));
-  // 520 נרשמו, 500 נשמרו → השורה הראשונה שנותרה היא "שורה 20", ו-19 הראשונות נמחקו.
-  assert.ok(lines[0].endsWith('שורה 20'), `שורה ראשונה לא צפויה: ${lines[0]}`);
+  // 520 נרשמו, 400 נשמרו → השורה הראשונה שנותרה היא "שורה 120".
+  assert.ok(lines[0].endsWith('שורה 120'), `שורה ראשונה לא צפויה: ${lines[0]}`);
   assert.ok(!getLogText().includes('שורה 19\n'), 'שורות ישנות היו אמורות ליפול מהטבעת');
   clearLog();
   assert.equal(getLogText(), '');
@@ -349,21 +348,6 @@ test('absorbShouldRecord: אינדקס לא-חוקי לא נרשם; lastIdx חס
 });
 
 // ─── absorbNavStateRestore (שחזור מצב-ניווט אחרי ניווט שנכשל — ממצא #1) ──────
-test('absorbNavStateRestore: מצב קודם עם סניף → משוחזר כמות שהוא', () => {
-  assert.deepEqual(absorbNavStateRestore({ currentBranch: '01' }), { currentBranch: '01' });
-  assert.deepEqual(absorbNavStateRestore({ currentBranch: '07', x: 1 }), { currentBranch: '07', x: 1 });
-});
-
-test('absorbNavStateRestore: בלי סניף קודם → null (כלומר לנקות את המצב)', () => {
-  assert.equal(absorbNavStateRestore({}), null);
-  assert.equal(absorbNavStateRestore(null), null);
-  assert.equal(absorbNavStateRestore(undefined), null);
-  assert.equal(absorbNavStateRestore({ currentBranch: '' }), null);
-  assert.equal(absorbNavStateRestore('01'), null);
-});
-
-
-// ─── absorbPrecheckDecision (החלטת החיפוש המקדים — ממצא #1b) ─────────────────
 test('absorbPrecheckDecision: חיפוש שרץ והגריד התרענן → ניתוח הגריד', () => {
   assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: 0 }), 'analyze');
   assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: 1 }), 'analyze');
@@ -403,63 +387,3 @@ test('absorbPrecheckDecision: אין עדות שהחיפוש רץ → שגיאה
 // ─── W1/W2: אמון בסניף השמור לפי provenance (בדיקה רטובה 10.9.2026) ──────────
 // בדף סוג-לימוד אין סניף ב-DOM. הסניף השמור נסמך רק כשנקרא מ-h1 של דף מוסד בטאב הזה
 // ושום ניווט לא דרס אותו ('h1'). 'pending' = gotoBranch כתב לפני ירי שאולי נבלע (F2).
-test('absorbStoredBranchTrusted: רק branchSource "h1" עם סניף תואם נחשב אמת', () => {
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '00', branchSource: 'h1' }, '00'), true);
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '7', branchSource: 'h1' }, '07'), true, 'השוואה אחרי ריפוד');
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '00', branchSource: 'h1' }, '16'), false, 'סניף אחר');
-});
-test('absorbStoredBranchTrusted: pending / stored / בלי מקור / ריק → לא אמין (מנווטים)', () => {
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16', branchSource: 'pending' }, '16'), false, 'pending לעולם לא נצרך במסלול-מהיר');
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16', branchSource: 'stored' }, '16'), false);
-  assert.equal(absorbStoredBranchTrusted({ currentBranch: '16' }, '16'), false, 'מצב ישן בלי provenance');
-  assert.equal(absorbStoredBranchTrusted({ branchSource: 'h1' }, '16'), false, 'בלי סניף');
-  assert.equal(absorbStoredBranchTrusted(null, '16'), false);
-  assert.equal(absorbStoredBranchTrusted(undefined, '16'), false);
-  assert.equal(absorbStoredBranchTrusted('h1', '16'), false);
-});
-
-// ─── W2 §4: "אותו ניווט שכבר נכשל" — לא חוזרים על 4×15 שניות ────────────────
-test('absorbSameNavFailure: אותה חתימת-דף + אותו סניף-יעד = אותו ניווט שכלב-השומר כבר תפס', () => {
-  const rec = { signature: 'studyType||600|https://x', branch: '16' };
-  assert.equal(absorbSameNavFailure(rec, 'studyType||600|https://x', '16'), true);
-  assert.equal(absorbSameNavFailure(rec, 'studyType||600|https://x', '00'), false, 'סניף אחר — מנסים');
-  assert.equal(absorbSameNavFailure(rec, 'institute|00||https://y', '16'), false, 'דף אחר — מנסים');
-});
-test('absorbSameNavFailure: בלי רשומה / רשומה ריקה → לא תואם (מנסים)', () => {
-  assert.equal(absorbSameNavFailure(null, 'studyType||600|https://x', '16'), false);
-  assert.equal(absorbSameNavFailure(undefined, 'x', '16'), false);
-  assert.equal(absorbSameNavFailure({}, '', ''), false, 'רשומה ריקה לא תואמת כלום, גם לא חתימה ריקה');
-  assert.equal(absorbSameNavFailure({ signature: 'x' }, 'x', '16'), false);
-});
-
-test('absorbNavStateRestore: שחזור שומר את ה-provenance ואת דף-המוסד (לא מוחק h1 מאומת)', () => {
-  const prev = { currentBranch: '00', branchSource: 'h1', instituteId: '491', instituteUrl: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491' };
-  assert.deepEqual(absorbNavStateRestore(prev), prev);
-});
-
-// ─── C1 (סקירת-בטיחות 1b): המסלול המהיר בדף סוג-לימוד — referrer מול דף-המוסד השמור ──
-// ‏'h1' אומר "דף-המוסד האחרון שנראה בטאב"; "דף סוג-הלימוד שמולנו שייך לאותו מוסד" נכון רק
-// בניווט-קדימה. אחרי Back של הדפדפן (מוסד 00 → סוג-לימוד 600 → עץ → מוסד 16 → Back) ה-nav
-// אומר 16 אך הדף שייך ל-00 — ה-referrer (דף-המוסד שממנו הגענו; נשמר גם אחרי 302 וגם
-// בניווט-היסטוריה) חושף את הסתירה. referrer ריק/לא-מוסד = אין מסקנה (ההתנהגות הקיימת).
-const REF_INST_00 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491';
-const REF_INST_16 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4159';
-test('absorbReferrerMismatch: referrer של דף-מוסד אחר מזה השמור → true (מנווטים מחדש)', () => {
-  assert.equal(absorbReferrerMismatch(REF_INST_00, '4159'), true);
-  assert.equal(absorbReferrerMismatch(REF_INST_00, 4159), true, 'id מספרי — השוואה כמחרוזת');
-});
-test('absorbReferrerMismatch: referrer תואם → false (המסלול המהיר נשאר — אפס ניווט מיותר)', () => {
-  assert.equal(absorbReferrerMismatch(REF_INST_16, '4159'), false);
-  assert.equal(absorbReferrerMismatch(REF_INST_16, 4159), false);
-  assert.equal(absorbReferrerMismatch(REF_INST_00.replace('InstituteID', 'instituteid') + '&x=1', '491'), false, 'לא רגיש לרישיות, פרמטרים נוספים');
-});
-test('absorbReferrerMismatch: אין מסקנה (referrer ריק / לא-מחרוזת / לא דף-מוסד / אין id שמור) → false', () => {
-  assert.equal(absorbReferrerMismatch('', '4159'), false);
-  assert.equal(absorbReferrerMismatch(undefined, '4159'), false);
-  assert.equal(absorbReferrerMismatch(null, '4159'), false);
-  assert.equal(absorbReferrerMismatch('https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx', '4159'), false, 'referrer שאינו דף-מוסד');
-  assert.equal(absorbReferrerMismatch('https://talmud.edu.gov.il/Home/Default.aspx', '4159'), false);
-  assert.equal(absorbReferrerMismatch(REF_INST_00, undefined), false, 'nav ישן בלי instituteId');
-  assert.equal(absorbReferrerMismatch(REF_INST_00, ''), false);
-  assert.equal(absorbReferrerMismatch(REF_INST_00, null), false);
-});

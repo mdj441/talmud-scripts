@@ -4,14 +4,15 @@
 // אין גישה ל-document/window ברמת המודול — init רץ רק כשיש document (בסוף הקובץ).
 
 import { $el } from './core/dom.js';
-import { log, getLogText, clearLog, setLogListener, copyLog } from './core/log.js';
+import { log, getLogText, clearLog, setLogListener, copyLog, restoreLog } from './core/log.js';
 import { downloadCsv, copyTextToClipboard } from './core/csv.js';
 import { getPage } from './core/navigate.js';
 import { parseAbsorbInput } from './tools/absorb-parse.js';
 import { loadXlsxFile } from './tools/absorb-xlsx.js';
-import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './tools/absorb.js';
-import { absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults, absorbIsRunning, clearAbsorbStop } from './tools/absorb.js';
-import { absorbSavedQueueInfo, absorbDiscardSavedQueue } from './tools/absorb.js';
+import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './tools/absorb-report.js';
+import { clearAbsorbStop } from './tools/absorb-state.js';
+import { absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults, absorbIsRunning } from './tools/absorb-flow.js';
+import { absorbSavedQueueInfo, absorbDiscardSavedQueue } from './tools/absorb-flow.js';
 import { COUNTRIES } from './data/countries.js';
 
 const PANEL_VERSION = '3.3';
@@ -552,9 +553,8 @@ export function initAbsorbPanel() {
     },
   });
 
-  // ‏W1: מקור הסניף בלוג — "h1" (נקרא מהדף), או "שמור/h1" / "שמור/pending" (מ-sessionStorage).
-  const branchOrigin = page.branchSource === 'h1' ? 'h1' : `שמור/${page.navSource || 'ללא'}`;
-  log(`[init] קליטת תלמידים v${PANEL_VERSION} · דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${branchOrigin}]` : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
+  restoreLog(); // W7: היומן של הטעינות הקודמות באותה ריצה
+  log(`[init] קליטת תלמידים v${PANEL_VERSION} · דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
 
   panelResults = absorbGetResults();
   panelRenderResults();

@@ -17,6 +17,8 @@
   const D = window.__mockDb, C = window.__mockCommon;
   const db = D.load();
   const pending = db.pendingNewStudent || null;
+  // ההקשר של תלמיד-חדש חי רק לטעינה אחת (כמו ViewState): גישה ישירה לכתובת מקבלת דף ריק.
+  if (pending) { db.pendingNewStudent = null; D.save(db); }
   const SD = 'ContentPlaceHolder1_TabsStudent_StudentDetails1_ucStudentDetails';
   const TAB_ID = 'ContentPlaceHolder1_TabsStudent';
 

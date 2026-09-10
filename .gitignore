@@ -11,3 +11,9 @@ node_modules/
 *.local.*
 .claude/settings.local.json
 .superpowers/
+
+# כרטיס תצורת-העבודה של Claude (מקומי; הריפו ציבורי)
+PROJECT-CARD.md
+
+# מטמון של תוסף העיצוב (מקומי)
+.impeccable/

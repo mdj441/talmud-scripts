@@ -103,3 +103,24 @@ test('קוד מגדר/מצב מספרי עובר כמות שהוא', () => {
   assert.equal(t.newStudent.gender, '1');
   assert.equal(t.newStudent.familyStatus, '20');
 });
+
+// ─── W6 (בדיקה רטובה 10.9.2026): סדר-התבנית בלי כותרת, עם תאים ריקים כמו שאקסל מייצא ───
+test('W6: דרכון בסדר-התבנית בלי כותרת (שם/משפחה ריקים) → תאריך לידה וארץ נקראים מהמקום הנכון', () => {
+  const { tasks, errors } = parseAbsorbInput('16	600	AB1234567			09/11/2002	ארצות הברית');
+  assert.equal(errors.length, 0, JSON.stringify(errors));
+  assert.equal(tasks[0].idType, 'passport');
+  assert.equal(tasks[0].birthDate, '09/11/2002');
+  assert.equal(tasks[0].countryValue, '710');
+  assert.equal(tasks[0].newStudent, undefined);
+});
+test('W6: ת.ז. בסדר-התבנית המלא בלי כותרת (9 תאים) → מגדר ומצב במקומם, הארץ לא מתפרשת כמגדר', () => {
+  const { tasks, errors } = parseAbsorbInput('00	600	123456782	משה	כהן	10/10/1990		נקבה	רווק');
+  assert.equal(errors.length, 0, JSON.stringify(errors));
+  assert.deepEqual(tasks[0].newStudent, { firstName: 'משה', lastName: 'כהן', birthDate: '10/10/1990', gender: '2', familyStatus: '10' });
+});
+test('W6: הפורמט הישן לדרכון (5 תאים) עדיין עובד', () => {
+  const { tasks, errors } = parseAbsorbInput('12 600 AB1234567 15/03/1995 צרפת');
+  assert.equal(errors.length, 0);
+  assert.equal(tasks[0].birthDate, '15/03/1995');
+  assert.equal(tasks[0].countryValue, '640');
+});
