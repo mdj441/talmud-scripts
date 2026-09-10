@@ -455,6 +455,8 @@ export function initAbsorbPanel() {
       panelRenderResults();
       panelSetProgress(all.length, Math.max(panelTotal, all.length));
     },
+    // B1: הוכרז ניווט מלא — הריצה ממתינה לטעינת הדף (ויש כלב-שומר אם היא לא תגיע).
+    onNavigating: () => { panelSetStatus('ממתין לטעינת דף…'); },
     // M5: תור ישן — לא ממשיכים אוטומטית, נותנים למשתמש "המשך"/"נקה".
     onStaleQueue: (info) => {
       panelSetRunning(false);

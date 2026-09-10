@@ -1248,6 +1248,10 @@ const ABSORB_NEW_IDS = {
   saveBtn: 'ContentPlaceHolder1_btnSave', // לכידה-03 §2: כפתור השמירה היחיד, אין ביטול
 };
 
+// ‏B4: תוויות להודעות — הקודים מגיעים מ-absorb-parse (מגדר 1/2, מצב משפחתי 10/20/30/40).
+const ABSORB_GENDER_LABELS = { '1': 'זכר', '2': 'נקבה' };
+const ABSORB_FAMILY_STATUS_LABELS = { '10': 'רווק', '20': 'נשוי', '30': 'גרוש', '40': 'אלמן' };
+
 const ABSORB_QUEUE_KEY = 'talmud.absorb.queue';
 const ABSORB_STOP_KEY = 'talmud.absorb.stop';
 const ABSORB_ATTEMPT_KEY = 'talmud.absorb.attempts';
@@ -1393,19 +1397,25 @@ function absorbParseCount(text) {
   return m ? parseInt(m[1], 10) : null;
 }
 
-// טהורה (#1b): מה לעשות עם תוצאת החיפוש *המקדים*. דווקא שם "לא נמצא" גורר לחיצת
-// "קליטה", ולכן אסור להסיק אותו מחיפוש שלא רץ או מגריד שלא התרענן:
-//   ‏executed=false             → אין עדות שהחיפוש רץ (כולל res.ok=false) → 'error';
-//   ‏refreshed=true             → הגריד נבנה מחדש → 'analyze';
-//   ‏!refreshed && count===0    → התווית כן התרעננה ואמרה 0 → תוצאה ריקה לגיטימית;
-//   ‏!refreshed && count>=1     → התווית מדווחת תוצאות אך הגריד ישן → 'retry';
-//   ‏!refreshed && count==null  → אין עדות בכלל (לא אמור לקרות כש-executed) → 'error'.
+// טהורה (#1b + A2): מה לעשות עם תוצאת החיפוש *המקדים*. דווקא שם "לא נמצא" גורר לחיצת
+// "קליטה", ולכן אסור להסיק אותו מחיפוש שלא רץ, מגריד שלא התרענן, ואף לא מתווית-ספירה
+// שנשארה מהתלמיד הקודם:
+//   ‏executed=false                       → אין עדות שהחיפוש רץ (כולל res.ok=false) → 'error';
+//   ‏refreshed=true                       → אזור-התוצאות נבנה מחדש (תווית+גריד) → 'analyze';
+//   ‏countFresh!==true                    → אין עדות שהתווית שייכת לחיפוש הזה → 'error';
+//   ‏countFresh && count===0              → התווית התרעננה ואמרה 0 → תוצאה ריקה לגיטימית;
+//   ‏countFresh && count>=1 && !refreshed → התווית מדווחת תוצאות אך הגריד ישן → 'retry';
+//   ‏count==null                          → אין מספר לקרוא → 'error'.
+// ‏A2 (למה countFresh הכרחי): גריד של GridView עם אפס שורות **אינו מרונדר כלל**, ולכן
+// "אין גריד" אינו יכול לשמש עדות. בלי עד-טריות על lblCountSearch (שתמיד מרונדר),
+// "נמצאו 0" ישן היה מכריע "לא נמצא" ולוחץ "קליטה" לתלמיד שאולי כבר קיים.
 // אתרי האימות (אחרי קליטה / אחרי שמירת תלמיד חדש) אינם משתמשים בזה: שם "לא נמצא"
 // מייצר לכל היותר שורת "לא אומת בגריד", ולא פעולה נוספת באתר.
 function absorbPrecheckDecision(res) {
   if (!res || typeof res !== 'object' || Array.isArray(res)) return 'error';
   if (!res.executed) return 'error';
   if (res.refreshed) return 'analyze';
+  if (res.countFresh !== true) return 'error';
   if (res.count === 0) return 'analyze';
   if (typeof res.count === 'number' && Number.isFinite(res.count) && res.count >= 1) return 'retry';
   return 'error';
@@ -1567,15 +1577,42 @@ function absorbBumpAttempts(idx) {
 
 // ─── עוזרי DOM ──────────────────────────────────────────────────────────────
 
-function absorbSetValue(el, value) {
-  el.value = value;
-  el.dispatchEvent(new Event('change', { bubbles: true }));
-  el.dispatchEvent(new Event('blur', { bubbles: true }));
+// ‏B2: כתיבה לשדה היא פוטנציאלית postback (AutoPostBack על change). לכן היא כפופה
+// לאותו סדר קשיח כמו כל postback (global-constraints): רושמים את ההמתנה **קודם**,
+// ורק אז — מ-setTimeout(…,0) — מציבים את הערך ומשגרים את האירועים. מחזיר את ההמתנה;
+// שדה שאינו AutoPostBack פשוט יחזיר {ok:true, started:false} אחרי startTimeoutMs.
+// ‏opts: { select:true } = <select> (בלי אירוע blur), ‏opts.opts = פרמטרים ל-waitPRM.
+const ABSORB_FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
+const ABSORB_SELECT_WAIT = { startTimeoutMs: 1200, totalTimeoutMs: 10000 };
+
+function absorbSetAndWait(el, value, opts) {
+  const o = opts || {};
+  const wait = waitPRM(o.opts || (o.select ? ABSORB_SELECT_WAIT : ABSORB_FIELD_WAIT)); // (1) נרשם קודם
+  setTimeout(() => { // (2) נדחה — ה-handlers כבר רשומים כשה-postback (אם יש) מתחיל
+    try {
+      el.value = value;
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!o.select) el.dispatchEvent(new Event('blur', { bubbles: true }));
+    } catch (e) {
+      log('[שדה] כתיבה נכשלה: ' + (e && e.message)); // אצווה לא נתקעת
+    }
+  }, 0);
+  return wait;
 }
 
-function absorbSetSelect(el, value) {
-  el.value = value;
-  el.dispatchEvent(new Event('change', { bubbles: true }));
+// ‏B4: בחירה ב-<select> עם אימות שהאופציה קיימת *ולפני* הכתיבה, ושהערך אכן נתפס
+// אחריה. מחזיר {ok:true} או {ok:false, reason} — הקורא מדווח "שגיאה" ולא שומר.
+async function absorbSelectOption(el, value, label, display) {
+  const shown = display || value;
+  const options = Array.from((el && el.options) || []);
+  if (!options.some((o) => o.value === value)) {
+    return { ok: false, reason: `הערך "${shown}" בעמודת "${label}" (קוד ${value}) לא קיים ברשימת האתר` };
+  }
+  await absorbSetAndWait(el, value, { select: true });
+  if (el.value !== value) {
+    return { ok: false, reason: `בחירת "${shown}" בעמודת "${label}" נכשלה` };
+  }
+  return { ok: true };
 }
 
 // כל postback עובר דרך prm.js: או firePostback (יש target ב-href), או waitPRM שנרשם
@@ -1643,23 +1680,47 @@ function absorbActivateStudentsTab() {
   return false;
 }
 
-// C4: מסמנים את הגריד כ"ישן" *לפני* כל חיפוש. postback אמיתי מחליף את תוכן ה-UpdatePanel
-// (ואיתו את אלמנט הגריד) — ולכן היעדר הסימון אחרי החיפוש הוא עדות שהגריד באמת התרענן.
-// כל עוד הסימון קיים, readAbsorbGridRows מחזיר גריד ריק: תוצאה ישנה לא תיקרא כתשובה.
-function absorbMarkGridStale() {
+// C4 + A2: מסמנים את אזור-התוצאות כ"ישן" *לפני* כל חיפוש. postback אמיתי מחליף את
+// תוכן ה-UpdatePanel (ואיתו את האלמנטים) — ולכן היעדר הסימון אחרי החיפוש הוא עדות
+// שהאזור באמת נבנה מחדש. כל עוד הסימון קיים על הגריד, readAbsorbGridRows מחזיר ריק.
+// ‏A2: הסימון חייב להיות גם על lblCountSearch — גריד עם אפס שורות **אינו מרונדר בכלל**
+// (המצב הנפוץ ביותר: חיפוש שלא מצא), ואז "אין גריד" נקרא בטעות כ"התרענן" והשומר כובה.
+function absorbMarkElStale(el) {
   try {
-    const grid = $el(ABSORB_IDS.grid);
-    if (grid && typeof grid.setAttribute === 'function') grid.setAttribute(ABSORB_GRID_STALE_ATTR, '1');
+    if (el && typeof el.setAttribute === 'function') el.setAttribute(ABSORB_GRID_STALE_ATTR, '1');
   } catch (e) { /* אצווה לא נתקעת */ }
 }
 
-function absorbGridIsStale() {
+function absorbElIsStale(el) {
   try {
-    const grid = $el(ABSORB_IDS.grid);
-    return !!(grid && typeof grid.getAttribute === 'function' && grid.getAttribute(ABSORB_GRID_STALE_ATTR) === '1');
+    return !!(el && typeof el.getAttribute === 'function' && el.getAttribute(ABSORB_GRID_STALE_ATTR) === '1');
   } catch (e) {
     return false;
   }
+}
+
+function absorbMarkSearchStale() {
+  absorbMarkElStale($el(ABSORB_IDS.grid));
+  absorbMarkElStale($el(ABSORB_IDS.countLabel));
+}
+
+function absorbGridIsStale() {
+  return absorbElIsStale($el(ABSORB_IDS.grid));
+}
+
+// עדות-טריות אחרי חיפוש. ‏`refreshed` = מה שאנחנו קוראים עכשיו (תווית + גריד) שייך
+// לחיפוש הזה: התווית טרייה, וגם הגריד — אם הוא בכלל מרונדר.
+function absorbSearchFreshness() {
+  const countEl = $el(ABSORB_IDS.countLabel);
+  const gridEl = $el(ABSORB_IDS.grid);
+  const countPresent = !!countEl;
+  const countFresh = countPresent && !absorbElIsStale(countEl);
+  const gridPresent = !!gridEl;
+  const gridFresh = gridPresent && !absorbElIsStale(gridEl);
+  return {
+    countPresent, countFresh, gridPresent, gridFresh,
+    refreshed: countFresh && (gridPresent ? gridFresh : true),
+  };
 }
 
 function readAbsorbGridRows() {
@@ -1676,10 +1737,10 @@ function readAbsorbCount() {
   return el ? (el.textContent || '').trim() : '';
 }
 
-// ניסיון חיפוש יחיד. מחזיר {ok, started, executed, countText, count}.
+// ניסיון חיפוש יחיד. מחזיר {ok, started, executed, refreshed, countFresh, countText, count}.
 async function absorbSearchOnce(input, btn, value, gen) {
-  absorbMarkGridStale();
-  absorbSetValue(input, value);
+  absorbMarkSearchStale();
+  await absorbSetAndWait(input, value); // B2: סדר קשיח גם לכתיבה בשדה
   await sleepCheckStop(150, gen);
   const res = await absorbFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
   await sleepCheckStop(350, gen);
@@ -1687,17 +1748,21 @@ async function absorbSearchOnce(input, btn, value, gen) {
   const count = absorbParseCount(countText);
   const started = !!(res && res.started);
   const ok = !!(res && res.ok);
-  const refreshed = !absorbGridIsStale();
-  // עדות שהחיפוש באמת רץ (C4): גם בקשה שהתחילה, וגם תווית-ספירה/גריד מרוענן אחריה.
+  const fresh = absorbSearchFreshness();
+  const refreshed = fresh.refreshed;
+  // עדות שהחיפוש באמת רץ (C4): בקשה שהתחילה, הצליחה, ומשהו באזור-התוצאות נבנה מחדש.
   // ‏#4(b): הסימון *לא* מוסר כאן. גריד שלא התרענן נשאר "ישן" ו-readAbsorbGridRows
   // מחזיר עבורו ריק — כך שורה שנשארה מהתלמיד הקודם לא תיקרא כ"כבר קיים" (הפלה שקטה).
-  // ‏started && !refreshed && count===null = אין עדות בכלל → ניסיון חוזר, ואז "שגיאה".
   // ‏#1a: גם ok חייב להיות אמת. waitPRM מחזיר {ok:false, started:true} בשגיאת PRM או
   // ב-timeout — MS AJAX לא החיל עדכון, ולכן תווית-הספירה עדיין של התלמיד הקודם;
   // בלי השער הזה חיפוש שנכשל היה נחשב "רץ" ומכריע "לא נמצא" מול גריד ותווית ישנים.
-  const executed = started && ok && (count !== null || refreshed);
-  log(`[חיפוש] ${maskId(value)} → ${countText || '(ללא תווית ספירה)'} · started=${started} · ok=${ok} · refreshed=${refreshed} · executed=${executed}`);
-  return { ok, started, executed, refreshed, countText, count, reason: res && res.reason };
+  // ‏A2: "לא תווית טרייה ולא גריד טרי" = אין שום עדות → ניסיון חוזר, ואז "שגיאה".
+  const executed = started && ok && (fresh.countFresh || fresh.gridFresh);
+  log(`[חיפוש] ${maskId(value)} → ${countText || '(ללא תווית ספירה)'} · started=${started} · ok=${ok} · countFresh=${fresh.countFresh} · gridFresh=${fresh.gridFresh} · refreshed=${refreshed} · executed=${executed}`);
+  return {
+    ok, started, executed, refreshed, countFresh: fresh.countFresh,
+    countText, count, reason: res && res.reason,
+  };
 }
 
 // C4: חיפוש עם עדות-ביצוע. לחיצה שנבלעה (started=false) היא כשל בר-ניסיון-חוזר —
@@ -1720,7 +1785,15 @@ function absorbSearchFailReason(res) {
   if (!res.started) return 'לחיצת החיפוש לא הפעילה בקשה לשרת' + (res.reason ? ` (${res.reason})` : '');
   // ‏#1a: started=true אך ok=false — שגיאת PRM או timeout; השרת לא החזיר עדכון לדף.
   if (!res.ok) return 'החיפוש נכשל או פג-זמן בשרת' + (res.reason ? ` (${res.reason})` : '');
+  // ‏A2: התווית שעל המסך נשארה מהחיפוש הקודם — אסור להסיק ממנה "נמצאו 0".
+  if (res.countFresh === false) return 'תווית הספירה לא התרעננה — מה שמוצג אינו תוצאת החיפוש הזה' + (res.reason ? ` (${res.reason})` : '');
   return 'החיפוש רץ אך תוצאותיו לא התעדכנו בדף' + (res.reason ? ` (${res.reason})` : '');
+}
+
+// ‏A2: תווית-הספירה משמשת כשער ל-analyzeGrid רק כשהיא באמת של החיפוש הזה. תווית ישנה
+// → null = "אין שער" (הגריד הטרי לבדו מכריע), ולא מספר שגוי שיפסול התאמה אמיתית.
+function absorbCountGate(res) {
+  return res && res.countFresh ? res.count : null;
 }
 
 // M-f: סגירת חלונית ההודעה + המתנה נכונה. כשהסגירה עברה דרך btnMCancel (postback
@@ -1780,7 +1853,8 @@ function absorbWatchUnload() {
   try {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     absorbUnloadWatched = true;
-    const mark = () => { absorbUnloadSeen = true; };
+    // ‏B1: הדף באמת מתחיל להיטען מחדש → אין צורך בכלב-השומר של הניווט.
+    const mark = () => { absorbUnloadSeen = true; absorbClearNavWatchdog(); };
     // בלי returnValue — מאזין בלבד, לא מציג דיאלוג יציאה למשתמש.
     window.addEventListener('beforeunload', mark, true);
     window.addEventListener('pagehide', mark, true);
@@ -1796,6 +1870,43 @@ function absorbBeginNavigation() {
   absorbWatchUnload();
   absorbUnloadSeen = false;
   return absorbPageSignature();
+}
+
+// ─── B1: כלב-שומר לניווט שהוכרז ולא קרה ─────────────────────────────────────
+// ‏runQueue עוצר ומחזיר על ABSORB_NAVIGATED וממתין ל-resume שיגיע עם טעינת הדף. אם
+// הפעולה שהוכרזה כניווט מלא מתבררת כ-postback אסינכרוני (NEEDS_CONTEXT על
+// ‏btnUpdateStudyType), שום טעינה לא תגיע והריצה קופאת על "מעבד i/N" בלי דוח.
+// כאן: אחרי ~15 שניות בלי unload ובלי שינוי בחתימת-הדף — ממשיכים במקום
+// (‏absorbResumeIfPending אידמפוטנטי; אם ריצה כבר מתנהלת הוא פשוט מחזיר false).
+const ABSORB_NAV_WATCHDOG_MS = 15000;
+let absorbNavWatchdogTimer = null;
+
+function absorbClearNavWatchdog() {
+  if (absorbNavWatchdogTimer !== null) {
+    try { clearTimeout(absorbNavWatchdogTimer); } catch (e) { /* noop */ }
+    absorbNavWatchdogTimer = null;
+  }
+}
+
+function absorbArmNavWatchdog() {
+  absorbClearNavWatchdog();
+  if (typeof setTimeout !== 'function') return;
+  absorbWatchUnload();
+  const before = absorbPageSignature();
+  try { if (absorbHooks.onNavigating) absorbHooks.onNavigating(); } catch (e) { /* אצווה לא נתקעת */ }
+  absorbNavWatchdogTimer = setTimeout(() => {
+    absorbNavWatchdogTimer = null;
+    if (absorbUnloadSeen) return; // הדף באמת מתחלף — ה-resume יקרה אחרי הטעינה
+    if (absorbRunning) return; // מישהו כבר ממשיך
+    if (absorbPageSignature() !== before) {
+      log('[ניווט] הדף השתנה בלי טעינה מלאה — ממשיכים במקום');
+    } else {
+      log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(ABSORB_NAV_WATCHDOG_MS / 1000)} שניות — ממשיכים במקום`);
+    }
+    Promise.resolve()
+      .then(() => absorbResumeIfPending())
+      .catch((e) => log('[ניווט] המשך במקום נכשל: ' + (e && e.message)));
+  }, ABSORB_NAV_WATCHDOG_MS);
 }
 
 // #1: ניווט שנכשל/נבלע השאיר את מצב-הניווט מצהיר על סניף שמעולם לא הגענו אליו
@@ -1991,11 +2102,25 @@ async function absorbHandleNewStudentPage(task, identity, mk, gen, myIdx) {
     return mk(ABSORB_STATUS.ERROR, 'שדות דף תלמיד-חדש לא נמצאו', 'מלא ושמור ידנית בדף התלמיד החדש');
   }
 
-  absorbSetValue(first, ns.firstName);
-  absorbSetValue(last, ns.lastName);
-  absorbSetValue(birth, birthDate);
-  if (ns.gender) { const g = $el(ABSORB_NEW_IDS.gender); if (g) absorbSetSelect(g, ns.gender); }
-  if (ns.familyStatus) { const f = $el(ABSORB_NEW_IDS.familyStatus); if (f) absorbSetSelect(f, ns.familyStatus); }
+  await absorbSetAndWait(first, ns.firstName);
+  await absorbSetAndWait(last, ns.lastName);
+  await absorbSetAndWait(birth, birthDate);
+  // ‏B4: מגדר/מצב-משפחתי מקבלים את אותה בדיקת-קיום שהארץ מקבלת. ערך שאינו ברשימת
+  // האתר היה נבלע בשקט (‏select מתעלם מערך לא-קיים) והתלמיד היה נשמר עם ברירת-המחדל.
+  if (ns.gender) {
+    const g = $el(ABSORB_NEW_IDS.gender);
+    if (g) {
+      const r = await absorbSelectOption(g, ns.gender, 'מגדר', ABSORB_GENDER_LABELS[ns.gender]);
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, `תקן את עמודת "מגדר" (זכר/נקבה) או בחר ידנית בדף התלמיד החדש`);
+    }
+  }
+  if (ns.familyStatus) {
+    const f = $el(ABSORB_NEW_IDS.familyStatus);
+    if (f) {
+      const r = await absorbSelectOption(f, ns.familyStatus, 'מצב משפחתי', ABSORB_FAMILY_STATUS_LABELS[ns.familyStatus]);
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, `תקן את עמודת "מצב משפחתי" (רווק/נשוי/גרוש/אלמן) או בחר ידנית בדף התלמיד החדש`);
+    }
+  }
   await sleepCheckStop(200, gen);
   checkStop('new-student-before-save', gen);
 
@@ -2045,7 +2170,7 @@ async function absorbHandleNewStudentPage(task, identity, mk, gen, myIdx) {
       if (!search.executed) {
         return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(search), ABSORB_SEARCH_FAILED_ACTION);
       }
-      if (analyzeGrid(readAbsorbGridRows(), identity, search.count).found) return mk(ABSORB_STATUS.OK_NEW, '', '');
+      if (analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(search)).found) return mk(ABSORB_STATUS.OK_NEW, '', '');
     }
   }
   return mk(ABSORB_STATUS.SAVED_UNVERIFIED, 'התלמיד נשמר; הקליטה לא אומתה בגריד',
@@ -2112,7 +2237,7 @@ async function processStudent(task, gen) {
   // C4: בלי עדות שהחיפוש רץ אסור לקרוא את הגריד — גריד ישן היה נקרא כ"כבר קיים".
   if (decision !== 'analyze') return mk(ABSORB_STATUS.ERROR, absorbSearchFailReason(pre), ABSORB_SEARCH_FAILED_ACTION);
 
-  const preGrid = analyzeGrid(readAbsorbGridRows(), identity, pre.count); // #4: תווית הספירה היא השער
+  const preGrid = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(pre)); // #4: תווית הספירה היא השער
   if (preGrid.found) {
     const viaFallback = preGrid.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה בגריד' : '';
     if (absorbJustSavedNewStudent && absorbNormalizeId(absorbJustSavedNewStudent) === absorbNormalizeId(identity)) {
@@ -2171,39 +2296,35 @@ async function processStudent(task, gen) {
     const idTypeValue = task.idType === 'passport' ? '2' : '1'; // לכידה-01 §6
     const ddlType = $el(ABSORB_IDS.idTypeDdl);
     if (ddlType && ddlType.value !== idTypeValue) {
-      absorbSetSelect(ddlType, idTypeValue);
-      await waitPRM({ startTimeoutMs: 1200, totalTimeoutMs: 10000 }); // לכידה-02 §4: בפועל לא גורר postback
+      // ‏B2: ההמתנה נרשמת *לפני* שינוי הערך ושיגור ה-change (לכידה-02 §4: בפועל לא
+      // גורר postback — ואז waitPRM פשוט נסגר ב-started=false).
+      await absorbSetAndWait(ddlType, idTypeValue, { select: true });
       await sleepCheckStop(200, gen);
     }
 
     const modalId = $el(ABSORB_IDS.modalId);
     if (!modalId) return mk(ABSORB_STATUS.ERROR, 'שדה המזהה במודאל הקליטה לא נמצא', 'בצע את הקליטה ידנית');
-    absorbSetValue(modalId, identity); // ריפוד (3/3)
+    await absorbSetAndWait(modalId, identity); // ריפוד (3/3)
     await sleepCheckStop(150, gen);
 
     if (task.idType === 'passport') {
       const birthEl = $el(ABSORB_IDS.birthDate);
       if (!birthEl) return mk(ABSORB_STATUS.ERROR, 'שדה תאריך לידה במודאל לא נמצא', 'בצע את הקליטה ידנית');
-      absorbSetValue(birthEl, task.birthDate);
+      await absorbSetAndWait(birthEl, task.birthDate);
       await sleepCheckStop(150, gen);
 
       const countryEl = $el(ABSORB_IDS.countryDdl);
       if (!countryEl) return mk(ABSORB_STATUS.ERROR, 'שדה ארץ דרכון במודאל לא נמצא', 'בצע את הקליטה ידנית');
-      const options = Array.from(countryEl.options || []);
-      if (!options.some((o) => o.value === task.countryValue)) {
-        return mk(ABSORB_STATUS.ERROR, `הארץ "${task.country}" (קוד ${task.countryValue}) לא קיימת ברשימת האתר`, 'תקן את עמודת "ארץ" לשם ארץ מהרשימה');
-      }
-      absorbSetSelect(countryEl, task.countryValue);
+      // ‏B2: אותו עוזר בדיוק כמו מגדר/מצב-משפחתי — בדיקת-קיום, סדר קשיח, ואימות שנתפס.
+      const country = await absorbSelectOption(countryEl, task.countryValue, 'ארץ', task.country);
+      if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'תקן את עמודת "ארץ" לשם ארץ מהרשימה, או בחר ידנית בחלון הקליטה');
       await sleepCheckStop(200, gen);
-      if (countryEl.value !== task.countryValue) {
-        return mk(ABSORB_STATUS.ERROR, `בחירת הארץ "${task.country}" נכשלה`, 'בחר את הארץ ידנית בחלון הקליטה');
-      }
     }
 
     const startDate = absorbStartDate();
     if (startDate) {
       const startEl = $el(ABSORB_IDS.startDate);
-      if (startEl && startEl.value !== startDate) absorbSetValue(startEl, startDate);
+      if (startEl && startEl.value !== startDate) await absorbSetAndWait(startEl, startDate);
     }
     checkStop('after-fields', gen);
 
@@ -2264,7 +2385,7 @@ async function processStudent(task, gen) {
       // C4 (הכיוון ההפוך): בלי חיפוש שרץ, גריד ישן היה נקרא כאישור קליטה.
       return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(verifySearch), ABSORB_SEARCH_FAILED_ACTION);
     }
-    const verify = analyzeGrid(readAbsorbGridRows(), identity, verifySearch.count);
+    const verify = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(verifySearch));
     if (verify.found) {
       log('◀ נקלט');
       return mk(ABSORB_STATUS.OK, popupDetail || (verify.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה בגריד' : ''), '');
@@ -2385,6 +2506,7 @@ function absorbFinishRun() {
 
 async function runQueue() {
   absorbRunning = true;
+  absorbClearNavWatchdog(); // B1: יש ריצה חיה — אין למי לחכות
   absorbWatchUnload(); // C1: עדות לניווט מלא (הדף מתחיל להיפרק)
   log(`🚀 ריצה — ${absorbQueue.length} תלמידים, מתחילים באינדקס ${absorbCurIdx}`);
   try { if (absorbHooks.onStart) absorbHooks.onStart(absorbQueue, absorbCurIdx); } catch (e) { /* noop */ }
@@ -2413,6 +2535,7 @@ async function runQueue() {
     if (result === ABSORB_NAVIGATED || (result && result.__navigated)) {
       absorbRunning = false;
       log('… ניווט מלא — ההמשך יקרה אחרי טעינת הדף');
+      absorbArmNavWatchdog(); // B1: אם הטעינה לא תגיע — נמשיך במקום במקום לקפוא
       return;
     }
     // התוצאה כבר נרשמה בתוך processStudent (והניווט חזרה נכשל) — ממשיכים בלי לרשום שוב.
@@ -2426,6 +2549,7 @@ async function runQueue() {
       // M-a: רשת-הביטחון עצמה כפופה ל-absorbShouldRecord; אם המונים יצאו מסנכרון היא
       // לא תרשום דבר והלולאה הייתה מסתובבת על אותה שורה כל 300ms. הסמן מתקדם בכל מקרה.
       absorbCurIdx = Math.max(absorbCurIdx, taskIdx + 1);
+      saveAbsorbState(); // B7: קידום-הסמן הזה חייב לשרוד reload, אחרת ה-resume חוזר לשורה
       await sleep(300);
       continue;
     }
@@ -2476,6 +2600,7 @@ function absorbSavedQueueInfo() {
 // זריקת תור שמור (כפתור "נקה" בפאנל) — בלי שום פעולה באתר.
 function absorbDiscardSavedQueue() {
   absorbNextGeneration();
+  absorbClearNavWatchdog(); // B1: אין למה לחכות יותר
   absorbQueue = [];
   absorbResults = [];
   absorbCurIdx = 0;
@@ -2559,6 +2684,7 @@ async function absorbResumeIfPending(opts) {
 function absorbStop() {
   requestAbsorbStop();
   absorbNextGeneration(); // C3: גם ניסיון יתום שעדיין רץ מת כאן
+  absorbClearNavWatchdog(); // B1: עצירה מבטלת גם המתנה לטעינת דף
   if (!absorbRunning) {
     if (absorbQueue.length && absorbCurIdx < absorbQueue.length) {
       absorbFillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
@@ -3019,6 +3145,8 @@ function initAbsorbPanel() {
       panelRenderResults();
       panelSetProgress(all.length, Math.max(panelTotal, all.length));
     },
+    // B1: הוכרז ניווט מלא — הריצה ממתינה לטעינת הדף (ויש כלב-שומר אם היא לא תגיע).
+    onNavigating: () => { panelSetStatus('ממתין לטעינת דף…'); },
     // M5: תור ישן — לא ממשיכים אוטומטית, נותנים למשתמש "המשך"/"נקה".
     onStaleQueue: (info) => {
       panelSetRunning(false);

@@ -370,19 +370,30 @@ test('absorbPrecheckDecision: חיפוש שרץ והגריד התרענן → נ
   assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: null }), 'analyze');
 });
 
-test('absorbPrecheckDecision: תווית "נמצאו 0" בלי ריענון גריד → ניתוח (תוצאה ריקה לגיטימית)', () => {
-  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 0 }), 'analyze');
+test('absorbPrecheckDecision: תווית טרייה "נמצאו 0" בלי ריענון גריד → ניתוח (תוצאה ריקה לגיטימית)', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: true, count: 0 }), 'analyze');
 });
 
-test('absorbPrecheckDecision: תווית עם 1+ תוצאות אך הגריד לא התרענן → ניסיון חוזר, לא "לא נמצא"', () => {
-  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 1 }), 'retry');
-  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 7 }), 'retry');
+// ‏A2: זה ה-state הנפוץ ביותר — חיפוש שלא מצא כלום *לא* מרנדר גריד כלל. בלי עד-טריות
+// על תווית-הספירה, "נמצאו 0" ישן של התלמיד הקודם היה מכריע "לא נמצא" ולוחץ "קליטה".
+test('absorbPrecheckDecision: תווית ישנה שאומרת 0 (בלי עדות טריות) → שגיאה, לא "קליטה"', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: false, count: 0 }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 0 }), 'error');
+});
+
+test('absorbPrecheckDecision: תווית טרייה עם 1+ תוצאות אך הגריד לא התרענן → ניסיון חוזר, לא "לא נמצא"', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: true, count: 1 }), 'retry');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: true, count: 7 }), 'retry');
+});
+
+test('absorbPrecheckDecision: תווית ישנה עם 1+ תוצאות → שגיאה (אין ממה להסיק)', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: false, count: 1 }), 'error');
 });
 
 test('absorbPrecheckDecision: אין עדות שהחיפוש רץ → שגיאה (לא לוחצים "קליטה")', () => {
-  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: false, count: 1 }), 'error');
-  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: true, count: 0 }), 'error');
-  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: null }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: false, countFresh: true, count: 1 }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: true, countFresh: true, count: 0 }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, countFresh: true, count: null }), 'error');
   assert.equal(absorbPrecheckDecision(null), 'error');
   assert.equal(absorbPrecheckDecision(undefined), 'error');
   assert.equal(absorbPrecheckDecision('x'), 'error');
