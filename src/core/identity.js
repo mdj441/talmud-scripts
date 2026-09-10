@@ -33,6 +33,12 @@ export function resolveCountry(input) {
   if (!s) return null;
   if (/^\d+$/.test(s)) return s;
   if (byName.has(s)) return byName.get(s);
-  const hit = COUNTRIES.find(c => c.he.startsWith(s) || s.startsWith(c.he));
-  return hit ? hit.value : null;
+  // ‏B3: התאמת-קידומת מותרת רק כשהיא חד-משמעית. הגרסה הקודמת החזירה את ההתאמה
+  // ה*ראשונה* וגם התאימה בכיוון ההפוך (s מתחיל בשם ארץ), ולכן "א" → 710 (ארצות
+  // הברית) ו"ניגריה הצפונית" → 211 (ניגר) — ערך אמיתי, ארץ שגויה, בלי שום סימן
+  // (בדיקת קיום-האופציה במודאל לא יכולה לתפוס את זה). דורשים 3+ תווים, כיוון אחד
+  // בלבד (שם הארץ מתחיל בקלט), ומועמד יחיד — אחרת null ("ארץ לא מוכרת" בפרסור).
+  if (s.length < 3) return null;
+  const hits = COUNTRIES.filter(c => c.he.startsWith(s));
+  return hits.length === 1 ? hits[0].value : null;
 }

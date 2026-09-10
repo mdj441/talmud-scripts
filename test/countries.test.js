@@ -20,3 +20,27 @@ test('מקסיקו עם גרשיים כפולים מעוקלים', () => assert.
 test('מקסיקו עם גרשיים חד-גרפיים מעוקלים', () => assert.equal(resolveCountry('\u2018מקסיקו\u2019'), '720'));
 test('מקסיקו עם חללים בתוך הגרשיים', () => assert.equal(resolveCountry('" מקסיקו "'), '720'));
 test('רווחים בלבד → null', () => assert.equal(resolveCountry('   '), null));
+
+// ─── B3: קידומת חייבת להיות חד-משמעית (אחרת נבחרת ארץ שגויה בשקט) ──────────
+test('קידומת קצרה מדי → null (לא ארה"ב בטעות)', () => {
+  assert.equal(resolveCountry('א'), null);
+  assert.equal(resolveCountry('אר'), null);
+});
+test('שם ארוך שאינו ברשימה לא "נבלע" לתוך ארץ קצרה יותר', () => {
+  assert.equal(resolveCountry('ניגריה הצפונית'), null); // היה מחזיר 211 (ניגר)
+  assert.equal(resolveCountry('גרמניה התיכונה'), null);
+});
+test('שם מלא מדויק עדיין עובד גם כשהוא קידומת של אחר', () => {
+  assert.equal(resolveCountry('קוריאה'), '151');
+  assert.equal(resolveCountry('קוריאה הדרומית'), '153');
+  assert.equal(resolveCountry('ניגר'), '211');
+  assert.equal(resolveCountry('ניגריה'), '213');
+  assert.equal(resolveCountry('גרמניה'), '500');
+});
+test('קידומת חד-משמעית באורך 3+ נפתרת', () => {
+  assert.equal(resolveCountry('ארצות'), '710');
+  assert.equal(resolveCountry('מקסי'), '720');
+});
+test('קידומת דו-משמעית → null', () => {
+  assert.equal(resolveCountry('אוסטר'), null); // אוסטריה / אוסטרליה
+});
