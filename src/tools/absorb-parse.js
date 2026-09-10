@@ -94,6 +94,56 @@ function mapFamilyStatus(raw) {
   return { value: undefined, error: `מצב משפחתי לא ידוע: ${raw}` };
 }
 
+// שדות גולמיים של שורה (בלי אימות) - משותף לפרסור ולטבלת-ההזנה בממשק, כדי שיהיה מסלול-מיפוי אחד.
+// בלי כותרת: 3 תאים = בסיס; 4-5 תאים = הפורמט הישן לדרכון (תאריך לידה, ארץ); 6+ תאים = סדר-התבנית
+// (שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי) - גם עם תאים ריקים כמו שאקסל מייצא (W6).
+export function absorbCellsToFields(cells, columnMap) {
+  const f = { branch: '', studyType: '', identifier: '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' };
+  const cell = (i) => (cells[i] ?? '').trim();
+  if (columnMap) {
+    for (const k of Object.keys(f)) if (k in columnMap) f[k] = cell(columnMap[k]);
+    return f;
+  }
+  f.branch = cell(0); f.studyType = cell(1); f.identifier = cell(2);
+  const rest = cells.slice(3).map((c) => (c ?? '').trim());
+  if (cells.length >= 6) {
+    [f.firstName, f.lastName, f.birthDate, f.country, f.gender, f.familyStatus] = [0, 1, 2, 3, 4, 5].map((i) => rest[i] || '');
+  } else if (cells.length >= 4 && detectIdType(f.identifier).type === 'passport') {
+    f.birthDate = rest[0] || ''; f.country = rest[1] || '';
+  } else if (cells.length >= 4) {
+    // ת.ז. עם 4-5 תאים: הפורמט הישן לדרכון (תאריך, ארץ) - נשמר כדי שהאימות ידווח "מספר עמודות לא צפוי"
+    f.birthDate = rest[0] || ''; f.country = rest[1] || '';
+    f._unexpectedColumns = true;
+  }
+  return f;
+}
+
+// כל השורות של הטקסט כשדות גולמיים (לטבלת-ההזנה): [{ lineNo, fields }]. שורות ריקות/הערות מדולגות.
+export function absorbTextToFieldRows(text) {
+  const rawLines = splitLines(text || '');
+  const delimiter = detectDelimiter(text || '');
+  const { headerLineIndex, columnMap } = maybeHeader(rawLines, delimiter);
+  const out = [];
+  for (let i = 0; i < rawLines.length; i++) {
+    const trimmed = rawLines[i].trim();
+    if (trimmed === '' || trimmed.startsWith('#') || i === headerLineIndex) continue;
+    out.push({ lineNo: i + 1, fields: absorbCellsToFields(splitCells(rawLines[i], delimiter), columnMap) });
+  }
+  return out;
+}
+
+// שורות-שדות → טקסט עם כותרת (סדר-התבנית) - הקלט היחיד לפרסור, גם מהטבלה.
+export const ABSORB_FIELD_ORDER = ['branch', 'studyType', 'identifier', 'firstName', 'lastName', 'birthDate', 'country', 'gender', 'familyStatus'];
+export const ABSORB_FIELD_HEADERS = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'שם פרטי', 'שם משפחה', 'תאריך לידה', 'ארץ', 'מגדר', 'מצב משפחתי'];
+export function absorbFieldRowsToText(rows) {
+  const lines = [ABSORB_FIELD_HEADERS.join('\t')];
+  for (const r of rows || []) {
+    const f = r && r.fields ? r.fields : (r || {});
+    lines.push(ABSORB_FIELD_ORDER.map((k) => String(f[k] ?? '').replace(/[\t\r\n]+/g, ' ').trim()).join('\t'));
+  }
+  return lines.join('\n');
+}
+
 function rowToTask({ cells, lineNo, raw, columnMap }) {
   const err = (reason) => ({ error: { line: lineNo, text: raw, reason } });
   let branch, studyType, identity;

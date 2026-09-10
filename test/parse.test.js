@@ -124,3 +124,39 @@ test('W6: הפורמט הישן לדרכון (5 תאים) עדיין עובד', 
   assert.equal(tasks[0].birthDate, '15/03/1995');
   assert.equal(tasks[0].countryValue, '640');
 });
+
+// ─── טבלת-ההזנה: שדות גולמיים ↔ טקסט (מסלול-פרסור אחד) ───────────────────────
+import { absorbTextToFieldRows, absorbFieldRowsToText, absorbCellsToFields } from '../src/tools/absorb-parse.js';
+
+test('absorbTextToFieldRows: הדבקה עם כותרת בסדר חופשי → שדות לפי שם העמודה; הערות ושורות ריקות מדולגות', () => {
+  const rows = absorbTextToFieldRows('ת.ז./דרכון\tסניף\tסוג לימוד\tארץ\n# הערה\n012345678\t3\t600\t\n\nAB1\t16\t600\tצרפת');
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].lineNo, 3);
+  assert.deepEqual(rows[0].fields, { branch: '3', studyType: '600', identifier: '012345678', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' });
+  assert.equal(rows[1].fields.country, 'צרפת');
+});
+
+test('absorbCellsToFields: בלי כותרת - 3 תאים בסיס; 5 תאים לדרכון = תאריך+ארץ; 9 תאים = סדר-התבנית', () => {
+  assert.equal(absorbCellsToFields(['00', '600', '012345678'], null).identifier, '012345678');
+  const p = absorbCellsToFields(['12', '600', 'AB1234567', '15/03/1995', 'צרפת'], null);
+  assert.equal(p.birthDate, '15/03/1995');
+  assert.equal(p.country, 'צרפת');
+  const t = absorbCellsToFields(['00', '600', '012345678', 'משה', 'כהן', '10/10/1990', '', 'נקבה', 'רווק'], null);
+  assert.equal(t.firstName, 'משה');
+  assert.equal(t.gender, 'נקבה');
+  assert.equal(t.familyStatus, 'רווק');
+});
+
+test('absorbFieldRowsToText → parseAbsorbInput: סבב מלא מהטבלה לפרסור, כולל שגיאה בשורה השנייה', () => {
+  const text = absorbFieldRowsToText([
+    { fields: { branch: '0', studyType: '600', identifier: 'AB1234567', birthDate: '15/03/1995', country: 'צרפת' } },
+    { fields: { branch: '16', studyType: '600', identifier: '' } },
+  ]);
+  assert.ok(text.startsWith('סניף\tסוג לימוד\tת.ז./דרכון'));
+  const parsed = parseAbsorbInput(text);
+  assert.equal(parsed.tasks.length, 1);
+  assert.equal(parsed.tasks[0].countryValue, '640');
+  assert.equal(parsed.tasks[0].branch, '00');
+  assert.equal(parsed.errors.length, 1);
+  assert.equal(parsed.errors[0].line, 3, 'שורת הכותרת היא 1, השורה השנייה בטבלה היא 3');
+});

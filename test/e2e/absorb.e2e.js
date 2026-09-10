@@ -109,3 +109,55 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     } finally { await context.close(); }
   });
 });
+
+describe('קליטת תלמידים — טבלת ההזנה', () => {
+  let browser2, script2;
+  before(async () => { browser2 = await launch(); script2 = readUserscript(); });
+  after(async () => { if (browser2) await browser2.close(); });
+
+  test('מילוי ידני של שורה בטבלה (בלי הדבקה) → הרצה → "נקלט"; שורה ריקה חדשה נוספת מעצמה', async () => {
+    const { context, page } = await openSession(browser2, { script: script2 });
+    try {
+      await page.goto(URLS.institute(491));
+      await page.waitForSelector('#tt-panel');
+      const cell = (i, k) => `#tt-absorb-grid input[data-i="${i}"][data-k="${k}"]`;
+      await page.fill(cell(0, 'branch'), '00');
+      await page.fill(cell(0, 'studyType'), '600');
+      await page.fill(cell(0, 'identifier'), '034567890');
+      await page.waitForSelector(cell(1, 'branch'));
+      const typeLabel = await page.textContent('#tt-absorb-grid tr[data-i="0"] .tt-type-label');
+      assert.equal(typeLabel.trim(), 'ת.ז.');
+      const summary = await page.textContent('#tt-absorb-grid-summary');
+      assert.match(summary, /1 שורות מוכנות/);
+      await page.click('#tt-absorb-start');
+      const { waitForRunDone, readResults } = await import('./harness.js');
+      await waitForRunDone(page);
+      const res = await readResults(page);
+      assert.equal(res.length, 1);
+      assert.equal(res[0].status, 'נקלט');
+    } finally { await context.close(); }
+  });
+
+  test('דרכון בטבלה פותח תאריך לידה וארץ; ארץ לא מוכרת מסומנת כשגיאה עם הסבר', async () => {
+    const { context, page } = await openSession(browser2, { script: script2 });
+    try {
+      await page.goto(URLS.institute(491));
+      await page.waitForSelector('#tt-panel');
+      const cell = (i, k) => `#tt-absorb-grid input[data-i="${i}"][data-k="${k}"]`;
+      await page.fill(cell(0, 'branch'), '16');
+      await page.fill(cell(0, 'studyType'), '600');
+      await page.fill(cell(0, 'identifier'), 'AB1234567');
+      await page.fill(cell(0, 'birthDate'), '05/05/1994');
+      await page.fill(cell(0, 'country'), 'אוסטר');
+      const typeLabel = await page.textContent('#tt-absorb-grid tr[data-i="0"] .tt-type-label');
+      assert.equal(typeLabel.trim(), 'דרכון');
+      const countryOff = await page.$eval('#tt-absorb-grid tr[data-i="0"] .tt-cell-country', (td) => td.classList.contains('tt-cell-off'));
+      assert.equal(countryOff, false, 'עמודת הארץ פעילה לדרכון');
+      const title = await page.getAttribute('#tt-absorb-grid tr[data-i="0"]', 'title');
+      assert.match(title || '', /ארץ לא מוכרת/);
+      await page.fill(cell(0, 'country'), 'אוסטריה');
+      const title2 = await page.getAttribute('#tt-absorb-grid tr[data-i="0"]', 'title');
+      assert.equal(title2, null);
+    } finally { await context.close(); }
+  });
+});
