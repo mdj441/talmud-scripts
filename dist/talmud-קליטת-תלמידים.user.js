@@ -1103,6 +1103,7 @@ const ABSORB_CONFIRM_BUDGET_MS = 25000; // LinkButton1 (אישור הקליטה)
 const ABSORB_SAVE_BUDGET_MS = 30000; // btnSave (שמירת תלמיד חדש)
 const ABSORB_OUTCOME_GRACE_MS = 2000; // מרווח מעל התקציב — ל-waitPRM להספיק להיסגר בעצמו
 const ABSORB_NAV_EVIDENCE_MS = 8000; // כמה להמתין לעדות ניווט (טעינה מלאה) לפני שמכריזים כישלון
+const ABSORB_POPUP_HIDE_MS = 5000; // M-e: תקרה להמתנה לסגירת חלונית ההודעה (postback קל)
 const ABSORB_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // M5: מעל זה — אין resume אוטומטי
 
 // ─── סטטוסים (קבוצה קטנה וסגורה — הדוח/הטבלה מקבצים לפיה) ───────────────────
@@ -1229,6 +1230,24 @@ function buildRemainingReport(results) {
 function absorbParseCount(text) {
   const m = /נמצאו\s*(\d+)/.exec(String(text == null ? '' : text).trim());
   return m ? parseInt(m[1], 10) : null;
+}
+
+// טהורה (#1b): מה לעשות עם תוצאת החיפוש *המקדים*. דווקא שם "לא נמצא" גורר לחיצת
+// "קליטה", ולכן אסור להסיק אותו מחיפוש שלא רץ או מגריד שלא התרענן:
+//   ‏executed=false             → אין עדות שהחיפוש רץ (כולל res.ok=false) → 'error';
+//   ‏refreshed=true             → הגריד נבנה מחדש → 'analyze';
+//   ‏!refreshed && count===0    → התווית כן התרעננה ואמרה 0 → תוצאה ריקה לגיטימית;
+//   ‏!refreshed && count>=1     → התווית מדווחת תוצאות אך הגריד ישן → 'retry';
+//   ‏!refreshed && count==null  → אין עדות בכלל (לא אמור לקרות כש-executed) → 'error'.
+// אתרי האימות (אחרי קליטה / אחרי שמירת תלמיד חדש) אינם משתמשים בזה: שם "לא נמצא"
+// מייצר לכל היותר שורת "לא אומת בגריד", ולא פעולה נוספת באתר.
+function absorbPrecheckDecision(res) {
+  if (!res || typeof res !== 'object' || Array.isArray(res)) return 'error';
+  if (!res.executed) return 'error';
+  if (res.refreshed) return 'analyze';
+  if (res.count === 0) return 'analyze';
+  if (typeof res.count === 'number' && Number.isFinite(res.count) && res.count >= 1) return 'retry';
+  return 'error';
 }
 
 // טהורה (#5): רישום תוצאה חייב להיות אידמפוטנטי לכל שורה בתור. אחרי timeout+retry
@@ -1506,14 +1525,18 @@ async function absorbSearchOnce(input, btn, value, gen) {
   const countText = readAbsorbCount();
   const count = absorbParseCount(countText);
   const started = !!(res && res.started);
+  const ok = !!(res && res.ok);
   const refreshed = !absorbGridIsStale();
   // עדות שהחיפוש באמת רץ (C4): גם בקשה שהתחילה, וגם תווית-ספירה/גריד מרוענן אחריה.
   // ‏#4(b): הסימון *לא* מוסר כאן. גריד שלא התרענן נשאר "ישן" ו-readAbsorbGridRows
   // מחזיר עבורו ריק — כך שורה שנשארה מהתלמיד הקודם לא תיקרא כ"כבר קיים" (הפלה שקטה).
   // ‏started && !refreshed && count===null = אין עדות בכלל → ניסיון חוזר, ואז "שגיאה".
-  const executed = started && (count !== null || refreshed);
-  log(`[חיפוש] ${maskId(value)} → ${countText || '(ללא תווית ספירה)'} · started=${started} · refreshed=${refreshed} · executed=${executed}`);
-  return { ok: !!(res && res.ok), started, executed, refreshed, countText, count, reason: res && res.reason };
+  // ‏#1a: גם ok חייב להיות אמת. waitPRM מחזיר {ok:false, started:true} בשגיאת PRM או
+  // ב-timeout — MS AJAX לא החיל עדכון, ולכן תווית-הספירה עדיין של התלמיד הקודם;
+  // בלי השער הזה חיפוש שנכשל היה נחשב "רץ" ומכריע "לא נמצא" מול גריד ותווית ישנים.
+  const executed = started && ok && (count !== null || refreshed);
+  log(`[חיפוש] ${maskId(value)} → ${countText || '(ללא תווית ספירה)'} · started=${started} · ok=${ok} · refreshed=${refreshed} · executed=${executed}`);
+  return { ok, started, executed, refreshed, countText, count, reason: res && res.reason };
 }
 
 // C4: חיפוש עם עדות-ביצוע. לחיצה שנבלעה (started=false) היא כשל בר-ניסיון-חוזר —
@@ -1529,10 +1552,13 @@ async function absorbSearch(input, btn, value, gen) {
 }
 
 const ABSORB_SEARCH_FAILED_ACTION = 'החיפוש לא הופעל — בדוק את הדף ונסה שוב';
+const ABSORB_GRID_STALE_ACTION = 'החיפוש לא רענן את הגריד — בדוק ידנית אם התלמיד כבר קיים';
 
 function absorbSearchFailReason(res) {
   if (!res) return 'החיפוש לא הופעל';
   if (!res.started) return 'לחיצת החיפוש לא הפעילה בקשה לשרת' + (res.reason ? ` (${res.reason})` : '');
+  // ‏#1a: started=true אך ok=false — שגיאת PRM או timeout; השרת לא החזיר עדכון לדף.
+  if (!res.ok) return 'החיפוש נכשל או פג-זמן בשרת' + (res.reason ? ` (${res.reason})` : '');
   return 'החיפוש רץ אך תוצאותיו לא התעדכנו בדף' + (res.reason ? ` (${res.reason})` : '');
 }
 
@@ -1542,7 +1568,10 @@ function absorbSearchFailReason(res) {
 async function absorbHidePopup(gen) {
   const hide = hideMessagePopupAsync();
   if (hide && hide.wait) {
-    await hide.wait; // waitPRM לעולם לא נדחה (prm.js)
+    // M-e: סגירת החלונית היא postback קל — אין סיבה להחזיק את התלמיד עד תקרת ה-15
+    // שניות של waitPRM ב-popup.js. ממתינים למוקדם מבין ה-postback לבין התקרה כאן
+    // (‏popup.js מחוץ להיקף השינוי, ולכן התקרה נאכפת בצד הקורא). waitPRM לא נדחה.
+    await Promise.race([hide.wait, sleep(ABSORB_POPUP_HIDE_MS)]);
     await sleepCheckStop(150, gen);
   }
   return hide;
@@ -1611,11 +1640,20 @@ function absorbBeginNavigation() {
 // #1: ניווט שנכשל/נבלע השאיר את מצב-הניווט מצהיר על סניף שמעולם לא הגענו אליו
 // (‏gotoBranch כותב currentBranch לפני הירי). בדף סוג-לימוד זה המקור *היחיד* לסניף,
 // ולכן המשימה הבאה הייתה "מתאימה" לדף הלא-נכון ונקלטת לסניף שגוי. משחזרים.
+// M-c: הלוג נכתב רק כשבאמת שוחזר/נוקה סניף. מצב ריק שנשאר ריק (המקרה הרגיל במשימה
+// הראשונה אחרי clearNavState) אינו "שחזור" ואינו ראוי לשורת-לוג מטעה.
 function absorbRestoreNavState(prev) {
   const restore = absorbNavStateRestore(prev);
-  if (restore) saveNavState(restore);
-  else clearNavState();
-  log(`[ניווט] הניווט לא אומת — מצב-הניווט שוחזר ל-${(restore && restore.currentBranch) || '(ריק)'}`);
+  if (restore) {
+    saveNavState(restore);
+    log(`[ניווט] הניווט לא אומת — מצב-הניווט שוחזר לסניף ${restore.currentBranch}`);
+    return;
+  }
+  const cur = loadNavState();
+  if (cur && cur.currentBranch) {
+    clearNavState();
+    log('[ניווט] הניווט לא אומת — מצב-הניווט נוקה (לא היה סניף קודם)');
+  }
 }
 
 // C1: עדות שהניווט באמת קרה. waitPRM מחזיר {ok:true} גם כששום דבר לא נורה, ולכן
@@ -1635,7 +1673,14 @@ async function absorbNavigationEvidence(res, signatureBefore, what) {
 // ניווט מלא: הדף ייטען מחדש ולכן שומרים את מצב ההמשך *לפני* הקריאה (navigate.js §gotoBranch).
 // מחזיר {ok:false, reason} גם כשהלחיצה נבלעה — אחרת הקורא היה מדווח "ניווט" ומחכה
 // לטעינת דף שלא תגיע (C1: הריצה נתקעת בלי תוצאות ובלי דוח).
-async function absorbNavigateToBranch(branch) {
+async function absorbNavigateToBranch(branch, gen) {
+  // ‏#3: ניסיון שהוחלף (timeout+retry) או שבוטל (עצירה/ריצה חדשה) לא נוגע בדף ולא
+  // בסטייט: לא saveAbsorbState שידרוס את הסנאפשוט החי, ולא ירי ניווט לתוך דף
+  // שהניסיון הפעיל כבר מנהל. מחזיר cancelled כדי שהקורא ימות בגבול-השלב הבא.
+  if (typeof gen === 'number' && gen !== absorbCurrentGeneration()) {
+    log('[ניווט] ניסיון שבוטל ביקש ניווט — לא נוגעים בדף');
+    return { ok: false, cancelled: true, reason: 'הניסיון בוטל (ניסיון חדש כבר רץ)' };
+  }
   saveAbsorbState();
   const prevNav = loadNavState(); // #1: נלכד *לפני* ש-gotoBranch כותב currentBranch
   const before = absorbBeginNavigation();
@@ -1660,12 +1705,17 @@ async function absorbEnsureStudyTypePage(task, gen) {
     // (הדף הבא לא יודע אותו) ואת מצב ההמשך *לפני* הירי — אחרת ה-resume נוחת בלי סניף,
     // מנווט שוב, ושורף ניסיונות עד "דולג" שקרי.
     const prevNav = loadNavState(); // #1: נלכד לפני הכתיבה, לשחזור אם הניווט לא קרה
-    saveNavState(Object.assign({}, prevNav, { currentBranch: branch }));
+    // ‏#2: כאן הסניף הגיע מה-h1 של דף המוסד (navigate.js) — אמת מאומתת, לא הצהרה של
+    // ‏gotoBranch. שחזור שמוחק אותו היה גורר gotoBranch מיותר בטעינה הבאה (ושורף
+    // ניסיונות-resume) גם כשהניווט פשוט היה איטי מ-ABSORB_NAV_EVIDENCE_MS. לכן
+    // משחזרים את המצב הקודם *עם* הסניף המאומת; מסלול gotoBranch נשאר בשחזור מלא.
+    const restoreNav = Object.assign({}, prevNav, { currentBranch: branch });
+    saveNavState(restoreNav);
     saveAbsorbState();
     const before = absorbBeginNavigation();
     const res = await gotoStudyTypeFromInstitute(studyType);
     if (!res || res.ok === false) {
-      absorbRestoreNavState(prevNav);
+      absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
       return { ok: false, navigated: false, reason: (res && res.reason) || 'ניווט לסוג הלימוד נכשל' };
     }
     await sleepCheckStop(500, gen);
@@ -1673,7 +1723,7 @@ async function absorbEnsureStudyTypePage(task, gen) {
     if (after.kind === 'studyType' && after.studyType === studyType) return { ok: true, navigated: false };
     const evidence = await absorbNavigationEvidence(res, before, `ניווט לסוג לימוד ${studyType}`);
     if (!evidence.ok) {
-      absorbRestoreNavState(prevNav);
+      absorbRestoreNavState(restoreNav); // #2: לא מוחקים סניף שנקרא מה-h1
       return { ok: false, navigated: false, reason: evidence.reason, action: ABSORB_NAV_FAIL_ACTION };
     }
     // בקשה אמיתית יצאה אך עוד לא נחתנו — ה-resume אחרי טעינת הדף ימשיך מכאן.
@@ -1681,7 +1731,8 @@ async function absorbEnsureStudyTypePage(task, gen) {
   }
 
   log(`[ניווט] ניווט מלא לסניף ${branch} (דף נוכחי: ${page.kind})`);
-  const nav = await absorbNavigateToBranch(branch);
+  const nav = await absorbNavigateToBranch(branch, gen);
+  if (nav.cancelled) checkStop('nav-cancelled', gen); // #3: ניסיון שבוטל מת כאן
   if (!nav.ok) return { ok: false, navigated: false, reason: nav.reason, action: ABSORB_NAV_FAIL_ACTION };
   return { ok: true, navigated: true };
 }
@@ -1720,9 +1771,16 @@ async function absorbWaitConfirmOutcome(prmWait, budgetMs, gen) {
 // יוצאים מדף תלמיד-חדש חזרה לסניף, אחרי שהתוצאה כבר נרשמה. אם הניווט לא באמת קרה
 // (C1) — לא מכריזים ABSORB_NAVIGATED (שממתין לטעינה שלא תבוא), אלא מעדכנים את השורה
 // שנרשמה וממשיכים לתלמיד הבא.
-async function absorbLeaveNewStudentPage(task, recorded) {
-  const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'));
+async function absorbLeaveNewStudentPage(task, recorded, gen) {
+  // ‏#3: ניסיון שבוטל לא יוצא מהדף בעצמו ולא נוגע בשורה שנרשמה — הדף שייך לניסיון
+  // הפעיל. מחזיר ABSORB_CONTINUE (הערך שהקוראים כבר יודעים לטפל בו), בלי שום פעולה.
+  if (typeof gen === 'number' && gen !== absorbCurrentGeneration()) {
+    log('[תלמיד חדש] ניסיון שבוטל — לא יוצאים מהדף');
+    return ABSORB_CONTINUE;
+  }
+  const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'), gen);
   if (nav.ok) return ABSORB_NAVIGATED;
+  if (nav.cancelled) return ABSORB_CONTINUE;
   log(`[ניווט] ${nav.reason}`);
   if (recorded) {
     recorded.detail = [recorded.detail, nav.reason].filter(Boolean).join(' | ');
@@ -1748,8 +1806,9 @@ async function absorbHandleNewStudentPage(task, identity, mk, gen, myIdx) {
       `הוסף לשורה עמודות: ${missing.join(', ')} (וגם מגדר/מצב משפחתי אם ברירות-המחדל זכר/נשוי לא נכונות) והרץ שוב`);
     // נרשם *לפני* הניווט המלא, אחרת ייעלם ב-reload. #5: קשור לשורה של הניסיון הזה,
     // כך שניסיון-חוזר אחרי timeout לא ירשום אותה שורה פעם שנייה.
-    absorbRecordResult(res, gen, myIdx);
-    return absorbLeaveNewStudentPage(task, res);
+    // ‏#3: רישום שנדחה (דור ישן) = הניסיון הזה בוטל — אסור להמשיך לנווט מכאן.
+    if (!absorbRecordResult(res, gen, myIdx)) return ABSORB_CONTINUE;
+    return absorbLeaveNewStudentPage(task, res, gen);
   }
 
   const first = $el(ABSORB_NEW_IDS.firstName);
@@ -1837,7 +1896,8 @@ async function processStudent(task, gen) {
   if (getPage().kind === 'newStudent') {
     if (absorbNewStudentPageMatches(identity)) return await absorbHandleNewStudentPage(task, identity, mk, gen, myIdx);
     log('[תלמיד חדש] הדף שייך למזהה אחר — יוצאים ממנו');
-    const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'));
+    const nav = await absorbNavigateToBranch(String(task.branch).padStart(2, '0'), gen);
+    if (nav.cancelled) checkStop('nav-cancelled', gen); // #3: ניסיון שבוטל מת כאן
     if (!nav.ok) return mk(ABSORB_STATUS.ERROR, nav.reason, ABSORB_NAV_FAIL_ACTION);
     return ABSORB_NAVIGATED;
   }
@@ -1862,9 +1922,22 @@ async function processStudent(task, gen) {
   if (!searchInput || !searchBtn) {
     return mk(ABSORB_STATUS.ERROR, 'שדה/כפתור החיפוש ברשימת התלמידים לא נמצאו', 'פתח את הטאב "רשימת תלמידים" ורענן; ייתכן שאין הרשאה');
   }
-  const pre = await absorbSearch(searchInput, searchBtn, identity, gen); // ריפוד (2/3)
+  let pre = await absorbSearch(searchInput, searchBtn, identity, gen); // ריפוד (2/3)
+  // ‏#1b: בחיפוש המקדים "לא נמצא" גורר לחיצת "קליטה", ולכן אסור להסיק אותו מחיפוש
+  // שלא רץ (C4) ואף לא מגריד שלא התרענן בזמן שהתווית מדווחת תוצאות (התווית עשויה
+  // להיות של התלמיד הקודם). ניסיון חוזר אחד, ואז "שגיאה" מפורשת — לא קליטה שנייה.
+  let decision = absorbPrecheckDecision(pre);
+  if (decision === 'retry') {
+    log('[חיפוש] התווית מדווחת תוצאות אך הגריד לא התרענן — חיפוש מקדים חוזר');
+    await sleepCheckStop(500, gen);
+    pre = await absorbSearch(searchInput, searchBtn, identity, gen);
+    decision = absorbPrecheckDecision(pre);
+    if (decision === 'retry') {
+      return mk(ABSORB_STATUS.ERROR, `החיפוש דיווח ${pre.count} תוצאות אך הגריד לא התרענן`, ABSORB_GRID_STALE_ACTION);
+    }
+  }
   // C4: בלי עדות שהחיפוש רץ אסור לקרוא את הגריד — גריד ישן היה נקרא כ"כבר קיים".
-  if (!pre.executed) return mk(ABSORB_STATUS.ERROR, absorbSearchFailReason(pre), ABSORB_SEARCH_FAILED_ACTION);
+  if (decision !== 'analyze') return mk(ABSORB_STATUS.ERROR, absorbSearchFailReason(pre), ABSORB_SEARCH_FAILED_ACTION);
 
   const preGrid = analyzeGrid(readAbsorbGridRows(), identity, pre.count); // #4: תווית הספירה היא השער
   if (preGrid.found) {
@@ -1885,27 +1958,28 @@ async function processStudent(task, gen) {
   if (!absorbBtn) {
     return mk(ABSORB_STATUS.ERROR, `כפתור "קליטה" (${ABSORB_IDS.absorbBtn}) לא נמצא`, 'בדוק הרשאות ומצב זכאות של סוג הלימוד; בצע ידנית');
   }
-  const absorbClick = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
-  if (!absorbClick.ok) log(`[קליטה] postback לא תקין: ${absorbClick.reason}`);
-  await sleepCheckStop(400, gen);
-
-  let popupDetail = '';
-  const popAfterOpen = readMessagePopup();
-  if (popAfterOpen) {
-    popupDetail = popAfterOpen.text;
-    log(`[הודעה] אחרי "קליטה": ${maskIdsInText(popAfterOpen.text)}`);
-    await absorbHidePopup(gen);
-    if (popAfterOpen.hasContinue) {
-      return mk(`${ABSORB_STATUS.BLOCKED}: ${popAfterOpen.text}`, popAfterOpen.text,
-        'המערכת מבקשת אישור "המשך" — הסקריפט לא מאשר לבד. בצע את הקליטה ידנית ובדוק את ההודעה');
-    }
-    await sleepCheckStop(300, gen);
-  }
-  checkStop('after-absorb-click', gen);
-
-  // I2: משלב 4 והלאה מודאל הקליטה עשוי להיות פתוח. כל יציאה מכאן — תוצאת-שגיאה,
-  // חריגה או עצירה — חייבת להשאיר את הדף נקי, אחרת התלמיד הבא מתחיל מול מודאל פתוח.
+  // I2 + M-b: ה-try מתחיל *לפני* לחיצת "קליטה" — הלחיצה עצמה היא שפותחת את המודאל,
+  // וכל יציאה שאחריה (יציאת "נחסם", תוצאת-שגיאה, חריגה או עצירה בתוך absorbHidePopup
+  // ‏/ checkStop) חייבת להשאיר את הדף נקי, אחרת התלמיד הבא מתחיל מול מודאל פתוח.
   try {
+    const absorbClick = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    if (!absorbClick.ok) log(`[קליטה] postback לא תקין: ${absorbClick.reason}`);
+    await sleepCheckStop(400, gen);
+
+    let popupDetail = '';
+    const popAfterOpen = readMessagePopup();
+    if (popAfterOpen) {
+      popupDetail = popAfterOpen.text;
+      log(`[הודעה] אחרי "קליטה": ${maskIdsInText(popAfterOpen.text)}`);
+      await absorbHidePopup(gen);
+      if (popAfterOpen.hasContinue) {
+        return mk(`${ABSORB_STATUS.BLOCKED}: ${popAfterOpen.text}`, popAfterOpen.text,
+          'המערכת מבקשת אישור "המשך" — הסקריפט לא מאשר לבד. בצע את הקליטה ידנית ובדוק את ההודעה');
+      }
+      await sleepCheckStop(300, gen);
+    }
+    checkStop('after-absorb-click', gen);
+
     // ── שלב 4: מודאל הקליטה — מילוי ────────────────────────────────────────
     let modalOpen = isVisible($el(ABSORB_IDS.modal));
     if (!modalOpen) {
@@ -1981,8 +2055,9 @@ async function processStudent(task, gen) {
       if (absorbNewStudentPageMatches(identity)) return await absorbHandleNewStudentPage(task, identity, mk, gen, myIdx);
       log('[תלמיד חדש] דף תלמיד-חדש עם מזהה אחר — יוצאים בלי לשמור');
       const res = mk(ABSORB_STATUS.ERROR, 'נחתנו בדף תלמיד-חדש שאינו של המזהה הזה', 'בדוק ידנית מה קרה בקליטה של שורה זו');
-      absorbRecordResult(res, gen, myIdx);
-      return await absorbLeaveNewStudentPage(task, res);
+      // ‏#3: רישום שנדחה (דור ישן) = הניסיון הזה בוטל — אסור להמשיך לנווט מכאן.
+      if (!absorbRecordResult(res, gen, myIdx)) return ABSORB_CONTINUE;
+      return await absorbLeaveNewStudentPage(task, res, gen);
     }
 
     // ── שלב 7: הודעת מערכת → מודאל → אימות בגריד ───────────────────────────
@@ -2175,6 +2250,9 @@ async function runQueue() {
         absorbRecordResult(makeAbsorbResult(task, ABSORB_STATUS.ERROR, 'לא נרשמה תוצאה לשורה הזו',
           'בצע את השורה הזו ידנית באתר, וצרף את הלוג'), null, taskIdx);
       }
+      // M-a: רשת-הביטחון עצמה כפופה ל-absorbShouldRecord; אם המונים יצאו מסנכרון היא
+      // לא תרשום דבר והלולאה הייתה מסתובבת על אותה שורה כל 300ms. הסמן מתקדם בכל מקרה.
+      absorbCurIdx = Math.max(absorbCurIdx, taskIdx + 1);
       await sleep(300);
       continue;
     }

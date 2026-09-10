@@ -5,7 +5,7 @@ import {
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
-  absorbShouldRecord, absorbNavStateRestore,
+  absorbShouldRecord, absorbNavStateRestore, absorbPrecheckDecision,
 } from '../src/tools/absorb.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -53,7 +53,8 @@ test('analyzeGrid: אין התאמה (2 שורות, אף אחת לא תואמת)
 
 test('analyzeGrid: fallback לשורה יחידה (count==1) — כמו v3.2', () => {
   const rows = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
-  assert.deepEqual(analyzeGrid(rows, '337386692'), { found: true, matchType: 'single-row-fallback' });
+  // M-d: הכותרת מבטיחה count==1, ולכן הספירה מועברת בפועל (קודם לא הועברה כלל).
+  assert.deepEqual(analyzeGrid(rows, '337386692', 1), { found: true, matchType: 'single-row-fallback' });
 });
 
 test('analyzeGrid: גריד ריק = לא נמצא', () => {
@@ -236,7 +237,7 @@ test('absorbParsePostbackFromHref: href שאינו postback → null', () => {
   assert.equal(absorbParsePostbackFromHref(undefined), null);
 });
 
-// ─── absorbParseCount (עדות שהחיפוש באמת רץ — C4) ───────────────────────────
+// ─── absorbParseCount (עדות שהחיפוש באמת רץ — C4; בלי fallback רופף — M-c) ──
 test('absorbParseCount: "נמצאו N" → N, כולל 0', () => {
   assert.equal(absorbParseCount('נמצאו 3 רשומות'), 3);
   assert.equal(absorbParseCount('נמצאו 0 רשומות'), 0);
@@ -248,6 +249,13 @@ test('absorbParseCount: תווית ריקה/חסרה → null (אין עדות �
   assert.equal(absorbParseCount(null), null);
   assert.equal(absorbParseCount(undefined), null);
   assert.equal(absorbParseCount('רשומות'), null);
+});
+
+test('absorbParseCount: ספרה בלי "נמצאו" → null (לא לוקחים כל מספר בטקסט)', () => {
+  assert.equal(absorbParseCount('5 רשומות'), null);
+  assert.equal(absorbParseCount('סה"כ: 7'), null);
+  assert.equal(absorbParseCount('עמוד 1 מתוך 3'), null);
+  assert.equal(absorbParseCount('נמצאו 4 רשומות'), 4);
 });
 
 // ─── makeAbsorbResult (מקור אחד לרשומת התוצאה — M2) ─────────────────────────
@@ -294,6 +302,15 @@ test('analyzeGrid: count=0 → לא נמצא, גם כששורה תואמת עד�
   assert.deepEqual(analyzeGrid(GRID_TWO, '006136871', 0), { found: false, matchType: null });
   const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
   assert.deepEqual(analyzeGrid(single, '337386692', 0), { found: false, matchType: null });
+});
+
+test('analyzeGrid: count=0 חוסם גם התאמה מדויקת בשורה יחידה (שער v3.2 — מכוון)', () => {
+  // מתועד בכוונה: כשהתווית אומרת "נמצאו 0" הגריד אינו מקור-אמת (הוא עלול להיות ישן),
+  // ולכן גם שורה תואמת בדיוק לא נספרת. מחיר: התאמה אמיתית בגריד מרוענן עם תווית 0
+  // תיקרא "לא נמצא" — ההתנהגות של v3.2, ונשמרת עד לאימות מול הדף החי.
+  const single = [['', '1', 'תעודת זהות', '006136871', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '006136871', 0), { found: false, matchType: null });
+  assert.deepEqual(analyzeGrid(single, '6136871', 0), { found: false, matchType: null });
 });
 
 test('analyzeGrid: count=1 → fallback לשורה יחידה מותר', () => {
@@ -344,10 +361,29 @@ test('absorbNavStateRestore: בלי סניף קודם → null (כלומר לנ�
   assert.equal(absorbNavStateRestore('01'), null);
 });
 
-// ─── absorbParseCount: בלי fallback רופף (ממצא M-c) ─────────────────────────
-test('absorbParseCount: ספרה בלי "נמצאו" → null (לא לוקחים כל מספר בטקסט)', () => {
-  assert.equal(absorbParseCount('5 רשומות'), null);
-  assert.equal(absorbParseCount('סה"כ: 7'), null);
-  assert.equal(absorbParseCount('עמוד 1 מתוך 3'), null);
-  assert.equal(absorbParseCount('נמצאו 4 רשומות'), 4);
+
+// ─── absorbPrecheckDecision (החלטת החיפוש המקדים — ממצא #1b) ─────────────────
+test('absorbPrecheckDecision: חיפוש שרץ והגריד התרענן → ניתוח הגריד', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: 0 }), 'analyze');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: 1 }), 'analyze');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: 3 }), 'analyze');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: true, count: null }), 'analyze');
+});
+
+test('absorbPrecheckDecision: תווית "נמצאו 0" בלי ריענון גריד → ניתוח (תוצאה ריקה לגיטימית)', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 0 }), 'analyze');
+});
+
+test('absorbPrecheckDecision: תווית עם 1+ תוצאות אך הגריד לא התרענן → ניסיון חוזר, לא "לא נמצא"', () => {
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 1 }), 'retry');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: 7 }), 'retry');
+});
+
+test('absorbPrecheckDecision: אין עדות שהחיפוש רץ → שגיאה (לא לוחצים "קליטה")', () => {
+  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: false, count: 1 }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: false, refreshed: true, count: 0 }), 'error');
+  assert.equal(absorbPrecheckDecision({ executed: true, refreshed: false, count: null }), 'error');
+  assert.equal(absorbPrecheckDecision(null), 'error');
+  assert.equal(absorbPrecheckDecision(undefined), 'error');
+  assert.equal(absorbPrecheckDecision('x'), 'error');
 });
