@@ -29,17 +29,17 @@ function panelToday() {
 }
 
 function panelSetStatus(msg) {
-  const el = $el('tma-status');
+  const el = $el('tma3-status');
   if (el) el.textContent = msg;
 }
 
 function panelSetProgress(cur, total) {
-  const el = $el('tma-progress');
+  const el = $el('tma3-progress');
   if (el) el.textContent = `${cur} / ${total}`;
 }
 
 function panelSetRunning(on) {
-  const start = $el('tma-start');
+  const start = $el('tma3-start');
   if (start) start.disabled = !!on;
 }
 
@@ -53,7 +53,7 @@ function panelFlash(id, tempText, backText) {
 // ─── רינדור ─────────────────────────────────────────────────────────────────
 
 function panelRenderErrors(errors, validCount) {
-  const box = $el('tma-errors');
+  const box = $el('tma3-errors');
   if (!box) return;
   if (!errors || !errors.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
   let html = `<div style="font-weight:bold;margin-bottom:4px">⚠️ ${errors.length} שורות לא יורצו (${validCount} תקינות):</div>`;
@@ -69,7 +69,7 @@ function panelRenderErrors(errors, validCount) {
 
 // המזהה המלא מוצג בטבלה ובדוח (צורך תפעולי) — בלוג הוא תמיד ממוסך.
 function panelRenderResults() {
-  const container = $el('tma-results');
+  const container = $el('tma3-results');
   if (!container) return;
   if (!panelResults.length) { container.innerHTML = ''; return; }
   let html = '<table style="width:100%;border-collapse:collapse;font-size:12px">';
@@ -96,7 +96,7 @@ function panelRenderResults() {
 
 // M5: תור שמור ישן לא ממשיך מעצמו — מציגים אותו עם "המשך"/"נקה", בלי שום פעולה אוטומטית.
 function panelRenderStaleQueue(info) {
-  const box = $el('tma-stale');
+  const box = $el('tma3-stale');
   if (!box) return;
   if (!info) { box.style.display = 'none'; box.innerHTML = ''; return; }
   const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
@@ -107,13 +107,13 @@ function panelRenderStaleQueue(info) {
     <div style="margin-bottom:6px">${panelEsc(left)} שורות טרם עובדו (${panelEsc(info.curIdx || 0)} מתוך ${panelEsc(info.total || 0)} הושלמו).
       התור ישן מדי כדי להמשיך אוטומטית — בחר מה לעשות.</div>
     <div style="display:flex;gap:6px">
-      <button id="tma-stale-go" style="flex:1;background:#0a5c0a;color:#fff;border:none;
+      <button id="tma3-stale-go" style="flex:1;background:#0a5c0a;color:#fff;border:none;
               padding:5px;border-radius:4px;cursor:pointer;font-size:12px">▶ המשך</button>
-      <button id="tma-stale-clear" style="flex:1;background:#922b21;color:#fff;border:none;
+      <button id="tma3-stale-clear" style="flex:1;background:#922b21;color:#fff;border:none;
               padding:5px;border-radius:4px;cursor:pointer;font-size:12px">🗑 נקה</button>
     </div>`;
   box.style.display = 'block';
-  const go = $el('tma-stale-go');
+  const go = $el('tma3-stale-go');
   if (go) {
     go.addEventListener('click', () => {
       panelRenderStaleQueue(null);
@@ -124,7 +124,7 @@ function panelRenderStaleQueue(info) {
         .catch((e) => { log('[resume] כשל: ' + (e && e.message)); panelSetRunning(false); });
     });
   }
-  const clear = $el('tma-stale-clear');
+  const clear = $el('tma3-stale-clear');
   if (clear) {
     clear.addEventListener('click', () => {
       absorbDiscardSavedQueue();
@@ -136,7 +136,7 @@ function panelRenderStaleQueue(info) {
 }
 
 function panelRenderReport(report) {
-  const box = $el('tma-report');
+  const box = $el('tma3-report');
   if (!box) return;
   if (!report) { box.style.display = 'none'; box.innerHTML = ''; return; }
   let html = `<div style="font-weight:bold;margin-bottom:4px">📊 סיכום: ${panelEsc(report.summary || '—')}</div>`;
@@ -155,7 +155,7 @@ function panelRenderReport(report) {
 
 async function panelStart() {
   if (absorbIsRunning()) return;
-  const input = $el('tma-input');
+  const input = $el('tma3-input');
   const text = ((input && input.value) || '').trim();
   if (!text) { panelSetStatus('הדבק רשימת תלמידים (אפשר להעתיק טורים ישירות מאקסל)'); return; }
 
@@ -163,7 +163,7 @@ async function panelStart() {
   if (parsed.errors.length && !panelAwaitingErrorConfirm) {
     panelRenderErrors(parsed.errors, parsed.tasks.length);
     panelAwaitingErrorConfirm = true;
-    const btn = $el('tma-start');
+    const btn = $el('tma3-start');
     if (btn) btn.textContent = parsed.tasks.length ? `▶ המשך בכל זאת (${parsed.tasks.length})` : '▶ התחל';
     panelSetStatus(`${parsed.errors.length} שורות בעייתיות — תקן, או לחץ שוב כדי להריץ רק את התקינות`);
     log(`[פרסור] ${parsed.tasks.length} תקינות · ${parsed.errors.length} שגויות`);
@@ -177,7 +177,7 @@ async function panelStart() {
   }
 
   panelAwaitingErrorConfirm = false;
-  const btn = $el('tma-start');
+  const btn = $el('tma3-start');
   if (btn) btn.textContent = '▶ התחל';
   panelRenderReport(null);
   panelRenderStaleQueue(null);
@@ -192,7 +192,7 @@ async function panelStart() {
 }
 
 function panelStartDate() {
-  const el = $el('tma-start-date');
+  const el = $el('tma3-start-date');
   return el ? String(el.value || '').trim() : '';
 }
 
@@ -201,7 +201,7 @@ function panelCopyTsv() {
   const rows = results.length ? results : panelResults;
   if (!rows.length) { panelSetStatus('אין תוצאות להעתקה'); return; }
   copyTextToClipboard(buildResultsTsv(rows)).then((ok) => {
-    panelFlash('tma-tsv', ok ? '✓ הועתק' : '✗ העתקה נכשלה', '📋 העתק לאקסל');
+    panelFlash('tma3-tsv', ok ? '✓ הועתק' : '✗ העתקה נכשלה', '📋 העתק לאקסל');
     panelSetStatus(ok ? 'התוצאות הועתקו — הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן; השתמש בייצוא CSV');
   });
 }
@@ -233,14 +233,14 @@ function panelHandleXlsxFile(ev) {
   Promise.resolve()
     .then(() => loadXlsxFile(file))
     .then((text) => {
-      const ta = $el('tma-input');
+      const ta = $el('tma3-input');
       if (ta) ta.value = text;
       const lineCount = text ? text.split('\n').length : 0;
       panelSetStatus(`נטענו ${lineCount} שורות מהקובץ — בדוק ולחץ התחל`);
       log(`[אקסל] נטענו ${lineCount} שורות מ"${fileName}"`);
       if (panelAwaitingErrorConfirm) {
         panelAwaitingErrorConfirm = false;
-        const btn = $el('tma-start');
+        const btn = $el('tma3-start');
         if (btn) btn.textContent = '▶ התחל';
         panelRenderErrors([], 0);
       }
@@ -262,24 +262,29 @@ function panelHandleStop() {
 
 // ─── בניית הפאנל (נראות v3.2) ───────────────────────────────────────────────
 
+// ‏A3: מחזירה true רק כשהפאנל **הזה** נוצר עכשיו. פאנל שכבר קיים = מופע אחר של v3.3
+// שכבר מנהל את הדף; המשך האתחול (hooks, resume) היה נותן שני מנהלים לאותו תור.
+// כל ה-ids/מזהי-האלמנטים כאן ממורחבים ב-tma3- כדי שלא יתנגשו עם סקריפט v3.2 הישן
+// (‏tma-…), שעשוי להיות מותקן במקביל עד שהבדיקה הרטובה תעבור.
 function panelCreateUI() {
-  if ($el('tma-panel')) return;
+  if ($el('tma3-panel')) return false;
+  if (typeof document === 'undefined' || !document.body) return false;
   const panel = document.createElement('div');
-  panel.id = 'tma-panel';
+  panel.id = 'tma3-panel';
   panel.style.cssText = `
     position:fixed;top:60px;right:10px;z-index:99999;
     background:#fff;border:2px solid #0a5c0a;border-radius:8px;
     width:440px;font-family:Arial,sans-serif;font-size:13px;
     direction:rtl;box-shadow:0 4px 20px rgba(0,0,0,.35);`;
   panel.innerHTML = `
-    <div id="tma-header" style="background:#0a5c0a;color:#fff;padding:8px 12px;
+    <div id="tma3-header" style="background:#0a5c0a;color:#fff;padding:8px 12px;
          border-radius:6px 6px 0 0;cursor:move;display:flex;justify-content:space-between;align-items:center;user-select:none">
       <span style="font-weight:bold;font-size:14px">📥 קליטת תלמידים v${PANEL_VERSION}</span>
-      <span id="tma-progress" style="font-size:11px;opacity:.8">0 / 0</span>
-      <span id="tma-toggle" style="cursor:pointer;font-size:16px;line-height:1;padding:0 4px">▲</span>
+      <span id="tma3-progress" style="font-size:11px;opacity:.8">0 / 0</span>
+      <span id="tma3-toggle" style="cursor:pointer;font-size:16px;line-height:1;padding:0 4px">▲</span>
     </div>
-    <div id="tma-body" style="padding:10px">
-      <div id="tma-status" style="color:#555;font-size:11px;margin-bottom:8px;
+    <div id="tma3-body" style="padding:10px">
+      <div id="tma3-status" style="color:#555;font-size:11px;margin-bottom:8px;
            padding:4px 8px;background:#f0f8f0;border-radius:4px">מוכן</div>
       <div style="font-size:10px;color:#777;margin-bottom:5px;
            background:#f9f9f9;padding:5px 7px;border-radius:3px;border:1px solid #e0e0e0;line-height:1.7">
@@ -287,59 +292,59 @@ function panelCreateUI() {
         <code style="direction:ltr;display:inline-block">סניף | סוג לימוד | ת.ז./דרכון | שם פרטי | שם משפחה | תאריך לידה | ארץ | מגדר | מצב משפחתי</code><br>
         <span style="color:#aaa">חובה: 3 הראשונים. דרכון — גם תאריך לידה + ארץ. תלמיד חדש — גם שם פרטי, שם משפחה ות.לידה.</span>
       </div>
-      <textarea id="tma-input"
+      <textarea id="tma3-input"
         placeholder="01&#9;300&#9;123456789&#10;12&#9;600&#9;AB1234567&#9;&#9;&#9;15/03/1995&#9;צרפת"
         style="width:100%;height:100px;box-sizing:border-box;font-size:12px;
                padding:5px;direction:ltr;resize:vertical;
                border:1px solid #aaa;border-radius:4px;font-family:monospace"></textarea>
-      <div id="tma-errors" style="display:none;font-size:11px;color:#8a1f11;background:#fff5f5;
+      <div id="tma3-errors" style="display:none;font-size:11px;color:#8a1f11;background:#fff5f5;
            border:1px solid #f0c0c0;border-radius:4px;padding:5px 7px;margin:6px 0;max-height:110px;overflow-y:auto"></div>
-      <div id="tma-stale" style="display:none;font-size:11px;color:#5a4a00;background:#fffbe6;
+      <div id="tma3-stale" style="display:none;font-size:11px;color:#5a4a00;background:#fffbe6;
            border:1px solid #e8d9a0;border-radius:4px;padding:6px 8px;margin:6px 0"></div>
       <div style="display:flex;gap:8px;margin:6px 0;align-items:flex-end">
         <div style="flex:1">
           <label style="font-size:11px;color:#444;display:block;margin-bottom:2px">
             📅 תאריך תחילת לימודים (ריק = ברירת המחדל של האתר)
           </label>
-          <input id="tma-start-date" type="text" placeholder="${panelToday()}"
+          <input id="tma3-start-date" type="text" placeholder="${panelToday()}"
             style="width:100%;box-sizing:border-box;font-size:12px;padding:4px;
                    border:1px solid #aaa;border-radius:4px;direction:ltr;font-family:monospace"
             maxlength="10">
         </div>
       </div>
       <div style="display:flex;gap:6px;margin:6px 0">
-        <button id="tma-start" style="flex:2;background:#0a5c0a;color:#fff;border:none;
+        <button id="tma3-start" style="flex:2;background:#0a5c0a;color:#fff;border:none;
                 padding:8px;border-radius:4px;cursor:pointer;font-weight:bold;font-size:13px">
           ▶ התחל</button>
-        <button id="tma-stop" style="flex:1;background:#922b21;color:#fff;border:none;
+        <button id="tma3-stop" style="flex:1;background:#922b21;color:#fff;border:none;
                 padding:8px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold">
           ⏹ עצור</button>
       </div>
       <div style="display:flex;gap:6px;margin:6px 0">
-        <button id="tma-tsv" style="flex:1;background:#1f618d;color:#fff;border:none;
+        <button id="tma3-tsv" style="flex:1;background:#1f618d;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📋 העתק לאקסל</button>
-        <button id="tma-csv" style="flex:1;background:#117a65;color:#fff;border:none;
+        <button id="tma3-csv" style="flex:1;background:#117a65;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">💾 ייצוא CSV</button>
-        <button id="tma-template" style="flex:1;background:#6c3483;color:#fff;border:none;
+        <button id="tma3-template" style="flex:1;background:#6c3483;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📄 תבנית לאקסל</button>
-        <button id="tma-xlsx" style="flex:1;background:#b9770e;color:#fff;border:none;
+        <button id="tma3-xlsx" style="flex:1;background:#b9770e;color:#fff;border:none;
                 padding:6px;border-radius:4px;cursor:pointer;font-size:12px">📥 טען מאקסל</button>
-        <input id="tma-xlsx-file" type="file" accept=".xlsx,.xls" style="display:none">
+        <input id="tma3-xlsx-file" type="file" accept=".xlsx,.xls" style="display:none">
       </div>
-      <div id="tma-results" style="max-height:170px;overflow-y:auto;margin-bottom:6px;
+      <div id="tma3-results" style="max-height:170px;overflow-y:auto;margin-bottom:6px;
            border:1px solid #ddd;border-radius:4px;min-height:10px"></div>
-      <div id="tma-report" style="display:none;font-size:11px;color:#333;background:#fffdf5;
+      <div id="tma3-report" style="display:none;font-size:11px;color:#333;background:#fffdf5;
            border:1px solid #e8d9a0;border-radius:4px;padding:6px 8px;margin-bottom:6px;max-height:160px;overflow-y:auto"></div>
-      <details id="tma-log-details">
+      <details id="tma3-log-details">
         <summary style="cursor:pointer;font-size:11px;color:#555;padding:3px 0;user-select:none">
           📋 יומן פעילות (מזהים ממוסכים — בטוח לצרף בדיווח בעיות)</summary>
         <div style="display:flex;gap:4px;margin:4px 0 2px">
-          <button id="tma-copy-log" style="flex:1;font-size:11px;padding:3px 6px;
+          <button id="tma3-copy-log" style="flex:1;font-size:11px;padding:3px 6px;
                   background:#555;color:#fff;border:none;border-radius:3px;cursor:pointer">📋 העתק לוג</button>
-          <button id="tma-clear-log" style="flex:1;font-size:11px;padding:3px 6px;
+          <button id="tma3-clear-log" style="flex:1;font-size:11px;padding:3px 6px;
                   background:#888;color:#fff;border:none;border-radius:3px;cursor:pointer">🗑 נקה לוג</button>
         </div>
-        <pre id="tma-log" style="max-height:150px;overflow-y:auto;font-size:10px;
+        <pre id="tma3-log" style="max-height:150px;overflow-y:auto;font-size:10px;
              background:#1e1e1e;color:#d4d4d4;padding:8px;margin:0;
              border-radius:4px;white-space:pre-wrap;direction:ltr;
              border:1px solid #333;line-height:1.4"></pre>
@@ -348,8 +353,8 @@ function panelCreateUI() {
   document.body.appendChild(panel);
 
   let drag = null;
-  $el('tma-header').addEventListener('mousedown', (e) => {
-    if (e.target.id === 'tma-toggle') return;
+  $el('tma3-header').addEventListener('mousedown', (e) => {
+    if (e.target.id === 'tma3-toggle') return;
     drag = { sx: e.clientX - panel.offsetLeft, sy: e.clientY - panel.offsetTop };
     panel.style.right = 'auto';
   });
@@ -360,31 +365,31 @@ function panelCreateUI() {
   });
   document.addEventListener('mouseup', () => { drag = null; });
 
-  $el('tma-toggle').addEventListener('click', () => {
-    const body = $el('tma-body');
-    const tog = $el('tma-toggle');
+  $el('tma3-toggle').addEventListener('click', () => {
+    const body = $el('tma3-body');
+    const tog = $el('tma3-toggle');
     if (body.style.display === 'none') { body.style.display = ''; tog.textContent = '▲'; }
     else { body.style.display = 'none'; tog.textContent = '▼'; }
   });
 
-  $el('tma-start-date').addEventListener('input', function () {
+  $el('tma3-start-date').addEventListener('input', function () {
     let v = this.value.replace(/\D/g, '');
     if (v.length > 2) v = v.slice(0, 2) + '/' + v.slice(2);
     if (v.length > 5) v = v.slice(0, 5) + '/' + v.slice(5, 9);
     this.value = v;
   });
 
-  $el('tma-input').addEventListener('input', () => {
+  $el('tma3-input').addEventListener('input', () => {
     if (!panelAwaitingErrorConfirm) return;
     panelAwaitingErrorConfirm = false;
-    const b = $el('tma-start');
+    const b = $el('tma3-start');
     if (b) b.textContent = '▶ התחל';
     panelRenderErrors([], 0);
   });
 
   // M-e: ‏panelStart היא async — בלי catch, כשל בהרצה היה נעלם כ-unhandled rejection
   // וכפתור "התחל" היה נשאר מנוטרל לנצח (הפאנל תקוע בלי דרך חזרה).
-  $el('tma-start').addEventListener('click', () => {
+  $el('tma3-start').addEventListener('click', () => {
     Promise.resolve()
       .then(() => panelStart())
       .catch((e) => {
@@ -393,16 +398,16 @@ function panelCreateUI() {
         panelSetStatus('ההרצה נכשלה — בדוק את הלוג ונסה שוב');
       });
   });
-  $el('tma-stop').addEventListener('click', panelHandleStop, true);
-  $el('tma-tsv').addEventListener('click', panelCopyTsv);
-  $el('tma-csv').addEventListener('click', panelExportCsv);
-  $el('tma-template').addEventListener('click', panelDownloadTemplate);
-  $el('tma-xlsx').addEventListener('click', () => { const f = $el('tma-xlsx-file'); if (f) f.click(); });
-  $el('tma-xlsx-file').addEventListener('change', panelHandleXlsxFile);
-  $el('tma-copy-log').addEventListener('click', () => {
-    copyLog().then((ok) => panelFlash('tma-copy-log', ok ? '✓ הועתק' : '✗ נכשל', '📋 העתק לוג'));
+  $el('tma3-stop').addEventListener('click', panelHandleStop, true);
+  $el('tma3-tsv').addEventListener('click', panelCopyTsv);
+  $el('tma3-csv').addEventListener('click', panelExportCsv);
+  $el('tma3-template').addEventListener('click', panelDownloadTemplate);
+  $el('tma3-xlsx').addEventListener('click', () => { const f = $el('tma3-xlsx-file'); if (f) f.click(); });
+  $el('tma3-xlsx-file').addEventListener('change', panelHandleXlsxFile);
+  $el('tma3-copy-log').addEventListener('click', () => {
+    copyLog().then((ok) => panelFlash('tma3-copy-log', ok ? '✓ הועתק' : '✗ נכשל', '📋 העתק לוג'));
   });
-  $el('tma-clear-log').addEventListener('click', () => {
+  $el('tma3-clear-log').addEventListener('click', () => {
     clearLog();
     log('[לוג] נוקה');
   });
@@ -416,11 +421,12 @@ function panelCreateUI() {
   }, true);
 
   setLogListener(() => {
-    const el = $el('tma-log');
+    const el = $el('tma3-log');
     if (!el) return;
     el.textContent = getLogText();
     el.scrollTop = el.scrollHeight;
   });
+  return true;
 }
 
 // ─── אתחול ──────────────────────────────────────────────────────────────────
@@ -433,7 +439,20 @@ export function initAbsorbPanel() {
   // תור שמור — אחרת אצווה שנחתה בדף לא-צפוי נתקעת בלי שום ממשק (global-constraints).
   if (page.kind === 'other' && !resumable) return false;
 
-  panelCreateUI();
+  // ‏A3: בלי פאנל אין ממשק — אין "עצור" ואין Escape (שניהם נקשרים בתוך panelCreateUI).
+  // רישום hooks והפעלת resume במצב כזה היו מריצים אצווה שאי-אפשר לעצור, ובמקרה של
+  // שני מופעים מותקנים — גם דורסים את ה-hooks של המופע שכן מנהל את הדף. יוצאים.
+  let created = false;
+  try {
+    created = panelCreateUI() === true;
+  } catch (e) {
+    log('[init] בניית הפאנל נכשלה: ' + (e && e.message));
+  }
+  if (!created || !$el('tma3-panel')) {
+    log('[init] הפאנל לא נוצר (כבר קיים מופע אחר?) — לא נרשמים hooks ולא ממשיכים תור');
+    return false;
+  }
+
   absorbSetHooks({
     getStartDate: panelStartDate,
     onStart: (queue, idx) => { panelTotal = queue.length; panelSetProgress(idx, panelTotal); panelSetRunning(true); },

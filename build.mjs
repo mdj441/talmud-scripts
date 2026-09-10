@@ -150,7 +150,11 @@ export function buildHeader(pkg, opts = {}) {
   const shortVersion = `v${pkg.version.split('.').slice(0, 2).join('.')}`;
 
   const entries = [
-    ['@name', 'תלמוד - קליטת תלמידים'],
+    // A3: MUST differ from the legacy v3.2 root script's @name ("תלמוד - קליטת תלמידים").
+    // Tampermonkey identifies a script by @namespace+@name; an identical pair makes the
+    // two installs indistinguishable in the UI while both run on the page. Hard-coded
+    // (not derived from pkg.version) so a version bump never breaks auto-update.
+    ['@name', 'תלמוד - קליטת תלמידים v3.3'],
     ['@namespace', 'https://github.com/mdj441/talmud-scripts'],
     ['@version', pkg.version],
     ['@description', `קליטת תלמידים באצווה לתלמו"ד — ${shortVersion} מודולרי`],

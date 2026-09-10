@@ -204,7 +204,7 @@ test('buildHeader: מכיל את כל השורות הנדרשות', () => {
   const header = buildHeader(pkg);
   assert.ok(header.startsWith('// ==UserScript=='));
   assert.ok(header.trim().endsWith('// ==/UserScript=='));
-  assert.match(header, /@name\s+תלמוד - קליטת תלמידים/);
+  assert.match(header, /@name\s+תלמוד - קליטת תלמידים v3\.3/);
   assert.match(header, /@namespace\s+https:\/\/github\.com\/mdj441\/talmud-scripts/);
   assert.match(header, /@version\s+9\.9\.9/);
   assert.match(header, /@description\s+\S/);
@@ -266,4 +266,20 @@ test('buildUserscript: זהה לקובץ dist המחויב (מצפין את הד
   const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
   const committed = readFileSync(DIST_PATH, 'utf8');
   assert.equal(out, committed);
+});
+
+// ─── A3: הפרדה מסקריפט v3.2 הישן (שניהם עשויים להיות מותקנים בו-זמנית) ─────
+test('buildHeader: ה-@name שונה מזה של הסקריפט הישן (‏@namespace+@name מזהים סקריפט ב-Tampermonkey)', () => {
+  const header = buildHeader({ version: '9.9.9' });
+  const nameLine = header.split('\n').find((l) => l.includes('@name'));
+  const value = nameLine.replace(/^\/\/\s*@name\s+/, '').trim();
+  assert.notEqual(value, 'תלמוד - קליטת תלמידים');
+  assert.equal(value, 'תלמוד - קליטת תלמידים v3.3');
+});
+
+test('buildUserscript: הפאנל החדש לא משתמש במזהי-DOM של v3.2 (tma-…)', () => {
+  const pkg = JSON.parse(fsReadFile('package.json'));
+  const out = buildUserscript({ pkg, entry: 'src/absorb-main.js', readFile: fsReadFile });
+  assert.ok(!/["'#]tma-/.test(out), 'נמצא מזהה tma- בפלט — יתנגש עם הסקריפט הישן');
+  assert.ok(out.includes('tma3-panel'));
 });
