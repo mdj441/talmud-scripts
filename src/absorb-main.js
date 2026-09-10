@@ -347,7 +347,17 @@ function panelCreateUI() {
     panelRenderErrors([], 0);
   });
 
-  $el('tma-start').addEventListener('click', () => { panelStart(); });
+  // M-e: ‏panelStart היא async — בלי catch, כשל בהרצה היה נעלם כ-unhandled rejection
+  // וכפתור "התחל" היה נשאר מנוטרל לנצח (הפאנל תקוע בלי דרך חזרה).
+  $el('tma-start').addEventListener('click', () => {
+    Promise.resolve()
+      .then(() => panelStart())
+      .catch((e) => {
+        log('[התחלה] ההרצה נכשלה: ' + (e && e.message));
+        panelSetRunning(false);
+        panelSetStatus('ההרצה נכשלה — בדוק את הלוג ונסה שוב');
+      });
+  });
   $el('tma-stop').addEventListener('click', panelHandleStop, true);
   $el('tma-tsv').addEventListener('click', panelCopyTsv);
   $el('tma-csv').addEventListener('click', panelExportCsv);
