@@ -103,6 +103,24 @@ export const PANEL_CSS = `
 .tt-grid-input .tt-input,.tt-grid-input .tt-select{padding:4px 6px;font-size:12px;min-width:0}
 .tt-grid-input tr.tt-r-bad td{background:#fdf5f4}
 .tt-cell-off{background:#f7f9fb}
+#tt-panel.tt-panel-wide{width:800px}
+.tt-section{margin:6px 0;border:1px solid #e1e8ef;border-radius:7px;padding:4px 8px;background:#fafcfd}
+.tt-section summary{cursor:pointer;font-size:12px;color:#334e68;user-select:none;padding:2px 0}
+.tt-section[open] summary{margin-bottom:4px}
+.tt-textarea-sm{min-height:60px}
+.tt-review-tools .tt-filter{flex:2 1 160px;width:auto;direction:rtl;font-family:inherit}
+.tt-review-tools > .tt-btn{flex:0 1 auto}
+.tt-scroll-tall{max-height:320px}
+.tt-review-table td{white-space:nowrap}
+.tt-review-table td.tt-body-cell{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3e5566}
+.tt-review-table .tt-select.tt-decision{padding:3px 4px;font-size:12px;width:auto;min-width:118px}
+.tt-review-table tr.tt-r-done{background:#fffaf0}
+.tt-review-table td.tt-roster-cell{font-size:11px;color:#334e68;white-space:normal;min-width:70px}
+.tt-tag{display:inline-block;border-radius:10px;padding:0 7px;font-size:11px;font-weight:600;line-height:17px}
+.tt-tag-done{background:#fde8c8;color:#8a5a00}
+.tt-tag-count{background:#dceefb;color:#24455c}
+.tt-muted{color:#829ab1;font-size:11px}
+.tt-summary{font-size:12px;color:#334e68;margin:2px 0 4px;min-height:16px}
 `;
 
 function ensureStyle() {

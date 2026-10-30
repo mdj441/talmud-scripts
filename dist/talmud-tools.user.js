@@ -1075,6 +1075,24 @@ const PANEL_CSS = `
 .tt-grid-input .tt-input,.tt-grid-input .tt-select{padding:4px 6px;font-size:12px;min-width:0}
 .tt-grid-input tr.tt-r-bad td{background:#fdf5f4}
 .tt-cell-off{background:#f7f9fb}
+#tt-panel.tt-panel-wide{width:800px}
+.tt-section{margin:6px 0;border:1px solid #e1e8ef;border-radius:7px;padding:4px 8px;background:#fafcfd}
+.tt-section summary{cursor:pointer;font-size:12px;color:#334e68;user-select:none;padding:2px 0}
+.tt-section[open] summary{margin-bottom:4px}
+.tt-textarea-sm{min-height:60px}
+.tt-review-tools .tt-filter{flex:2 1 160px;width:auto;direction:rtl;font-family:inherit}
+.tt-review-tools > .tt-btn{flex:0 1 auto}
+.tt-scroll-tall{max-height:320px}
+.tt-review-table td{white-space:nowrap}
+.tt-review-table td.tt-body-cell{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#3e5566}
+.tt-review-table .tt-select.tt-decision{padding:3px 4px;font-size:12px;width:auto;min-width:118px}
+.tt-review-table tr.tt-r-done{background:#fffaf0}
+.tt-review-table td.tt-roster-cell{font-size:11px;color:#334e68;white-space:normal;min-width:70px}
+.tt-tag{display:inline-block;border-radius:10px;padding:0 7px;font-size:11px;font-weight:600;line-height:17px}
+.tt-tag-done{background:#fde8c8;color:#8a5a00}
+.tt-tag-count{background:#dceefb;color:#24455c}
+.tt-muted{color:#829ab1;font-size:11px}
+.tt-summary{font-size:12px;color:#334e68;margin:2px 0 4px;min-height:16px}
 `;
 
 function ensureStyle() {
@@ -5437,6 +5455,177 @@ function messagesBuildReport(rows, opts) {
   return { summary, lines, counts, stopped: !!o.stopped, notFound: notFound.length };
 }
 
+// ─── סקירה בתוך החלונית: נרמול, מיזוג כפילויות, מצבת והצלבה ───────────────────
+
+// ת.ז. לנרמול-השוואה: אקסל מוחק אפסים מובילים, ולכן מספרי מזהה מושווים בלי אפסים מובילים;
+// דרכון באותיות גדולות; רווחים ומקפים נזרקים.
+function messagesNormId(s) {
+  const c = String(s == null ? '' : s).replace(/[\s-]/g, '');
+  if (!c) return '';
+  return /^\d+$/.test(c) ? (c.replace(/^0+/, '') || '0') : c.toUpperCase();
+}
+
+// סניף לנרמול: "5" / " 16 " / "סניף 16" → "05" / "16"; לא-מספרי → כמו שהוא; ריק → ''.
+function messagesNormBranch(s) {
+  const c = messagesFlat(s);
+  const m = /(\d{1,3})/.exec(c);
+  if (!m) return c;
+  return m[1].padStart(2, '0');
+}
+
+// "מסניף X לסניף Y" מגוף בקשת-מעבר (נוסח הדמה; הנוסח באתר האמיתי לא אומת). חסר → ''.
+function messagesExtractTransfer(body) {
+  const b = String(body == null ? '' : body);
+  const from = /מסניף\s*:?\s*(\d{1,3})/.exec(b);
+  const to = /לסניף\s*:?\s*(\d{1,3})/.exec(b);
+  return { from: from ? messagesNormBranch(from[1]) : '', to: to ? messagesNormBranch(to[1]) : '' };
+}
+
+function messagesNormBody(body) {
+  return messagesFlat(body).toLowerCase();
+}
+
+// מיזוג כפילויות: אותו נושא + אותה ת.ז. (מנורמלת), או אותו נושא + אותו גוף מנורמל כשאין ת.ז.,
+// מתמזגים לשורה אחת. items: [{uid, count}] (count = מופעים של אותו UID בגריד), uids, count כולל,
+// date הראשון + dates, transfer מהגוף, suggestedAction כמו הראשון. הסדר לפי המופע הראשון.
+function messagesMergeDuplicates(list) {
+  const map = new Map();
+  for (const r of list || []) {
+    if (!r) continue;
+    const header = messagesFlat(r.header);
+    const id = messagesNormId(r.personId);
+    const key = id ? `id|${header}|${id}` : `body|${header}|${messagesNormBody(r.body)}`;
+    const count = Number(r.count) > 0 ? Number(r.count) : 1;
+    const ex = map.get(key);
+    if (ex) {
+      ex.items.push({ uid: r.uid, count });
+      ex.uids.push(r.uid);
+      ex.count += count;
+      if (r.date && !ex.dates.includes(r.date)) ex.dates.push(r.date);
+      continue;
+    }
+    map.set(key, {
+      key, uid: r.uid, uids: [r.uid], items: [{ uid: r.uid, count }], count,
+      header, personId: r.personId || '', body: messagesFlat(r.body), date: r.date || '', dates: r.date ? [r.date] : [],
+      transfer: messagesExtractTransfer(r.body),
+      suggestedAction: r.suggestedAction || messagesSuggestAction(header),
+      rosterLabel: '', rosterBranches: [], alreadyDone: false,
+    });
+  }
+  return Array.from(map.values());
+}
+
+const messagesLooksLikeId = (c) => /^[A-Za-z]{0,3}\d{5,12}$/.test(String(c || '').replace(/[\s-]/g, ''));
+const messagesLooksLikeBranch = (c) => /^(סניף\s*)?\d{1,3}$/.test(messagesFlat(c));
+
+// פרסור המצבת המודבקת מאקסל: עמודות סניף ות.ז./דרכון, טאבים או פסיקים, עם כותרת (העמודות מזוהות
+// לפי שמן) או בלי (סניף ראשון, ת.ז. שנייה; אם הסדר הפוך מזהים לפי הצורה). שורה בלי ת.ז. תקינה
+// נספרת ב-ignored ומדלגים. מחזיר {ok, reason, byId: Map(ת.ז. מנורמלת → [סניפים]), count, ignored}.
+function messagesParseRoster(text) {
+  const raw = String(text == null ? '' : text);
+  const byId = new Map();
+  const fail = (reason) => ({ ok: false, reason, byId, count: 0, ignored: 0 });
+  const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+  if (!lines.length) return fail('תיבת המצבת ריקה');
+  const delim = raw.includes('\t') ? '\t' : ',';
+  const split = (l) => l.split(delim).map((c) => c.trim());
+  const head = split(lines[0]);
+  let branchIdx = head.findIndex((h) => /סניף|branch/i.test(h));
+  let idIdx = head.findIndex((h) => /ת\.?\s*ז|דרכון|מזהה|תעודה|זהות|\bid\b|passport/i.test(h));
+  let first = 1;
+  if (branchIdx === -1 && idIdx === -1) {
+    if (head.some(messagesLooksLikeId)) { first = 0; } // אין כותרת
+    branchIdx = -1; idIdx = -1;
+  }
+  let count = 0, ignored = 0;
+  for (let i = first; i < lines.length; i++) {
+    const cells = split(lines[i]);
+    let idCell, branchCell;
+    if (idIdx !== -1) {
+      idCell = cells[idIdx];
+      branchCell = branchIdx !== -1 ? cells[branchIdx] : '';
+    } else {
+      // בלי כותרת: סניף ראשון ות.ז. שנייה; אם הראשון נראה כת.ז. והשני כסניף, הפוך.
+      const a = cells[0] || '', b = cells[1] || '';
+      if (messagesLooksLikeId(a) && !messagesLooksLikeId(b)) { idCell = a; branchCell = b; } else { branchCell = a; idCell = b; }
+      if (!messagesLooksLikeId(idCell)) {
+        const alt = cells.find(messagesLooksLikeId);
+        if (alt) { idCell = alt; branchCell = cells.find((c) => c !== alt && messagesLooksLikeBranch(c)) || branchCell; }
+      }
+    }
+    const id = messagesNormId(idCell);
+    if (!id || !messagesLooksLikeId(idCell)) { ignored++; continue; }
+    const branch = messagesNormBranch(branchCell);
+    const arr = byId.get(id) || [];
+    if (!arr.includes(branch)) arr.push(branch);
+    byId.set(id, arr);
+    count++;
+  }
+  if (!count) return fail('לא נמצאו שורות עם ת.ז./דרכון במצבת');
+  return { ok: true, reason: '', byId, count, ignored };
+}
+
+// הסניפים שבהם התלמיד נמצא במצבת (ריק = לא במצבת). roster: הפלט של messagesParseRoster.
+function messagesRosterBranches(roster, personId) {
+  if (!roster || !roster.byId) return [];
+  return (roster.byId.get(messagesNormId(personId)) || []).slice();
+}
+
+// הצלבה מול המצבת: לכל שורה עם ת.ז. "סניף NN" / "לא במצבת"; בלי ת.ז. → ''. בקשת-מעבר שהתלמיד כבר
+// במצבת בסניף-היעד שלה: alreadyDone, וההצעה הופכת ל"סמן כטופל" (המערכת שולחת הודעה גם על מעבר
+// שבעל-המערכת כבר ביצע בעצמו). roster=null → עמודה ריקה וההצעה המקורית. מחזיר מערך חדש.
+function messagesCrossCheck(rows, roster) {
+  return (rows || []).map((r) => {
+    const out = Object.assign({}, r, { rosterLabel: '', rosterBranches: [], alreadyDone: false, suggestedAction: messagesSuggestAction(r.header) });
+    if (!roster || !roster.byId || !r.personId) return out;
+    const branches = messagesRosterBranches(roster, r.personId);
+    out.rosterBranches = branches;
+    out.rosterLabel = branches.length ? branches.map((b) => `סניף ${b}`).join(', ') : 'לא במצבת';
+    const transfer = r.transfer || messagesExtractTransfer(r.body);
+    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) {
+      out.alreadyDone = true;
+      out.suggestedAction = MESSAGES_ACTION.HANDLED;
+    }
+    return out;
+  });
+}
+
+// ההחלטה של שורה: מה שנבחר ב-decisions (Map key → פעולה), אחרת ההצעה.
+function messagesRowDecision(row, decisions) {
+  const d = decisions && decisions.get ? decisions.get(row.key) : undefined;
+  return d || row.suggestedAction || MESSAGES_ACTION.SKIP;
+}
+
+function messagesDecisionCounts(rows, decisions) {
+  const counts = { approve: 0, decline: 0, handled: 0, skip: 0 };
+  for (const r of rows || []) counts[messagesActionCountKey(messagesRowDecision(r, decisions))]++;
+  return counts;
+}
+
+// רשומות ל-messagesRunTable מטבלת הסקירה: ההחלטה של שורה ממוזגת חלה על כל ה-UID-ים שלה, עם count
+// (מופעים של אותו UID בגריד) כדי שהביצוע יטפל בכל המופעים.
+function messagesReviewEntries(rows, decisions) {
+  const out = [];
+  for (const r of rows || []) {
+    const action = messagesRowDecision(r, decisions);
+    for (const it of r.items || [{ uid: r.uid, count: 1 }]) out.push({ uid: it.uid, action, count: it.count });
+  }
+  return out;
+}
+
+function messagesRowMatchesFilter(row, text) {
+  const q = messagesFlat(text).toLowerCase();
+  if (!q) return true;
+  const hay = [row.personId, row.header, row.body, row.rosterLabel].map((v) => messagesFlat(v).toLowerCase()).join(' ');
+  return hay.includes(q);
+}
+
+function messagesShorten(text, max) {
+  const s = messagesFlat(text);
+  const n = Number(max) > 1 ? Number(max) : 60;
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+}
+
 // ─── מצב הריצה + hooks לפאנל ─────────────────────────────────────────────────
 
 const MSG = {
@@ -5688,46 +5877,57 @@ async function messagesScan() {
   log('[הודעות] סריקה: מתחיל');
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
-  const seen = new Set();
-  let pages = 0;
+  // אותה הודעה (אותו UID = אותה כותרת + אותו גוף) יכולה להופיע כמה פעמים בגריד; נספרת ב-count של
+  // השורה הסרוקה, כדי שהביצוע יטפל בכל המופעים. בין עמודים אין קריאה כפולה: הפייג'ר מאומת שהתקדם.
+  const seen = new Map();
+  let pages = 0, total = 0;
   for (let i = 0; i < MESSAGES_MAX_SCAN_PAGES && !MSG.stop; i++) {
     pages++;
     const list = messagesReadPage();
     log(`[הודעות] עמוד ${messagesCurrentPage()}: ${list.length} הודעות`);
     for (const m of list) {
       if (!messagesIsSent(m)) continue;
-      if (seen.has(m.uid)) continue;
-      seen.add(m.uid);
-      MSG.scanned.push({ uid: m.uid, header: m.header, personId: m.personId, body: m.body, date: m.date, status: m.status, suggestedAction: messagesSuggestAction(m.header) });
+      total++;
+      const ex = seen.get(m.uid);
+      if (ex) { ex.count++; continue; }
+      const row = { uid: m.uid, header: m.header, personId: m.personId, body: m.body, date: m.date, status: m.status, count: 1, suggestedAction: messagesSuggestAction(m.header) };
+      seen.set(m.uid, row);
+      MSG.scanned.push(row);
     }
-    messagesHook('onStatus', `סריקה: ${pages} עמודים, ${MSG.scanned.length} הודעות`);
-    messagesHook('onScanProgress', MSG.scanned.slice(), pages);
+    messagesHook('onStatus', `סריקה: ${pages} עמודים, ${total} הודעות`);
+    messagesHook('onScanProgress', MSG.scanned.slice(), pages, total);
     const moved = await messagesGotoNextPage();
     if (!moved) break;
   }
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
-  log(`[הודעות] סריקה הסתיימה${MSG.stop ? ' (נעצר)' : ''}: ${MSG.scanned.length} הודעות מ-${pages} עמודים (${dt} שניות)`);
+  log(`[הודעות] סריקה הסתיימה${MSG.stop ? ' (נעצר)' : ''}: ${total} הודעות (${MSG.scanned.length} שונות) מ-${pages} עמודים (${dt} שניות)`);
   MSG.running = false;
-  const info = { pages, stopped: MSG.stop };
+  const info = { pages, total, stopped: MSG.stop };
   messagesHook('onScanDone', MSG.scanned.slice(), info);
   return MSG.scanned.slice();
 }
 
 // ─── ביצוע לפי טבלה (שלב ב) ──────────────────────────────────────────────────
 
+// entries: [{uid, action, count?}]. count = כמה מופעים של ה-UID לטפל (מהסריקה); בלי count (מסלול
+// האקסל) מטפלים בכל מופע שנמצא במצב "נשלחה". כישלון על UID עוצר את הטיפול בו (לא מנסים שוב).
 async function messagesRunTable(entries) {
   if (MSG.running) return null;
   const pending = new Map();
-  for (const e of entries || []) if (e && e.uid) pending.set(e.uid, e.action);
+  for (const e of entries || []) {
+    if (!e || !e.uid) continue;
+    const left = Number(e.count) > 0 ? Number(e.count) : Infinity;
+    pending.set(e.uid, { action: e.action, left });
+  }
   if (!pending.size) { log('[הודעות] אין טבלה טעונה'); return null; }
   messagesBeginRun('table');
   const t0 = Date.now();
   let toDo = 0;
-  for (const a of pending.values()) if (a !== MESSAGES_ACTION.SKIP) toDo++;
+  for (const p of pending.values()) if (p.action !== MESSAGES_ACTION.SKIP) toDo += Number.isFinite(p.left) ? p.left : 1;
   log(`[הודעות] ▶ ביצוע לפי טבלה: ${toDo} פעולות מתוך ${pending.size} שורות`);
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
-  const handled = new Set();
+  const handled = new Set(); // UID-ים שנרשמו בדוח לפחות פעם אחת
   let processed = 0, failedCount = 0, consecutiveEmpty = 0;
   for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
     await messagesClosePopupIfOpen('בין פעולות');
@@ -5735,16 +5935,17 @@ async function messagesRunTable(entries) {
     if (!list.length) break;
     let target = null, targetAction = null;
     for (const m of list) {
-      if (handled.has(m.uid)) continue;
-      const action = pending.get(m.uid);
-      if (!action) continue;
-      if (action === MESSAGES_ACTION.SKIP) {
+      const p = pending.get(m.uid);
+      if (!p || p.left <= 0) continue;
+      if (p.action === MESSAGES_ACTION.SKIP) {
+        p.left = 0;
         handled.add(m.uid);
         messagesRecord(m, MESSAGES_ACTION.SKIP, MESSAGES_RESULT.SKIPPED);
         continue;
       }
+      if (!messagesIsSent(m)) continue;
       target = m;
-      targetAction = action;
+      targetAction = p.action;
       break;
     }
     if (!target) {
@@ -5760,19 +5961,22 @@ async function messagesRunTable(entries) {
     const t1 = Date.now();
     const res = await messagesPerformAction(target, targetAction);
     handled.add(target.uid);
+    const p = pending.get(target.uid);
     if (res.ok) {
       processed++;
+      p.left--;
       messagesRecord(target, targetAction, MESSAGES_RESULT.DONE);
       log(`[הודעות] ✓ ${Date.now() - t1}ms · ${targetAction} · ${maskId(target.personId) || '-'}`);
     } else {
       failedCount++;
+      p.left = 0;
       messagesRecord(target, targetAction, MESSAGES_RESULT.FAILED_PREFIX + res.reason);
       log(`[הודעות] ✗ ${res.reason} · ${target.header} · ${maskId(target.personId) || '-'}`);
     }
     messagesHook('onProgress', processed + failedCount, toDo);
   }
   const notFound = [];
-  for (const [uid, action] of pending.entries()) if (action !== MESSAGES_ACTION.SKIP && !handled.has(uid)) notFound.push({ uid, action });
+  for (const [uid, p] of pending.entries()) if (p.action !== MESSAGES_ACTION.SKIP && !handled.has(uid)) notFound.push({ uid, action: p.action });
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   log(`[הודעות] ביצוע לפי טבלה הסתיים${MSG.stop ? ' (נעצר)' : ''}: בוצעו ${processed}, נכשלו ${failedCount}, לא נמצאו ${notFound.length} (${dt} שניות)`);
   return messagesFinishRun({ stopped: MSG.stop, notFound: MSG.stop ? [] : notFound });
@@ -5814,25 +6018,24 @@ function messagesDownloadXlsx(list) {
 }
 
 // ─── src/tools/messages-ui.js ───
-// לשונית "הודעות" בחלונית המאוחדת. הזרימה ב-messages.js; כאן רק הממשק: שני מצבים (גורף / לפי טבלה),
-// סריקה → טבלה → העתקה/הורדה לאקסל → הדבקה → טעינה → ביצוע, טבלת-תוצאות, דוח "מה נשאר", "העתק דוח".
+// לשונית "הודעות" בחלונית המאוחדת. הזרימה ב-messages.js; כאן רק הממשק. שני מצבים:
+// "סקירה" (ברירת-המחדל): סרוק → טבלת-סקירה בתוך החלונית (כפילויות ממוזגות, החלטה לכל שורה, הצלבה
+// מול מצבת מודבקת, פעולות-צובר, סינון) → "בצע לפי הטבלה". מסלול האקסל (העתק/הורד/הדבק/טען/בצע)
+// נשאר כאופציה מתקפלת. "מצב גורף": כמו קודם. טבלת-תוצאות, דוח "מה נשאר", "העתק דוח".
 // הלשונית מופיעה בדפי 'other' (getPage לא מכיר את דף ההודעות); ב-mount בודקים את הכתובת.
 // אין גישה ל-document ברמת המודול.
 
 
 const MP = 'tt-messages';
 let msgUi = null;
-let msgMode = 'bulk';
-let msgPending = [];
+let msgMode = 'table';
+let msgPending = []; // מסלול האקסל: הרשומות שנטענו מהטקסט המודבק
 let msgResults = [];
+let msgRows = []; // טבלת הסקירה: שורות ממוזגות (אחרי הצלבה)
+let msgDecisions = new Map(); // key של שורה → פעולה שנבחרה (ריק = ההצעה)
+let msgRoster = null; // המצבת המודבקת (messagesParseRoster) או null
 
-const MESSAGES_SCAN_COLUMNS = [
-  { key: 'uid', label: 'UID', mono: true, width: '84px' },
-  { key: 'header', label: 'נושא' },
-  { key: 'personId', label: 'ת.ז./דרכון', mono: true },
-  { key: 'date', label: 'תאריך', center: true },
-  { key: 'suggestedAction', label: 'פעולה מוצעת' },
-];
+const MESSAGES_BODY_MAX = 70;
 
 const MESSAGES_RESULT_COLUMNS = [
   { key: 'uid', label: 'UID', mono: true, width: '84px' },
@@ -5848,10 +6051,144 @@ function messagesClassify(r) {
   return 'bad';
 }
 
-function messagesRenderScanned(list) {
-  const rows = (list || []).map((r) => Object.assign({}, r, { detail: r.body }));
-  setHtml(`${MP}-scanned`, resultsTableHtml({ columns: MESSAGES_SCAN_COLUMNS, rows, emptyText: '' }));
+// ─── טבלת הסקירה ────────────────────────────────────────────────────────────
+
+function messagesFilterText() {
+  const el = $el(`${MP}-filter`);
+  return el ? el.value : '';
 }
+
+function messagesVisibleRows() {
+  const q = messagesFilterText();
+  return msgRows.filter((r) => messagesRowMatchesFilter(r, q));
+}
+
+function messagesRenderSummary() {
+  const el = $el(`${MP}-summary`);
+  if (!el) return;
+  if (!msgRows.length) { el.textContent = ''; return; }
+  const c = messagesDecisionCounts(msgRows, msgDecisions);
+  const visible = messagesVisibleRows().length;
+  const done = msgRows.filter((r) => r.alreadyDone).length;
+  el.textContent = `${msgRows.length} שורות${visible !== msgRows.length ? ` (${visible} מוצגות)` : ''} · אישור מעבר=${c.approve} · דחיית מעבר=${c.decline} · טופל=${c.handled} · דלג=${c.skip}${done ? ` · כבר בוצע=${done}` : ''}`;
+}
+
+function messagesRowHtml(r, i) {
+  const decision = messagesRowDecision(r, msgDecisions);
+  const dates = r.dates && r.dates.length > 1 ? r.dates.join(', ') : '';
+  const roster = r.rosterLabel ? `${esc(r.rosterLabel)}${r.alreadyDone ? ' <span class="tt-tag tt-tag-done">כבר בוצע</span>' : ''}` : '';
+  const uidsTitle = `UID: ${r.uids.join(', ')}`;
+  return `<tr class="tt-review-row${r.alreadyDone ? ' tt-r-done' : ''}" data-key="${esc(r.key)}" data-uid="${esc(r.uid)}" data-uids="${esc(r.uids.join(','))}" title="${esc(uidsTitle)}">
+    <td class="tt-mono">${esc(r.personId)}</td>
+    <td>${esc(r.header)}</td>
+    <td class="tt-body-cell" title="${esc(r.body)}">${esc(messagesShorten(r.body, MESSAGES_BODY_MAX))}</td>
+    <td class="tt-center"${dates ? ` title="${esc(dates)}"` : ''}>${esc(r.date)}${dates ? ` <span class="tt-muted">+${r.dates.length - 1}</span>` : ''}</td>
+    <td class="tt-center tt-count-cell">${r.count > 1 ? `<span class="tt-tag tt-tag-count" title="${esc(`${r.count} הודעות מוזגו לשורה הזו`)}">${r.count}</span>` : '1'}</td>
+    <td class="tt-roster-cell">${roster}</td>
+    <td>${selectHtml({ id: `${MP}-decision-${i}`, options: MESSAGES_ALL_ACTIONS, value: decision, cls: 'tt-decision' })}</td>
+  </tr>`;
+}
+
+function messagesRenderReview() {
+  const box = $el(`${MP}-scanned`);
+  if (!box) return;
+  if (!msgRows.length) { box.innerHTML = ''; messagesRenderSummary(); messagesSetReviewEnabled(); return; }
+  const head = ['ת.ז./דרכון', 'נושא', 'גוף ההודעה', 'תאריך', 'כמות', 'במצבת', 'החלטה'].map((h) => `<th>${esc(h)}</th>`).join('');
+  box.innerHTML = `<table class="tt-table tt-review-table"><thead><tr>${head}</tr></thead><tbody>${msgRows.map(messagesRowHtml).join('')}</tbody></table>`;
+  box.querySelectorAll('select.tt-decision').forEach((sel) => {
+    sel.addEventListener('change', () => {
+      const tr = sel.closest('tr');
+      if (!tr) return;
+      msgDecisions.set(tr.getAttribute('data-key'), sel.value);
+      messagesRenderSummary();
+    });
+  });
+  messagesApplyFilter();
+  messagesSetReviewEnabled();
+}
+
+function messagesApplyFilter() {
+  const box = $el(`${MP}-scanned`);
+  if (!box) return;
+  const byKey = new Map(msgRows.map((r) => [r.key, r]));
+  const q = messagesFilterText();
+  box.querySelectorAll('tr.tt-review-row').forEach((tr) => {
+    const r = byKey.get(tr.getAttribute('data-key'));
+    tr.hidden = !(r && messagesRowMatchesFilter(r, q));
+  });
+  messagesRenderSummary();
+}
+
+function messagesSetReviewEnabled() {
+  const on = msgRows.length > 0 && !messagesIsRunning();
+  for (const id of ['run-review', 'all-transfers', 'all-others', 'all-skip']) setDisabled(`${MP}-${id}`, !on);
+}
+
+// פעולת-צובר על השורות המוצגות (אחרי הסינון). pick(row) → פעולה או null (לא לגעת).
+function messagesBulkDecide(pick, what) {
+  if (!msgRows.length) { msgUi.status('אין טבלה. לחץ "סרוק" קודם'); return; }
+  let n = 0;
+  for (const r of messagesVisibleRows()) {
+    const a = pick(r);
+    if (!a) continue;
+    msgDecisions.set(r.key, a);
+    n++;
+  }
+  messagesRenderReview();
+  msgUi.status(`${what}: עודכנו ${n} שורות`);
+}
+
+// בונה את שורות הסקירה מהסריקה האחרונה + המצבת, ושומר החלטות שכבר נבחרו (לפי key).
+function messagesRebuildRows() {
+  const merged = messagesMergeDuplicates(messagesGetScanned());
+  msgRows = messagesCrossCheck(merged, msgRoster);
+  const keep = new Map();
+  for (const r of msgRows) {
+    if (r.alreadyDone) continue; // ההצלבה גוברת: מעבר שכבר בוצע → "סמן כטופל"
+    if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
+  }
+  msgDecisions = keep;
+  messagesRenderReview();
+}
+
+function messagesLoadRoster() {
+  const text = (($el(`${MP}-roster-input`) || {}).value || '');
+  const parsed = messagesParseRoster(text);
+  if (!parsed.ok) {
+    msgRoster = null;
+    setText(`${MP}-roster-status`, `✗ ${parsed.reason}`);
+    msgUi.status(parsed.reason);
+    log(`[הודעות] טעינת מצבת: ${parsed.reason}`);
+    messagesRebuildRows();
+    return;
+  }
+  msgRoster = parsed;
+  const txt = `✓ נטענה מצבת: ${parsed.count} שורות${parsed.ignored ? ` (${parsed.ignored} שורות בלי ת.ז. דולגו)` : ''}`;
+  setText(`${MP}-roster-status`, txt);
+  log(`[הודעות] ${txt}`);
+  messagesRebuildRows();
+  const done = msgRows.filter((r) => r.alreadyDone).length;
+  msgUi.status(msgRows.length ? `${txt}. ${done ? `${done} בקשות-מעבר כבר בוצעו וסומנו "טופל"` : 'אין בקשות-מעבר שכבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
+}
+
+function messagesClearRoster() {
+  msgRoster = null;
+  const ta = $el(`${MP}-roster-input`);
+  if (ta) ta.value = '';
+  setText(`${MP}-roster-status`, 'אין מצבת טעונה.');
+  messagesRebuildRows();
+  msgUi.status('המצבת נוקתה');
+}
+
+function messagesRunReview() {
+  const entries = messagesReviewEntries(msgRows, msgDecisions);
+  if (!entries.length) { msgUi.status('אין טבלה. לחץ "סרוק" קודם'); return; }
+  const c = messagesDecisionCounts(msgRows, msgDecisions);
+  log(`[הודעות] בצע לפי הטבלה: ${msgRows.length} שורות (${entries.length} הודעות): אישור=${c.approve}, דחיה=${c.decline}, טופל=${c.handled}, דילוג=${c.skip}`);
+  messagesGuardRun(() => messagesRunTable(entries), 'הביצוע לפי הטבלה');
+}
+
+// ─── שאר הממשק ──────────────────────────────────────────────────────────────
 
 function messagesRenderResults() {
   const rows = msgResults.map((r) => Object.assign({}, r, { detail: r.body }));
@@ -5865,13 +6202,14 @@ function messagesRenderReport(report) {
 }
 
 function messagesSetRunning(on) {
-  for (const id of ['bulk-run', 'scan', 'load', 'run-table']) setDisabled(`${MP}-${id}`, !!on);
+  for (const id of ['bulk-run', 'scan', 'load', 'run-table', 'roster-load']) setDisabled(`${MP}-${id}`, !!on);
   if (!on) setDisabled(`${MP}-run-table`, !msgPending.length);
+  messagesSetReviewEnabled();
   msgUi.running(!!on);
 }
 
 function messagesSetMode(mode) {
-  msgMode = mode === 'table' ? 'table' : 'bulk';
+  msgMode = mode === 'bulk' ? 'bulk' : 'table';
   show(`${MP}-bulk`, msgMode === 'bulk');
   show(`${MP}-table`, msgMode === 'table');
   for (const m of ['bulk', 'table']) {
@@ -5941,8 +6279,10 @@ function messagesCopyReport() {
     if (ok) { msgUi.status(`הועתקו ${rows.length} שורות דוח`); return; }
     const ta = $el(`${MP}-input`);
     if (ta) ta.value = text;
+    const det = $el(`${MP}-excel`);
+    if (det) det.open = true;
     messagesSetMode('table');
-    msgUi.status('ההעתקה נחסמה בדפדפן. הדוח הוצג בתיבת הטקסט להעתקה ידנית');
+    msgUi.status('ההעתקה נחסמה בדפדפן. הדוח הוצג בתיבת הטקסט (אזור האקסל) להעתקה ידנית');
   });
 }
 
@@ -5953,41 +6293,64 @@ function messagesMount(container, panelUi, page) {
     container.innerHTML = '<div class="tt-box tt-box-info">הכלי עובד בדף ההודעות בלבד.</div>';
     return;
   }
+  const panel = $el('tt-panel');
+  if (panel) panel.classList.add('tt-panel-wide'); // טבלת הסקירה רחבה; בדף ההודעות זו הלשונית היחידה
   container.innerHTML = `
     <div class="tt-row">
-      ${buttonHtml({ id: `${MP}-mode-bulk`, label: 'מצב גורף', kind: 'primary' })}
-      ${buttonHtml({ id: `${MP}-mode-table`, label: 'לפי טבלה', kind: 'ghost' })}
+      ${buttonHtml({ id: `${MP}-mode-table`, label: 'סקירה', kind: 'primary' })}
+      ${buttonHtml({ id: `${MP}-mode-bulk`, label: 'מצב גורף', kind: 'ghost' })}
     </div>
-    <div id="${MP}-bulk">
+    <div id="${MP}-bulk" hidden>
       <div class="tt-box tt-box-warn">
-        עובר על <b>כל ההודעות</b> במצב "נשלחה", בכל העמודים:
+        עובר על <b>כל ההודעות</b> במצב "נשלחה", בכל העמודים, בלי סקירה:
         <ul>
-          <li>"${esc('בקשת מעבר תלמיד')}": <b>אישור מעבר</b></li>
+          <li>"${esc(MESSAGES_TRANSFER_HEADER)}": <b>אישור מעבר</b></li>
           <li>כל הודעה אחרת: <b>שנה מצב הודעה לטופל</b></li>
         </ul>
-        "דחיית מעבר" לא נלחץ אוטומטית. לדחייה השתמש ב"לפי טבלה".
+        "דחיית מעבר" לא נלחץ אוטומטית. לדחייה או להצלבה מול המצבת השתמש ב"סקירה".
       </div>
       ${buttonsRowHtml([{ id: `${MP}-bulk-run`, label: 'הפעל מצב גורף', kind: 'primary' }])}
     </div>
-    <div id="${MP}-table" hidden>
+    <div id="${MP}-table">
       <div class="tt-box tt-box-info">
-        <b>שלב א</b>: "סרוק" עובר על כל ההודעות במצב "נשלחה" ובונה טבלה; "העתק לאקסל" או "הורד אקסל".
-        <b>שלב ב</b>: ערוך באקסל את עמודת "פעולה" (${esc(MESSAGES_ALL_ACTIONS.join(' / '))}), הדבק כאן, "טען" ואז "בצע".
-        אל תשנה את עמודת UID.
+        "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
+        (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
+        הדבקת מצבת מאקסל מסמנת בקשות-מעבר שכבר בוצעו.
       </div>
-      ${buttonsRowHtml([
-        { id: `${MP}-scan`, label: 'סרוק', kind: 'primary' },
-        { id: `${MP}-copy-tsv`, label: 'העתק לאקסל', kind: 'ghost' },
-        { id: `${MP}-xlsx`, label: 'הורד אקסל', kind: 'ghost' },
-      ])}
+      ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
-      <div id="${MP}-scanned" class="tt-scroll"></div>
-      <textarea id="${MP}-input" class="tt-textarea" placeholder="UID&#9;נושא&#9;ת.ז./דרכון&#9;תאריך&#9;גוף ההודעה&#9;פעולה"></textarea>
-      ${buttonsRowHtml([
-        { id: `${MP}-load`, label: 'טען', kind: 'ghost' },
-        { id: `${MP}-run-table`, label: 'בצע', kind: 'primary', disabled: true },
-      ])}
-      <div id="${MP}-load-status" class="tt-hint">טבלה לא טעונה.</div>
+      <details class="tt-section" id="${MP}-roster">
+        <summary id="${MP}-roster-summary">מצבת להצלבה (הדבקה מאקסל: סניף, ת.ז./דרכון)</summary>
+        <textarea id="${MP}-roster-input" class="tt-textarea tt-textarea-sm" placeholder="סניף&#9;ת.ז./דרכון&#10;16&#9;012345678"></textarea>
+        ${buttonsRowHtml([
+          { id: `${MP}-roster-load`, label: 'טען מצבת', kind: 'primary', size: 'small' },
+          { id: `${MP}-roster-clear`, label: 'נקה מצבת', kind: 'subtle', size: 'small' },
+        ])}
+        <div id="${MP}-roster-status" class="tt-hint">אין מצבת טעונה.</div>
+      </details>
+      <div class="tt-row tt-review-tools">
+        <input id="${MP}-filter" class="tt-input tt-filter" type="search" placeholder="סינון מהיר: ת.ז. / נושא / גוף">
+        ${buttonHtml({ id: `${MP}-all-transfers`, label: 'כל בקשות המעבר: אישור', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
+        ${buttonHtml({ id: `${MP}-all-others`, label: 'כל השאר: טופל', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
+        ${buttonHtml({ id: `${MP}-all-skip`, label: 'הכל: דלג', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
+      </div>
+      <div id="${MP}-scanned" class="tt-scroll tt-scroll-tall"></div>
+      <div id="${MP}-summary" class="tt-summary"></div>
+      ${buttonsRowHtml([{ id: `${MP}-run-review`, label: 'בצע לפי הטבלה', kind: 'primary', disabled: true }])}
+      <details class="tt-section" id="${MP}-excel">
+        <summary id="${MP}-excel-summary">דרך אקסל (אופציה): העתק / הורד, ערוך, הדבק, טען, בצע</summary>
+        <div class="tt-hint">ערוך באקסל את עמודת "פעולה" (${esc(MESSAGES_ALL_ACTIONS.join(' / '))}), הדבק כאן, "טען" ואז "בצע". אל תשנה את עמודת UID.</div>
+        ${buttonsRowHtml([
+          { id: `${MP}-copy-tsv`, label: 'העתק לאקסל', kind: 'ghost', size: 'small' },
+          { id: `${MP}-xlsx`, label: 'הורד אקסל', kind: 'ghost', size: 'small' },
+        ])}
+        <textarea id="${MP}-input" class="tt-textarea" placeholder="UID&#9;נושא&#9;ת.ז./דרכון&#9;תאריך&#9;גוף ההודעה&#9;פעולה"></textarea>
+        ${buttonsRowHtml([
+          { id: `${MP}-load`, label: 'טען', kind: 'ghost', size: 'small' },
+          { id: `${MP}-run-table`, label: 'בצע', kind: 'primary', size: 'small', disabled: true },
+        ])}
+        <div id="${MP}-load-status" class="tt-hint">טבלה לא טעונה.</div>
+      </details>
     </div>
     ${buttonsRowHtml([
       { id: `${MP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
@@ -6000,6 +6363,13 @@ function messagesMount(container, panelUi, page) {
   $el(`${MP}-mode-table`).addEventListener('click', () => messagesSetMode('table'));
   $el(`${MP}-bulk-run`).addEventListener('click', () => messagesGuardRun(messagesRunBulk, 'מצב גורף'));
   $el(`${MP}-scan`).addEventListener('click', () => messagesGuardRun(messagesScan, 'הסריקה'));
+  $el(`${MP}-roster-load`).addEventListener('click', messagesLoadRoster);
+  $el(`${MP}-roster-clear`).addEventListener('click', messagesClearRoster);
+  $el(`${MP}-filter`).addEventListener('input', messagesApplyFilter);
+  $el(`${MP}-all-transfers`).addEventListener('click', () => messagesBulkDecide((r) => (r.header === MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.APPROVE : null), 'כל בקשות המעבר: אישור'));
+  $el(`${MP}-all-others`).addEventListener('click', () => messagesBulkDecide((r) => (r.header !== MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.HANDLED : null), 'כל השאר: טופל'));
+  $el(`${MP}-all-skip`).addEventListener('click', () => messagesBulkDecide(() => MESSAGES_ACTION.SKIP, 'הכל: דלג'));
+  $el(`${MP}-run-review`).addEventListener('click', messagesRunReview);
   $el(`${MP}-copy-tsv`).addEventListener('click', messagesCopyTsv);
   $el(`${MP}-xlsx`).addEventListener('click', messagesDownload);
   $el(`${MP}-load`).addEventListener('click', messagesLoadTable);
@@ -6012,17 +6382,22 @@ function messagesMount(container, panelUi, page) {
       messagesSetRunning(true);
       if (mode !== 'scan') { msgResults = []; messagesRenderResults(); messagesRenderReport(null); }
       msgUi.progress(0, 0);
-      msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי טבלה…');
+      msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי הטבלה…');
     },
     onStatus: (msg) => msgUi.status(msg),
     onProgress: (cur, total) => msgUi.progress(cur, total),
     onResult: (row, all) => { msgResults = all; messagesRenderResults(); },
-    onScanProgress: (list, pages) => setText(`${MP}-scan-status`, `סריקה: ${pages} עמודים, ${list.length} הודעות עד כה…`),
+    onScanProgress: (list, pages, total) => setText(`${MP}-scan-status`, `סריקה: ${pages} עמודים, ${total} הודעות עד כה…`),
     onScanDone: (list, info) => {
-      messagesRenderScanned(list);
-      setText(`${MP}-scan-status`, `✓ נסרקו ${list.length} הודעות מ-${info.pages} עמודים${info.stopped ? ' (נעצר)' : ''}.`);
+      msgDecisions = new Map(); // סריקה חדשה: ההחלטות מתחילות מההצעות
+      messagesRebuildRows();
+      const merged = msgRows.length;
+      setText(`${MP}-scan-status`, `✓ נסרקו ${info.total} הודעות מ-${info.pages} עמודים${merged < info.total ? ` (${merged} שורות אחרי מיזוג כפילויות)` : ''}${info.stopped ? ' (נעצר)' : ''}.`);
       messagesSetRunning(false);
-      msgUi.status(list.length ? `נסרקו ${list.length} הודעות. "העתק לאקסל" או "הורד אקסל", ערוך את עמודת "פעולה" והדבק חזרה` : 'לא נמצאו הודעות במצב "נשלחה"');
+      const done = msgRows.filter((r) => r.alreadyDone).length;
+      msgUi.status(merged
+        ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${done} בקשות-מעבר כבר בוצעו לפי המצבת)` : ''}`
+        : 'לא נמצאו הודעות במצב "נשלחה"');
     },
     onDone: (rows, report) => {
       msgResults = rows;
@@ -6030,16 +6405,16 @@ function messagesMount(container, panelUi, page) {
       messagesRenderReport(report);
       messagesSetRunning(false);
       msgUi.progress(0, 0);
-      msgUi.status(`${report.stopped ? 'נעצר' : 'הסתיים'}. ${report.summary}${report.lines.length ? ' (ראה "מה נשאר")' : ''}`);
+      msgUi.status(`${report.stopped ? 'נעצר' : 'הסתיים'}. ${report.summary}${report.lines.length ? ' (ראה "מה נשאר")' : ''}. סרוק שוב לרענון הטבלה`);
     },
   });
 
   messagesSetMode(msgMode);
   msgResults = messagesGetReportRows();
   messagesRenderResults();
-  messagesRenderScanned(messagesGetScanned());
+  messagesRebuildRows();
   log('[הודעות] דף ההודעות זוהה');
-  msgUi.status('מוכן. בחר מצב: גורף או לפי טבלה');
+  msgUi.status('מוכן. "סרוק" לטבלת סקירה, או "מצב גורף"');
 }
 
 const messagesTool = {
