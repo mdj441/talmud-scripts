@@ -155,9 +155,23 @@
           const idx = parseInt(raw, 10);
           const msg = Number.isFinite(idx) ? pageRows(list)[idx] : null;
           if (!msg) { C.showMessage('לא נבחרה הודעה', ['ok']); D.log(db, `${how}: no row (${raw})`); return; }
+          // ממצא ב-4: אחרי פעולה האתר (אולי) חוזר לעמוד 1
+          const resetPage = () => { if (db.messagesResetPageAfterAction === true) state.page = 1; };
           if (how !== 'handled' && msg.header !== TRANSFER) {
             C.showMessage('הפעולה אפשרית רק עבור בקשת מעבר תלמיד', ['ok']);
             D.log(db, `${how}: not a transfer request (${msg.id})`);
+            resetPage();
+            renderGrid();
+            return;
+          }
+          if (Array.isArray(db.messagesStuck) && db.messagesStuck.includes(msg.id)) {
+            // פעולה שלא נתפסה בשרת: חלונית-הצלחה, אך ההודעה נשארת "נשלחה"
+            db.stuckAttempts = db.stuckAttempts || {};
+            db.stuckAttempts[msg.id] = (db.stuckAttempts[msg.id] || 0) + 1;
+            D.log(db, `${how} (stuck) → ${msg.id} (attempt ${db.stuckAttempts[msg.id]})`);
+            C.showMessage('הצלחה: הפעולה בוצעה', ['ok']);
+            resetPage();
+            renderGrid();
             return;
           }
           msg.status = 'טופלה';
@@ -165,6 +179,7 @@
           msg.handledAt = new Date().toISOString();
           D.log(db, `${how} → ${msg.id}`);
           C.showMessage('הצלחה: הפעולה בוצעה', ['ok']);
+          resetPage();
           renderGrid();
         } };
       }

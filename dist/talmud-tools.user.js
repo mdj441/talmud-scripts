@@ -119,7 +119,8 @@ function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
 
     const totalTimer = setTimeout(() => {
       // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
-      finish({ ok: false, reason: `PRM timeout after ${totalTimeoutMs}ms` });
+      // ‏timeout:true (ממצא ב-2): הקורא מבחין בין "פג הזמן" (אולי pageRedirect בלי endRequest) לכשל אחר.
+      finish({ ok: false, timeout: true, reason: `PRM timeout after ${totalTimeoutMs}ms` });
     }, totalTimeoutMs);
   });
 }
@@ -297,6 +298,9 @@ const BRANCH_IDS_KEY = 'talmud.nav.branchIds';
 const STUDY_TYPE_IDS_KEY = 'talmud.nav.studyTypeIds';
 const DEFAULT_ORIGIN = 'https://talmud.edu.gov.il';
 const NAV_BRANCH_IDS_SEED = { '00': '491', '16': '4159' };
+// ממצא ב-2: תקציב לפוסטבק שמנווט (עריכה בגריד, עץ, טאב). כשהתשובה היא pageRedirect אין endRequest,
+// ושרת איטי מעבר ל-8 שניות גרם ל-{ok:false} ולסימון התלמיד "שגיאה" רגע לפני שהדף נפרק.
+const NAV_POSTBACK_BUDGET_MS = 25000;
 
 // ─── כתובות ─────────────────────────────────────────────────────────────────
 
@@ -465,15 +469,55 @@ function studyTypeKey(branch, code) {
   return b && /^\d+$/.test(c) ? `${b}|${c}` : null;
 }
 
-function learnStudyTypeId(branch, code, id) {
+// טהורה (ממצא ב-1ב): הרשומה של (סניף|סוג) כ-{id, instituteId}. רשומה ישנה (מחרוזת id בלבד) נקראת
+// עם instituteId null; רשומה פגומה או חסרה → null.
+function studyTypeRecord(map, branch, code) {
+  const key = studyTypeKey(branch, code);
+  const raw = key && map && typeof map === 'object' ? map[key] : null;
+  if (!raw) return null;
+  if (typeof raw === 'string') return /^\d+$/.test(raw) ? { id: raw, instituteId: null } : null;
+  if (typeof raw !== 'object') return null;
+  const id = String(raw.id == null ? '' : raw.id).trim();
+  if (!/^\d+$/.test(id)) return null;
+  const inst = String(raw.instituteId == null ? '' : raw.instituteId).trim();
+  return { id, instituteId: /^\d+$/.test(inst) ? inst : null };
+}
+
+// ממצא ב-1ב: הרשומה שומרת גם את ה-InstituteID שנצפה בכתובת, כדי שהכתובת הישירה תיבנה ממנו ולא
+// ממפת-הסניפים של עכשיו (שעלולה להשתנות בינתיים).
+function learnStudyTypeId(branch, code, id, instituteId) {
   const key = studyTypeKey(branch, code);
   const i = String(id == null ? '' : id).trim();
   if (!key || !/^\d+$/.test(i)) return false;
+  const inst = String(instituteId == null ? '' : instituteId).trim();
+  const rec = { id: i, instituteId: /^\d+$/.test(inst) ? inst : null };
   const cur = loadStudyTypeIds();
-  if (cur[key] === i) return false;
-  cur[key] = i;
-  if (writeJson(STUDY_TYPE_IDS_KEY, cur)) { log(`[ניווט] נלמד: סניף ${key.split('|')[0]} סוג ${key.split('|')[1]} → ${i}`); return true; }
+  const prev = studyTypeRecord(cur, branch, code);
+  if (prev && prev.id === rec.id && prev.instituteId === rec.instituteId) return false;
+  cur[key] = rec;
+  if (writeJson(STUDY_TYPE_IDS_KEY, cur)) { log(`[ניווט] נלמד: סניף ${key.split('|')[0]} סוג ${key.split('|')[1]} → ${i} (מוסד ${rec.instituteId || '?'})`); return true; }
   return false;
+}
+
+// ממצא ב-1ג: דף סוג-לימוד שהסניף שלו נקרא מהדף: אם רשומה של (סניף אחר|אותו סוג) מצביעה על אותו
+// InstituteStudyTypeID, היא מורעלת (נלמדה ממקור לא-מאומת) ונמחקת. מחזיר את מספר הרשומות שנמחקו.
+function forgetPoisonedStudyTypeIds(instituteStudyTypeId, branch, code) {
+  const id = String(instituteStudyTypeId == null ? '' : instituteStudyTypeId).trim();
+  const c = String(code == null ? '' : code).trim();
+  if (!id || !c) return 0;
+  const cur = loadStudyTypeIds();
+  let removed = 0;
+  for (const key of Object.keys(cur)) {
+    const [b, kc] = key.split('|');
+    if (kc !== c || b === branch) continue;
+    const rec = studyTypeRecord(cur, b, kc);
+    if (!rec || rec.id !== id) continue;
+    delete cur[key];
+    removed++;
+    log(`[ניווט] הרשומה סניף ${b} סוג ${kc} → ${id} סותרת את הדף (מציג סניף ${branch}); נמחקה`);
+  }
+  if (removed) writeJson(STUDY_TYPE_IDS_KEY, cur);
+  return removed;
 }
 
 // ─── מצב-ניווט (sessionStorage): כוונת-ניווט + הדפים האחרונים ─────────────
@@ -571,18 +615,23 @@ function freshIntent(nav, now) {
 //   'breadcrumb' (הדף עצמו, מחייב) → 'institute' (דף המוסד האחרון בלשונית הזו, שה-h1 שלו נקרא,
 //   ושה-InstituteID שבכתובתו זהה לזה שבכתובת כאן) → 'map' (המפה הנלמדת, לא מאומת) → 'intent'
 //   (רמז בלבד; לא לומדים ממנו, ממצא 1ג) → null. הזרימה סומכת רק על breadcrumb/institute (ממצא 1ב).
-function getPage() {
+// ‏opts.learn=false (ממצא ב-5): קריאה-בלבד, בלי ללמוד ובלי למחוק (אחרי קליק-עץ שמרנדר במקום, ה-h1
+// מציג סניף אחר באותה כתובת, ולימוד משם מוחק מיפוי נכון וכותב שגוי). ‏opts.init=true: טעינת-דף מלאה,
+// ורק אז דף מוסד שה-h1 שלו סותר את המפה מוחק את הרשומה הסותרת (ממצא 2).
+function getPage(opts) {
+  const learn = !(opts && opts.learn === false);
+  const init = !!(opts && opts.init);
   const url = (typeof location !== 'undefined' && location.href) || '';
   const kind = classifyUrl(url);
 
   if (kind === 'institute') {
     const branch = parseBranchFromH1(h1Text());
     const instituteId = parseInstituteId(url);
-    if (branch && instituteId) {
-      forgetContradictingBranch(instituteId, branch); // ממצא 2
+    if (branch && instituteId && learn) {
+      if (init) forgetContradictingBranch(instituteId, branch); // ממצא 2, רק בטעינת-דף מלאה (ממצא ב-5)
       learnBranchId(branch, instituteId, { authoritative: false });
     }
-    if (branch) updateNavState({ lastInstituteUrl: url, lastInstituteBranch: branch });
+    if (branch && learn) updateNavState({ lastInstituteUrl: url, lastInstituteBranch: branch });
     return { kind, branch, branchSource: branch ? 'h1' : null, instituteId, studyType: null, url };
   }
 
@@ -610,9 +659,17 @@ function getPage() {
       }
     }
     const trusted = branchSource === 'breadcrumb' || branchSource === 'institute' || branchSource === 'map';
-    if (branch && instituteId && trusted) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
-    if (branch && studyType && instituteStudyTypeId && trusted) learnStudyTypeId(branch, studyType, instituteStudyTypeId);
-    if (branch) updateNavState({ intent: null, lastStudyTypeUrl: url, lastStudyTypeBranch: branch, lastStudyTypeCode: studyType });
+    // ממצא ב-1א: רשומת סוג-לימוד רק ממקור שנקרא מהדף (breadcrumb/institute). סניף מהמפה בלבד אינו
+    // ראיה: רשומה שנלמדה ממנו הפנתה כל תלמיד של (סניף,סוג) לדף של סניף אחר, 8 נחיתות ו"דולג".
+    const verified = branchSource === 'breadcrumb' || branchSource === 'institute';
+    if (learn) {
+      if (branch && instituteId && trusted) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
+      if (branch && studyType && instituteStudyTypeId && verified) {
+        forgetPoisonedStudyTypeIds(instituteStudyTypeId, branch, studyType); // ממצא ב-1ג
+        learnStudyTypeId(branch, studyType, instituteStudyTypeId, instituteId);
+      }
+      if (branch) updateNavState({ intent: null, lastStudyTypeUrl: url, lastStudyTypeBranch: branch, lastStudyTypeCode: studyType });
+    }
     return { kind, branch, branchSource, instituteId, instituteStudyTypeId, studyType, url };
   }
 
@@ -629,7 +686,21 @@ function getPage() {
   return { kind: 'other', branch: null, branchSource: null, studyType: null, url };
 }
 
+// ממצא ב-5: קריאה-בלבד של הדף (בלי ללמוד מפות ובלי לעדכן מצב-ניווט).
+function readPage() {
+  return getPage({ learn: false });
+}
+
 // ─── גריד "סוגי לימוד למוסד" (gvStudyType) ──────────────────────────────────
+
+// ממצא ב-8: שורת-נתונים בגריד = tr עם onclick של selectedRowStudyType. שורות הפייג'ר (טבלה מקוננת
+// בתוך הגריד, כמו ב-GridView אמיתי) מכילות תאים "1","2" שעוברים את בדיקת-הספרות, ולכן gridToRows
+// מסמן כל שורה ב-selectable, והפונקציות הטהורות מדלגות על selectable===false. מערך רגיל (בלי הדגל,
+// למשל בבדיקות) נחשב שורת-נתונים.
+function isStudyTypeDataRow(row) {
+  if (!Array.isArray(row) || row.selectable === false) return false;
+  return /^\d+$/.test(String(row[0] ?? '').trim());
+}
 
 // טהורה: אינדקס שורת-נתונים (0-based, בלי כותרת/פייג'ר) של הקוד. אין => -1.
 function findStudyTypeRow(rows, code) {
@@ -637,11 +708,9 @@ function findStudyTypeRow(rows, code) {
   const target = String(code).trim();
   let dataIndex = -1;
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (!/^\d+$/.test(first)) continue;
+    if (!isStudyTypeDataRow(row)) continue;
     dataIndex++;
-    if (first === target) return dataIndex;
+    if (String(row[0]).trim() === target) return dataIndex;
   }
   return -1;
 }
@@ -651,10 +720,7 @@ function findStudyTypeRowPosition(rows, code) {
   if (!Array.isArray(rows)) return -1;
   const target = String(code).trim();
   for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (/^\d+$/.test(first) && first === target) return i;
+    if (isStudyTypeDataRow(rows[i]) && String(rows[i][0]).trim() === target) return i;
   }
   return -1;
 }
@@ -673,9 +739,7 @@ function gridPageSignature(rows) {
   if (!Array.isArray(rows)) return '';
   const codes = [];
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (/^\d+$/.test(first)) codes.push(first);
+    if (isStudyTypeDataRow(row)) codes.push(String(row[0]).trim());
   }
   return `${codes.length}|${codes.join(',')}`;
 }
@@ -685,19 +749,21 @@ function gridStudyTypes(rows) {
   if (!Array.isArray(rows)) return [];
   const out = [];
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (!/^\d+$/.test(first)) continue;
-    out.push({ code: first, desc: String(row[1] ?? '').trim(), status: String(row[3] ?? '').trim() });
+    if (!isStudyTypeDataRow(row)) continue;
+    out.push({ code: String(row[0]).trim(), desc: String(row[1] ?? '').trim(), status: String(row[3] ?? '').trim() });
   }
   return out;
 }
 
+// מערך של מערכי-תאים לכל tr; לכל שורה דגל selectable (ממצא ב-8): יש onclick עם selectedRowStudyType.
 function gridToRows(table) {
   if (!table || typeof table.querySelectorAll !== 'function') return [];
-  return Array.from(table.querySelectorAll('tr')).map(
-    (tr) => Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim())
-  );
+  return Array.from(table.querySelectorAll('tr')).map((tr) => {
+    const row = Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim());
+    const onclick = (typeof tr.getAttribute === 'function' && tr.getAttribute('onclick')) || '';
+    row.selectable = /selectedRowStudyType/.test(String(onclick));
+    return row;
+  });
 }
 
 // טהורה: href בפורמט javascript:__doPostBack('target','arg') → {target, arg}.
@@ -726,7 +792,7 @@ async function activateStudyTypeTab() {
     const href = typeof tab.getAttribute === 'function' ? tab.getAttribute('href') : null;
     const parsed = href ? parsePostbackHref(href) : null;
     if (parsed) return firePostback(parsed.target, parsed.arg);
-    const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: 8000 });
+    const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
     setTimeout(() => { try { tab.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
     const res = await wait;
     if (res && res.ok === false) return { ok: false, reason: 'מעבר לטאב סוגי הלימוד נכשל: ' + (res.reason || '') };
@@ -792,7 +858,7 @@ async function gotoStudyTypeFromInstitute(code, opts) {
       try { window.selectedRowStudyType(rowIndex); } catch (e) {
         return { ok: false, reason: 'שגיאה בבחירת שורת סוג הלימוד: ' + (e && e.message) };
       }
-      const res = await firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType', '', { startTimeoutMs: 1500, totalTimeoutMs: 8000 });
+      const res = await firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType', '', { startTimeoutMs: 1500, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
       return Object.assign({ method: 'grid', status }, res, { ok: res.ok !== false });
     }
 
@@ -874,12 +940,13 @@ async function gotoInstitute(branch) {
     if (idx === -1) return { ok: false, notFound: true, reason: `סניף ${b} לא נמצא בעץ הסניפים` };
     const parsed = parsePostbackHref(hrefs[idx]);
     if (!parsed) return { ok: false, reason: 'קישור הסניף בעץ אינו בפורמט הצפוי' };
-    const res = await firePostback(parsed.target, parsed.arg, { startTimeoutMs: 1500, totalTimeoutMs: 8000 });
+    const res = await firePostback(parsed.target, parsed.arg, { startTimeoutMs: 1500, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
     const out = Object.assign({ method: 'tree', branch: b }, res, { ok: res.ok !== false });
     // ממצא 3: ברטוב נצפה שקליק-עץ הוא postback א-סינכרוני שמרנדר את הסניף *במקום* (אותה כתובת).
     // אם הדף כבר מציג את הסניף המבוקש, אין טעינת דף בדרך: הקורא ממשיך מיד (גריד), בלי כלב-שומר.
+    // ממצא ב-5: קוראים את ה-h1 בלי ללמוד: הכתובת עדיין של הסניף הקודם, ולימוד משם מרעיל את המפה.
     if (out.ok) {
-      const now = getPage();
+      const now = readPage();
       if (now.kind === 'institute' && now.branch === b) out.inPlace = true;
     }
     return out;
@@ -899,7 +966,9 @@ async function gotoStudyType(branch, code) {
   if (!b || !/^\d+$/.test(c)) return { ok: false, reason: `סניף/סוג לימוד לא תקינים: ${branch}/${code}` };
   updateNavState({ intent: { branch: b, studyType: c, at: Date.now() } });
 
-  const direct = studyTypePageUrl(loadStudyTypeIds()[studyTypeKey(b, c)], loadBranchIds()[b]);
+  // ממצא ב-1ב: הכתובת הישירה נבנית מה-InstituteID שנשמר ברשומה; רשומה ישנה (בלי מוסד) נופלת למפה.
+  const rec = studyTypeRecord(loadStudyTypeIds(), b, c);
+  const direct = rec ? studyTypePageUrl(rec.id, rec.instituteId || loadBranchIds()[b]) : null;
   if (direct) return navGoToUrl(direct, { branch: b, studyType: c });
 
   const page = getPage();
@@ -2042,6 +2111,8 @@ const ABSORB_ID_CELL_RE = /^[0-9A-Za-z][0-9A-Za-z\s-]{3,}$/;
 // 0 → "לא נמצא" תמיד; 1 → מותר fallback לשורת-נתונים יחידה; 2+ → רק התאמה מדויקת; null → בלי שער.
 // ממצא 10: ה-fallback מותר רק כשהתא מכיל את ספרות המזהה (אחרי נרמול). שורה יחידה עם מזהה *אחר*
 // אינה הצלחה: {found:false, singleOther:<התא>}, והזרימה מדווחת "לאמת ידנית".
+// ממצא ב-3: התווית אומרת 1+ אך אף תא לא זוהה כמזהה (למשל עמודה 3 אינה עמודת המזהה): הרשימה לא
+// קריאה, {found:false, unreadable:true}, והזרימה לא לוחצת "קליטה" על תלמיד שאולי כבר ברשימה.
 function analyzeGrid(rows, identity, count) {
   const none = { found: false, matchType: null };
   if (count === 0) return none;
@@ -2060,6 +2131,7 @@ function analyzeGrid(rows, identity, count) {
     if (absorbNormalizeId(cell) === target) exact = true;
   }
   if (exact) return { found: true, matchType: 'exact' };
+  if (dataRows === 0 && typeof count === 'number' && count >= 1) return { found: false, matchType: null, unreadable: true };
   if (dataRows === 1 && (count == null || count === 1)) {
     if (absorbNormalizeId(lastCell).includes(target)) return { found: true, matchType: 'single-row-fallback' };
     return { found: false, matchType: null, singleOther: lastCell };
@@ -2167,6 +2239,17 @@ function absorbBranchSourceTrusted(source) {
   return source === 'breadcrumb' || source === 'institute';
 }
 
+// ממצא ב-2: פוסטבק מנווט שפג זמנו (pageRedirect בלי endRequest) אחרי שהדף כבר התחיל להיפרק
+// (beforeunload/pagehide) הוא טעינת-דף בדרך, לא כשל: ההמשך אחרי הטעינה, בלי לסמן "שגיאה".
+function absorbNavTimeoutIsNavigation(res, unloadSeen) {
+  return !!(res && typeof res === 'object' && res.ok === false && res.timeout === true && unloadSeen === true);
+}
+
+// ממצא ב-3: פירוט לרשימה שלא ניתן לקרוא בה מזהים.
+function absorbUnreadableGridDetail(count) {
+  return `הרשימה הציגה ${count} תוצאות אך לא ניתן לקרוא בה מזהים`;
+}
+
 // הוראה אופרטיבית לניווט ידני לסוג-לימוד (משותפת לכמה סטטוסים).
 function manualStudyTypeAction(branch, code) {
   return `פתח את דף המוסד של סניף ${branch}, לחץ על הלשונית "סוגי לימוד למוסד", לחץ על השורה של סוג ${code} ואז על "עריכה". כשדף סוג-הלימוד פתוח, הרץ שוב את השורה הזו`;
@@ -2201,6 +2284,9 @@ const S = {
   // ממצא 4: {idx, identity} של שמירה בדף תלמיד-חדש. נשמר עם המצב בכל שמירה (לא רק ברגע השמירה),
   // כדי ש-justSaved ישרוד גם נחיתה שנייה; נמחק ברישום התוצאה של אותה שורה.
   pendingSave: null,
+  // ממצא ב-9: {idx, identity} של "אישור" במודאל שנלחץ. אם "אישור" הוא טעינה מלאה של אותו דף, ההמשך
+  // מוצא את התלמיד ברשימה ומדווח "נקלט" (לא "כבר קיים"). נשמר עם המצב; נמחק ברישום התוצאה.
+  pendingConfirm: null,
   generation: 0,
 };
 
@@ -2254,6 +2340,7 @@ function saveAbsorbState(extra) {
     queue: S.queue, results: S.results, curIdx: S.curIdx,
     startedAt: S.startedAt || new Date().toISOString(),
     pendingSave: S.pendingSave || null,
+    pendingConfirm: S.pendingConfirm || null,
   };
   if (extra) Object.assign(state, extra);
   try { sessionStorage.setItem(QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[מצב] שמירה נכשלה: ' + (e && e.message)); }
@@ -2317,6 +2404,7 @@ function absorbResetRun() {
   S.lastRecordedIdx = -1;
   S.justSaved = null;
   S.pendingSave = null;
+  S.pendingConfirm = null;
 }
 
 // ─── src/core/lock.js ───
@@ -2649,7 +2737,7 @@ function absorbActivateStudentsTab() {
   } catch (e) {
     return Promise.resolve({ ok: true, started: false });
   }
-  const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: 8000 });
+  const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS }); // ממצא ב-2
   setTimeout(() => {
     try { tabs.set_activeTabIndex(2); } catch (e) { log('[לשונית] הפעלת "רשימת תלמידים" נכשלה: ' + (e && e.message)); }
   }, 0);
@@ -2832,13 +2920,16 @@ function absorbSetHooks(hooks) { S.hooks = hooks || {}; }
 function absorbGetResults() { return S.results.slice(); }
 function absorbIsRunning() { return S.running; }
 // "עסוק" = רץ, או שנורה ניווט מלא והריצה ממתינה לטעינת הדף (S.running=false בכוונה, אך אסור להתחיל ריצה חדשה).
-function absorbIsBusy() { return S.running || watchdogTimer !== null; }
+// ממצא ב-7: ‏navigating נשאר דלוק גם אחרי ש-beforeunload ניקה את כלב-השומר, כדי ש"התחל" בחלון הזה לא
+// ידרוס את התור השמור. נכבה ב-runQueue / finishRun / absorbStop / ניקוי התור.
+function absorbIsBusy() { return S.running || watchdogTimer !== null || navigating; }
 function hook(name, ...args) { try { if (S.hooks[name]) S.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
 
 // ─── ניווט מלא: האם הדף מתחיל להיפרק, וכלב-שומר אם לא ─────────────────────
 let unloadSeen = false;
 let unloadWatched = false;
 let watchdogTimer = null;
+let navigating = false;
 
 function watchUnload() {
   if (unloadWatched) return;
@@ -2854,6 +2945,7 @@ function watchUnload() {
 function beginNavigation() {
   watchUnload();
   unloadSeen = false;
+  navigating = true;
   hook('onNavigating');
 }
 
@@ -2908,6 +3000,11 @@ async function ensureStudyTypePage(task, gen) {
   beginNavigation();
   const res = viaInstitute ? await gotoInstitute(branch) : await gotoStudyType(branch, code);
   if (absorbIsCancelled(gen)) checkStop('nav-cancelled', gen);
+  if (absorbNavTimeoutIsNavigation(res, unloadSeen)) {
+    // ממצא ב-2: pageRedirect בלי endRequest: הזמן פג אחרי שהדף התחיל להיפרק. זו טעינת דף, לא כשל.
+    log('[ניווט] הפוסטבק המנווט פג-זמן אחרי שהדף התחיל להיפרק: ממתינים לטעינה');
+    return { ok: true, navigated: true };
+  }
   if (!res || res.ok === false) {
     if (res && res.notFound) {
       return {
@@ -3035,7 +3132,10 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
   }
 
-  if (getPage().kind === 'newStudent') {
+  // ממצא ב-6: לפי הכתובת, לא לפי getPage: "שמירה" שנשארת באותו מסמך משנה את hidStudentState מ--1
+  // ל-1, ואז getPage מסווג 'other' והתלמיד היה מקבל "נשמר - לאמת ידנית" במקום מעבר לרשימה ואימות.
+  const hrefNow = (typeof location !== 'undefined' && location.href) || '';
+  if (classifyUrl(hrefNow) === 'newStudent') {
     const errs = absorbCollectValidationMessages();
     if (errs.length) {
       S.justSaved = null;
@@ -3070,6 +3170,10 @@ async function verifyAfterNewStudent(task, identity, mk, gen) {
         if (grid.found) {
           S.justSaved = null;
           return mk(ABSORB_STATUS.OK_NEW, note, '');
+        }
+        if (grid.unreadable) {
+          S.justSaved = null;
+          return mk(ABSORB_STATUS.VERIFY, [note, absorbUnreadableGridDetail(search.count)].filter(Boolean).join(' | '), searchListAction(task.studyType, task.branch));
         }
         if (grid.singleOther) {
           S.justSaved = null;
@@ -3132,12 +3236,21 @@ async function processStudent(task, gen) {
 
   const justSaved = S.justSaved && absorbNormalizeId(S.justSaved) === absorbNormalizeId(identity);
   const savedNote = justSaved ? pendingSaveNote() : '';
+  // ממצא ב-9: "אישור" שנלחץ לשורה הזו והביא טעינה מלאה של אותו דף: "נמצא ברשימה" = נקלט, לא "כבר קיים".
+  const justConfirmed = !!(S.pendingConfirm && S.pendingConfirm.idx === myIdx && absorbNormalizeId(S.pendingConfirm.identity) === absorbNormalizeId(identity));
   const preGrid = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(pre));
   if (preGrid.found) {
     const via = preGrid.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : '';
     if (justSaved) { S.justSaved = null; log('[תלמיד חדש] נמצא ברשימה אחרי השמירה → נקלט'); return mk(ABSORB_STATUS.OK_NEW, [savedNote, via].filter(Boolean).join(' | '), ''); }
+    if (justConfirmed) { log('[אישור] הדף נטען מחדש אחרי "אישור" והתלמיד ברשימה → נקלט'); return mk(ABSORB_STATUS.OK, ['אומת ברשימה אחרי טעינת הדף', via].filter(Boolean).join(' | '), ''); }
     log('[קליטה] כבר קיים בסוג הלימוד');
     return mk(ABSORB_STATUS.EXISTS, via, '');
+  }
+  if (preGrid.unreadable) {
+    // ממצא ב-3: התווית מדווחת תוצאות אך לא נקראו מזהים: לא לוחצים "קליטה" על תלמיד שאולי ברשימה.
+    S.justSaved = null;
+    log(`[חיפוש] התווית מדווחת ${pre.count} תוצאות אך לא נקראו מזהים ברשימה: לאמת ידנית`);
+    return mk(ABSORB_STATUS.VERIFY, [savedNote, absorbUnreadableGridDetail(pre.count)].filter(Boolean).join(' | '), searchListAction(code, branch));
   }
   if (preGrid.singleOther) {
     // ממצא 10: החיפוש החזיר שורה אחת עם מזהה אחר. לא הצלחה ולא "לא נמצא": המשתמש מאמת.
@@ -3214,7 +3327,9 @@ async function processStudent(task, gen) {
     const v = absorbRunClientValidation('PopValidation');
     if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המזהה, תאריך הלידה או הארץ לפי ההודעה, והרץ שוב');
 
-    saveAbsorbState(); // "אישור" עלול לטעון דף תלמיד-חדש
+    // "אישור" עלול לטעון דף תלמיד-חדש, או (ממצא ב-9) לטעון מחדש את אותו דף: מסמנים לפני.
+    S.pendingConfirm = { idx: myIdx, identity };
+    saveAbsorbState();
     beginNavigation();
     const confirmWait = absorbFireElement(confirmBtn, { startTimeoutMs: 3000, totalTimeoutMs: CONFIRM_BUDGET_MS });
     const outcome = await absorbWaitOutcome(confirmWait, CONFIRM_BUDGET_MS, gen);
@@ -3248,6 +3363,10 @@ async function processStudent(task, gen) {
     if (!verify.executed) return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(verify), ABSORB_SEARCH_FAILED_ACTION);
     const found = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(verify));
     if (found.found) { log('◀ נקלט'); return mk(ABSORB_STATUS.OK, popupDetail || (found.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : ''), ''); }
+    if (found.unreadable) {
+      log(`◀ הרשימה מדווחת ${verify.count} תוצאות אך לא נקראו מזהים: לאמת ידנית`);
+      return mk(ABSORB_STATUS.VERIFY, [popupDetail, absorbUnreadableGridDetail(verify.count)].filter(Boolean).join(' | '), searchListAction(code, branch));
+    }
     if (found.singleOther) {
       log(`◀ ברשימה שורה אחת עם מזהה אחר (${maskId(found.singleOther)}): לאמת ידנית`);
       return mk(ABSORB_STATUS.VERIFY, [popupDetail, `ברשימה שורה אחת עם מזהה אחר: ${found.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
@@ -3311,6 +3430,7 @@ function recordResult(result, gen, idx) {
   S.results.push(result);
   S.curIdx = Math.max(S.curIdx, at + 1);
   if (S.pendingSave && S.pendingSave.idx === at) S.pendingSave = null; // ממצא 4: השמירה נסגרה עם השורה
+  if (S.pendingConfirm && S.pendingConfirm.idx === at) S.pendingConfirm = null; // ממצא ב-9
   absorbResetLandings();
   saveAbsorbState();
   hook('onResult', result, S.results);
@@ -3353,6 +3473,7 @@ function fillRemaining(status, detail, action) {
 
 function finishRun() {
   S.running = false;
+  navigating = false;
   clearAbsorbState();
   clearAbsorbStop();
   clearNavIntent(); // ממצא 7
@@ -3365,6 +3486,7 @@ function finishRun() {
 
 async function runQueue() {
   S.running = true;
+  navigating = false;
   clearWatchdog();
   watchUnload();
   startLockRefresh();
@@ -3446,6 +3568,7 @@ function absorbSavedQueueInfo() {
 function absorbDiscardSavedQueue() {
   absorbNextGeneration();
   clearWatchdog();
+  navigating = false;
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
@@ -3506,6 +3629,9 @@ async function absorbResumeIfPending(opts) {
   S.lastRecordedIdx = S.curIdx - 1;
   S.startedAt = st.startedAt || null;
   S.pendingSave = st.pendingSave && typeof st.pendingSave === 'object' ? st.pendingSave : null;
+  // ממצא ב-9: סמן "אישור נלחץ" שייך לשורה הנוכחית בלבד
+  S.pendingConfirm = st.pendingConfirm && typeof st.pendingConfirm === 'object' && st.pendingConfirm.idx === S.curIdx ? st.pendingConfirm : null;
+  if (S.pendingConfirm) log('[המשך] "אישור" נלחץ לפני הטעינה: אם התלמיד ברשימה, זה "נקלט"');
   if (S.curIdx >= S.queue.length) { finishRun(); return false; }
 
   if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
@@ -3541,6 +3667,7 @@ function absorbStop() {
   requestAbsorbStop();
   absorbNextGeneration();
   clearWatchdog();
+  navigating = false;
   clearNavIntent(); // ממצא 7
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {
@@ -6009,8 +6136,9 @@ function messagesRosterBranches(roster, personId) {
 }
 
 // הצלבה מול המצבת: לכל שורה עם ת.ז. "סניף NN" / "לא במצבת"; בלי ת.ז. → ''. בקשת-מעבר שהתלמיד כבר
-// במצבת בסניף-היעד שלה: alreadyDone, וההצעה הופכת ל"סמן כטופל" (המערכת שולחת הודעה גם על מעבר
-// שבעל-המערכת כבר ביצע בעצמו). roster=null → עמודה ריקה וההצעה המקורית. מחזיר מערך חדש.
+// במצבת בסניף-היעד שלה: alreadyDone (תג "כבר בוצע"). ממצא ב-10: זה רמז לבדיקה בלבד, כי הנוסח
+// "לסניף NN" בגוף ההודעה לא אומת באתר: ההצעה לא משתנה מעצמה; הכפתור "כל 'כבר בוצע': סמן כטופל"
+// בלשונית מחיל את ההחלטה על השורות המסומנות. roster=null → עמודה ריקה. מחזיר מערך חדש.
 function messagesCrossCheck(rows, roster) {
   return (rows || []).map((r) => {
     const out = Object.assign({}, r, { rosterLabel: '', rosterBranches: [], alreadyDone: false, suggestedAction: messagesSuggestAction(r.header) });
@@ -6019,10 +6147,7 @@ function messagesCrossCheck(rows, roster) {
     out.rosterBranches = branches;
     out.rosterLabel = branches.length ? branches.map((b) => `סניף ${b}`).join(', ') : 'לא במצבת';
     const transfer = r.transfer || messagesExtractTransfer(r.body);
-    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) {
-      out.alreadyDone = true;
-      out.suggestedAction = MESSAGES_ACTION.HANDLED;
-    }
+    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) out.alreadyDone = true;
     return out;
   });
 }
@@ -6199,13 +6324,18 @@ async function messagesGotoNextPage() {
 
 // ─── סינון "נשלחה" ──────────────────────────────────────────────────────────
 
+// ממצא ב-11: מעדיפים את ה-select שה-id שלו מכיל ddlMessageStatus (כמו באתר ובסקריפט הישן), ורק
+// אחרת את הראשון שהאופציות שלו כוללות "נשלחה" ו"טופלה". מספר המועמדים נרשם ליומן.
 function messagesFindFilterSelect() {
   if (typeof document === 'undefined') return null;
-  for (const s of Array.from(document.querySelectorAll('select'))) {
-    const texts = Array.from(s.options).map((o) => messagesFlat(o.text));
-    if (texts.includes(MESSAGES_STATUS_SENT) && texts.includes(MESSAGES_STATUS_HANDLED)) return s;
-  }
-  return null;
+  const all = Array.from(document.querySelectorAll('select'));
+  const byId = all.filter((s) => /ddlMessageStatus/i.test(String(s.id || '')));
+  const byOptions = all.filter((s) => {
+    const texts = Array.from(s.options || []).map((o) => messagesFlat(o.text));
+    return texts.includes(MESSAGES_STATUS_SENT) && texts.includes(MESSAGES_STATUS_HANDLED);
+  });
+  log(`[הודעות] תיבות-סינון מועמדות: ${byId.length} לפי מזהה ddlMessageStatus, ${byOptions.length} לפי אופציות (נשלחה/טופלה)`);
+  return byId[0] || byOptions[0] || null;
 }
 
 async function messagesEnsureSentFilter() {
@@ -6238,8 +6368,21 @@ async function messagesClosePopupIfOpen(where) {
   return popup;
 }
 
+// טהורה (ממצא ב-4): הכרעת תוצאת הפעולה. אותו עמוד: מספר המופעים של ההודעה במצב "נשלחה" צריך
+// לרדת. העמוד השתנה (האתר חזר לעמוד אחר אחרי הפעולה): הגריד המוצג אינו ראיה; הצלחה רק עם
+// חלונית-הצלחה, אחרת "נכשל: הגריד חזר לעמוד אחר אחרי הפעולה" (עם הודעת האתר אם הייתה).
+function messagesActionOutcome({ before, after, pageBefore, pageAfter, popup }) {
+  const siteSaid = popup && popup.kind !== 'success' && popup.text ? `האתר הודיע: "${messagesFlat(popup.text)}"` : '';
+  if (pageBefore !== pageAfter) {
+    if (popup && popup.kind === 'success') return { ok: true, pageChanged: true };
+    return { ok: false, reason: ['הגריד חזר לעמוד אחר אחרי הפעולה', siteSaid].filter(Boolean).join('; ') };
+  }
+  if (before > 0 && after >= before) return { ok: false, reason: siteSaid || 'ההודעה עדיין במצב "נשלחה" אחרי הפעולה' };
+  return { ok: true };
+}
+
 // פעולה אחת (performActionFast של הישן): סגירת חלונית ישנה → HidMessageRowID → postback → סגירת
-// חלונית ההצלחה → אימות מול הגריד (מספר המופעים של ההודעה במצב "נשלחה" צריך לרדת).
+// חלונית ההצלחה → אימות מול הגריד (messagesActionOutcome).
 async function messagesPerformAction(msg, action) {
   const target = MESSAGES_POSTBACK_TARGETS[action];
   if (!target) return { ok: false, reason: 'פעולה לא מוכרת: ' + action };
@@ -6248,17 +6391,20 @@ async function messagesPerformAction(msg, action) {
   if (!hid) return { ok: false, reason: 'לא נמצא השדה הנסתר של שורת ההודעה (HidMessageRowID)' };
   const countSent = () => messagesReadPage().filter((m) => m.uid === msg.uid && messagesIsSent(m)).length;
   const before = countSent();
+  const pageBefore = messagesCurrentPage();
   hid.value = String(msg.rowIndex);
   const res = await firePostback(target, '');
   if (!res.ok) return { ok: false, reason: res.reason || 'הפעולה נכשלה בשרת' };
   if (res.started === false) return { ok: false, reason: 'הלחיצה לא הפעילה בקשה לשרת' };
   const popup = await messagesClosePopupIfOpen('אחרי הפעולה');
-  if (before > 0 && countSent() >= before) {
-    const why = popup && popup.kind !== 'success' ? `האתר הודיע: "${messagesFlat(popup.text)}"` : 'ההודעה עדיין במצב "נשלחה" אחרי הפעולה';
-    return { ok: false, reason: why };
-  }
-  return { ok: true };
+  const pageAfter = messagesCurrentPage();
+  if (pageAfter !== pageBefore) log(`[הודעות] הגריד עבר מעמוד ${pageBefore} לעמוד ${pageAfter} אחרי הפעולה`);
+  return messagesActionOutcome({ before, after: countSent(), pageBefore, pageAfter, popup });
 }
+
+// ממצא ב-4: הודעה שקיבלה פעולה שלא ניתן היה לאמת מול הגריד (העמוד השתנה) ועדיין "נשלחה" בסבב הבא:
+// לא מבצעים שוב (גם במצב הגורף). מחזיר רשומת-כישלון לדוח.
+const MESSAGES_REPEAT_REASON = 'ההודעה עדיין במצב "נשלחה" אחרי פעולה שדווחה כהצלחה; לא מבצעים שוב';
 
 // ─── מצב גורף ───────────────────────────────────────────────────────────────
 
@@ -6270,11 +6416,20 @@ async function messagesRunBulk() {
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
   const failed = new Set();
+  const attempted = new Set(); // ממצא ב-4: UID-ים שקיבלו פעולה בלי אימות מול הגריד (העמוד השתנה)
   let processed = 0, skipped = 0, consecutiveEmpty = 0;
   for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
     await messagesClosePopupIfOpen('בין פעולות');
     const list = messagesReadPage();
     if (!list.length) { log('[הודעות] אין הודעות בעמוד'); break; }
+    const repeat = list.find((m) => messagesIsSent(m) && !failed.has(m.uid) && attempted.has(m.uid));
+    if (repeat) {
+      skipped++;
+      failed.add(repeat.uid);
+      messagesRecord(repeat, messagesSuggestAction(repeat.header), MESSAGES_RESULT.FAILED_PREFIX + MESSAGES_REPEAT_REASON);
+      log(`[הודעות] ✗ ${MESSAGES_REPEAT_REASON} · ${repeat.header} · ${maskId(repeat.personId) || '-'}`);
+      continue;
+    }
     const target = list.find((m) => messagesIsSent(m) && !failed.has(m.uid));
     if (!target) {
       consecutiveEmpty++;
@@ -6288,6 +6443,7 @@ async function messagesRunBulk() {
     messagesHook('onStatus', `טופלו ${processed}${skipped ? ` (נכשלו ${skipped})` : ''} · מטפל: ${action} · ${target.header}`);
     const t1 = Date.now();
     const res = await messagesPerformAction(target, action);
+    if (res.ok && res.pageChanged) attempted.add(target.uid);
     if (res.ok) {
       processed++;
       messagesRecord(target, action, MESSAGES_RESULT.DONE);
@@ -6365,6 +6521,7 @@ async function messagesRunTable(entries) {
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
   const handled = new Set(); // UID-ים שנרשמו בדוח לפחות פעם אחת
+  const attempted = new Set(); // ממצא ב-4: UID-ים שקיבלו פעולה בלי אימות מול הגריד (העמוד השתנה)
   let processed = 0, failedCount = 0, consecutiveEmpty = 0;
   for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
     await messagesClosePopupIfOpen('בין פעולות');
@@ -6381,6 +6538,13 @@ async function messagesRunTable(entries) {
         continue;
       }
       if (!messagesIsSent(m)) continue;
+      if (attempted.has(m.uid)) {
+        p.left = 0;
+        failedCount++;
+        messagesRecord(m, p.action, MESSAGES_RESULT.FAILED_PREFIX + MESSAGES_REPEAT_REASON);
+        log(`[הודעות] ✗ ${MESSAGES_REPEAT_REASON} · ${m.header} · ${maskId(m.personId) || '-'}`);
+        continue;
+      }
       target = m;
       targetAction = p.action;
       break;
@@ -6398,6 +6562,7 @@ async function messagesRunTable(entries) {
     const t1 = Date.now();
     const res = await messagesPerformAction(target, targetAction);
     handled.add(target.uid);
+    if (res.ok && res.pageChanged) attempted.add(target.uid);
     const p = pending.get(target.uid);
     if (res.ok) {
       processed++;
@@ -6558,7 +6723,7 @@ function messagesApplyFilter() {
 
 function messagesSetReviewEnabled() {
   const on = msgRows.length > 0 && !messagesIsRunning();
-  for (const id of ['run-review', 'all-transfers', 'all-others', 'all-skip']) setDisabled(`${MP}-${id}`, !on);
+  for (const id of ['run-review', 'all-transfers', 'all-others', 'all-done', 'all-skip']) setDisabled(`${MP}-${id}`, !on);
 }
 
 // פעולת-צובר על השורות המוצגות (אחרי הסינון). pick(row) → פעולה או null (לא לגעת).
@@ -6579,14 +6744,14 @@ function messagesBulkDecide(pick, what) {
 function messagesRebuildRows() {
   const merged = messagesMergeDuplicates(messagesGetScanned());
   msgRows = messagesCrossCheck(merged, msgRoster);
+  // ממצא ב-10: "כבר בוצע" הוא רמז לבדיקה; ההחלטה שנבחרה נשמרת, ורק הכפתור "כל 'כבר בוצע': סמן כטופל" מחיל
   const keep = new Map();
-  for (const r of msgRows) {
-    if (r.alreadyDone) continue; // ההצלבה גוברת: מעבר שכבר בוצע → "סמן כטופל"
-    if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
-  }
+  for (const r of msgRows) if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
   msgDecisions = keep;
   messagesRenderReview();
 }
+
+const MESSAGES_DONE_HINT = (n) => `${n} בקשות-מעבר מסומנות "כבר בוצע" (רמז לבדיקה; "כל 'כבר בוצע': סמן כטופל" מחיל)`;
 
 function messagesLoadRoster() {
   const text = (($el(`${MP}-roster-input`) || {}).value || '');
@@ -6605,7 +6770,7 @@ function messagesLoadRoster() {
   log(`[הודעות] ${txt}`);
   messagesRebuildRows();
   const done = msgRows.filter((r) => r.alreadyDone).length;
-  msgUi.status(msgRows.length ? `${txt}. ${done ? `${done} בקשות-מעבר כבר בוצעו וסומנו "טופל"` : 'אין בקשות-מעבר שכבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
+  msgUi.status(msgRows.length ? `${txt}. ${done ? MESSAGES_DONE_HINT(done) : 'אין בקשות-מעבר שנראות כבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
 }
 
 function messagesClearRoster() {
@@ -6752,7 +6917,8 @@ function messagesMount(container, panelUi, page) {
       <div class="tt-box tt-box-info">
         "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
         (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
-        הדבקת מצבת מאקסל מסמנת בקשות-מעבר שכבר בוצעו.
+        הדבקת מצבת מאקסל מסמנת "כבר בוצע" על בקשת-מעבר של תלמיד שכבר בסניף-היעד: זה רמז לבדיקה, ההחלטה
+        לא משתנה מעצמה; "כל 'כבר בוצע': סמן כטופל" מחיל אותה.
       </div>
       ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
@@ -6769,6 +6935,7 @@ function messagesMount(container, panelUi, page) {
         <input id="${MP}-filter" class="tt-input tt-filter" type="search" placeholder="סינון מהיר: ת.ז. / נושא / גוף">
         ${buttonHtml({ id: `${MP}-all-transfers`, label: 'כל בקשות המעבר: אישור', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
         ${buttonHtml({ id: `${MP}-all-others`, label: 'כל השאר: טופל', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
+        ${buttonHtml({ id: `${MP}-all-done`, label: "כל 'כבר בוצע': סמן כטופל", kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות שמסומנות "כבר בוצע" לפי המצבת' })}
         ${buttonHtml({ id: `${MP}-all-skip`, label: 'הכל: דלג', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
       </div>
       <div id="${MP}-scanned" class="tt-scroll tt-scroll-tall"></div>
@@ -6805,6 +6972,7 @@ function messagesMount(container, panelUi, page) {
   $el(`${MP}-filter`).addEventListener('input', messagesApplyFilter);
   $el(`${MP}-all-transfers`).addEventListener('click', () => messagesBulkDecide((r) => (r.header === MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.APPROVE : null), 'כל בקשות המעבר: אישור'));
   $el(`${MP}-all-others`).addEventListener('click', () => messagesBulkDecide((r) => (r.header !== MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.HANDLED : null), 'כל השאר: טופל'));
+  $el(`${MP}-all-done`).addEventListener('click', () => messagesBulkDecide((r) => (r.alreadyDone ? MESSAGES_ACTION.HANDLED : null), "כל 'כבר בוצע': סמן כטופל"));
   $el(`${MP}-all-skip`).addEventListener('click', () => messagesBulkDecide(() => MESSAGES_ACTION.SKIP, 'הכל: דלג'));
   $el(`${MP}-run-review`).addEventListener('click', messagesRunReview);
   $el(`${MP}-copy-tsv`).addEventListener('click', messagesCopyTsv);
@@ -6833,7 +7001,7 @@ function messagesMount(container, panelUi, page) {
       messagesSetRunning(false);
       const done = msgRows.filter((r) => r.alreadyDone).length;
       msgUi.status(merged
-        ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${done} בקשות-מעבר כבר בוצעו לפי המצבת)` : ''}`
+        ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${MESSAGES_DONE_HINT(done)})` : ''}`
         : 'לא נמצאו הודעות במצב "נשלחה"');
     },
     onDone: (rows, report) => {
@@ -6876,7 +7044,7 @@ registerTool(reportTool);
 registerTool(messagesTool);
 
 function initTalmudTools() {
-  const page = getPage();
+  const page = getPage({ init: true }); // טעינת-דף מלאה: כאן מותר למחוק רשומת-סניף סותרת (ממצא ב-5)
   const mounted = mountPanel(page);
   if (!mounted.length) return false;
   restoreLog();

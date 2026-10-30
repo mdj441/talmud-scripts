@@ -6,7 +6,8 @@ import {
   saveNavState, loadNavState, clearNavState, clearNavIntent, forgetNavMaps,
   parseBranchFromH1, parseStudyTypeFromH1, parseBranchFromBreadcrumb, parseSelectedRowIndex, normalizeBranch,
   parseInstituteId, parseInstituteStudyTypeId, mergeBranchIds, institutePageUrl, studyTypePageUrl, loadBranchIds,
-  branchForInstituteId, learnBranchId, loadStudyTypeIds, learnStudyTypeId, studyTypeKey, NAV_BRANCH_IDS_SEED,
+  branchForInstituteId, learnBranchId, loadStudyTypeIds, learnStudyTypeId, studyTypeKey, studyTypeRecord, NAV_BRANCH_IDS_SEED,
+  readPage,
 } from '../src/core/navigate.js';
 
 const INST_00 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491';
@@ -215,18 +216,18 @@ test('getPage: דף סוג-לימוד → סניף מפירורי-הלחם (מח
     assert.equal(p.instituteId, '4200');
     assert.equal(p.instituteStudyTypeId, '10301');
     assert.equal(loadBranchIds()['07'], '4200');
-    assert.equal(loadStudyTypeIds()['07|600'], '10301');
+    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '07', '600'), { id: '10301', instituteId: '4200' }, 'ממצא ב-1: הרשומה שומרת גם את ה-InstituteID שנצפה בכתובת');
     assert.equal(loadNavState().intent, null, 'הכוונה נצרכה');
     assert.equal(loadNavState().lastStudyTypeUrl, url);
   });
 });
 
-test('getPage: דף סוג-לימוד בלי פירורי-לחם → סניף מהמפה ההפוכה (InstituteID→סניף)', async () => {
+test('getPage: דף סוג-לימוד בלי פירורי-לחם → סניף מהמפה ההפוכה (InstituteID→סניף); ממצא ב-1: לא לומדים סוג-לימוד ממקור map', async () => {
   await withPage({ url: ST_16_600, h1: 'סוג לימוד 600 - כולל', crumbs: 'בית > פרטי מוסד' }, () => {
     const p = getPage();
     assert.equal(p.branch, '16');
     assert.equal(p.branchSource, 'map');
-    assert.equal(loadStudyTypeIds()['16|600'], '10269');
+    assert.equal(studyTypeRecord(loadStudyTypeIds(), '16', '600'), null, 'סניף מהמפה אינו מאומת: רשומת סוג-לימוד ממנו עלולה להרעיל');
   });
 });
 
@@ -294,7 +295,7 @@ test('getPage: דף סוג-לימוד בלי פירורים, אחרי דף מו�
     assert.equal(p.branch, '05');
     assert.equal(p.branchSource, 'institute');
     assert.equal(loadBranchIds()['05'], '4200');
-    assert.equal(loadStudyTypeIds()['05|600'], '10301');
+    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '05', '600'), { id: '10301', instituteId: '4200' });
   });
   await withPage({ url, h1: 'סוג לימוד 600 - כולל', crumbs: 'בית > פרטי מוסד', nav: { lastInstituteUrl: INST_00, lastInstituteBranch: '00' } }, () => {
     const p = getPage();
@@ -340,7 +341,7 @@ test('learnBranchId (ממצא 2): סניף-seed לא נדרס מדף מוסד (�
 test('getPage (ממצא 2): דף מוסד שה-h1 שלו סותר את המפה → הרשומה הסותרת נמחקת והסניף הנכון נלמד', async () => {
   const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
   await withPage({ url, h1: 'עטרת שלמה סניף 05', local: { 'talmud.nav.branchIds': JSON.stringify({ '00': '4200' }) } }, () => {
-    const p = getPage();
+    const p = getPage({ init: true });
     assert.equal(p.branch, '05');
     assert.equal(loadBranchIds()['00'], '491', 'הרשומה המורעלת 00→4200 נמחקה; ה-seed חוזר');
     assert.equal(loadBranchIds()['05'], '4200', 'הסניף שה-h1 מציג נלמד');
@@ -385,7 +386,7 @@ test('saveNavState/loadNavState/clearNavState: round-trip; JSON פגום → {};
 
 // ─── ניווט ──────────────────────────────────────────────────────────────────
 test('gotoStudyType: שתי המפות יודעות → קפיצה ישירה לפי כתובת, וכוונה נרשמת', async () => {
-  await withPage({ url: INST_00, local: { 'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': '10269' }) } }, async () => {
+  await withPage({ url: INST_00, local: { 'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': { id: '10269', instituteId: '4159' } }) } }, async () => {
     const res = await gotoStudyType('16', '600');
     assert.equal(res.ok, true);
     assert.equal(res.method, 'url');
@@ -468,4 +469,118 @@ test('gotoInstitute: סניף לא-תקין → {ok:false}', async () => {
   await withPage({ url: INST_00 }, async () => {
     assert.equal((await gotoInstitute('abc')).ok, false);
   });
+});
+
+// ─── ממצא ב-1 (ביקורת שנייה): רשומת (סניף|סוג)→InstituteStudyTypeID מורעלת ────────────
+test('studyTypeRecord (ממצא ב-1): רשומה חדשה {id, instituteId}; רשומה ישנה (מחרוזת) נקראת עם instituteId null; פגום → null', () => {
+  const map = { '07|600': { id: '10301', instituteId: '4200' }, '16|600': '10269', '05|300': { id: 'x' }, '00|600': 7 };
+  assert.deepEqual(studyTypeRecord(map, '7', '600'), { id: '10301', instituteId: '4200' });
+  assert.deepEqual(studyTypeRecord(map, '16', '600'), { id: '10269', instituteId: null });
+  assert.equal(studyTypeRecord(map, '05', '300'), null);
+  assert.equal(studyTypeRecord(map, '00', '600'), null);
+  assert.equal(studyTypeRecord(map, '99', '600'), null);
+  assert.equal(studyTypeRecord(null, '07', '600'), null);
+});
+
+test('learnStudyTypeId (ממצא ב-1): כותב {id, instituteId}; אותה רשומה שוב → false', async () => {
+  await withPage({ url: INST_00 }, () => {
+    assert.equal(learnStudyTypeId('7', '600', '10301', '4200'), true);
+    assert.deepEqual(loadStudyTypeIds()['07|600'], { id: '10301', instituteId: '4200' });
+    assert.equal(learnStudyTypeId('7', '600', '10301', '4200'), false);
+    assert.equal(learnStudyTypeId('7', '600', '10301', '9999'), true, 'מוסד אחר לאותו סוג: נכתב מחדש');
+  });
+});
+
+test('gotoStudyType (ממצא ב-1): הכתובת נבנית מה-InstituteID שברשומה, לא ממפת הסניפים של עכשיו', async () => {
+  const local = {
+    'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': { id: '10269', instituteId: '4159' } }),
+    'talmud.nav.branchIds': JSON.stringify({ '16': '9999' }), // מפת-סניפים שנדרסה בינתיים
+  };
+  await withPage({ url: INST_00, local }, async () => {
+    const res = await gotoStudyType('16', '600');
+    assert.equal(res.method, 'url');
+    assert.equal(globalThis.location.href, ST_16_600, 'InstituteID=4159 מהרשומה, לא 9999 מהמפה');
+  });
+  // רשומה ישנה (מחרוזת): נופלים למפת הסניפים כמו קודם
+  await withPage({ url: INST_00, local: { 'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': '10269' }) } }, async () => {
+    const res = await gotoStudyType('16', '600');
+    assert.equal(res.method, 'url');
+    assert.equal(globalThis.location.href, ST_16_600);
+  });
+});
+
+test('getPage (ממצא ב-1ג): דף סוג-לימוד שפירורי-הלחם מראים סניף 05, אך הרשומה של 07|600 מצביעה על אותו InstituteStudyTypeID → הרשומה השגויה נמחקת', async () => {
+  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10301&InstituteID=4200';
+  const crumbs = 'בית > איתור מוסד > עטרת שלמה > 05 > (600)כולל אברכים';
+  const local = { 'talmud.nav.studyTypeIds': JSON.stringify({ '07|600': { id: '10301', instituteId: '4200' }, '07|300': { id: '555', instituteId: '4200' } }) };
+  await withPage({ url, h1: 'סוג לימוד 600 - כולל אברכים', crumbs, local }, () => {
+    const p = getPage();
+    assert.equal(p.branch, '05');
+    assert.equal(studyTypeRecord(loadStudyTypeIds(), '07', '600'), null, 'הרשומה המורעלת 07|600→10301 נמחקה');
+    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '05', '600'), { id: '10301', instituteId: '4200' }, 'הסניף שהדף מציג נלמד');
+    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '07', '300'), { id: '555', instituteId: '4200' }, 'רשומה של סוג אחר לא נגעו בה');
+  });
+});
+
+// ─── ממצא ב-5: רינדור-במקום של העץ אינו טעינת דף ולא מלמד/מוחק מיפויים ───────────────
+test('gotoInstitute (ממצא ב-5): קליק-עץ שמרנדר במקום קורא את ה-h1 בלי ללמוד: 05→4200 נשאר, 07→4200 לא נכתב', async () => {
+  const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
+  const local = { 'talmud.nav.branchIds': JSON.stringify({ '05': '4200' }) };
+  await withPage({ url, h1: 'עטרת שלמה סניף 05', tree: hrefs, local }, async (st) => {
+    globalThis.window.__doPostBack = () => { st.h1 = 'עטרת שלמה סניף 07'; };
+    const res = await gotoInstitute('07');
+    assert.equal(res.inPlace, true);
+    assert.equal(loadBranchIds()['05'], '4200', 'המיפוי הנכון לא נמחק');
+    assert.equal(loadBranchIds()['07'], undefined, 'לא נלמד מיפוי שגוי 07→4200');
+  });
+});
+
+test('readPage (ממצא ב-5): קריאה-בלבד של דף מוסד: לא לומדת ולא מוחקת; getPage לומדת, ומוחקת רשומה סותרת רק עם init', async () => {
+  const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
+  await withPage({ url, h1: 'עטרת שלמה סניף 05', local: { 'talmud.nav.branchIds': JSON.stringify({ '00': '4200' }) } }, () => {
+    const r = readPage();
+    assert.equal(r.kind, 'institute');
+    assert.equal(r.branch, '05');
+    assert.equal(loadBranchIds()['00'], '4200', 'readPage לא מוחקת');
+    assert.equal(loadBranchIds()['05'], undefined, 'readPage לא לומדת');
+    getPage();
+    assert.equal(loadBranchIds()['00'], '4200', 'getPage בלי init: הרשומה הסותרת נשארת (רק טעינת-דף מלאה מוחקת)');
+    getPage({ init: true });
+    assert.equal(loadBranchIds()['00'], '491', 'init: הרשומה הסותרת נמחקה');
+    assert.equal(loadBranchIds()['05'], '4200');
+  });
+});
+
+// ─── ממצא ב-8: שורות הפייג'ר של gvStudyType (טבלה מקוננת כמו ב-GridView) אינן שורות-נתונים ──
+function fakeTable(trs) {
+  const mk = (cells, onclick) => ({
+    getAttribute: (n) => (n === 'onclick' ? onclick : null),
+    querySelectorAll: () => cells.map((c) => ({ textContent: c })),
+  });
+  const list = trs.map(([cells, onclick]) => mk(cells, onclick || null));
+  return { querySelectorAll: (sel) => (sel === 'tr' ? list : []) };
+}
+
+test('gridToRows (ממצא ב-8): דגל selectable לפי onclick עם selectedRowStudyType; תאי פייג\'ר "1","2" לא נספרים כקודים', () => {
+  const table = fakeTable([
+    [header],
+    [dataRows[0], "selectedRowStudyType('0')"],
+    [dataRows[1], "selectedRowStudyType('1')"],
+    [['12', '1', '2']], // ה-tr החיצוני של הפייג'ר: התא שלו מכיל את הטבלה המקוננת
+    [['1']], // tr מקונן של הפייג'ר
+    [['2']],
+  ]);
+  const rows = gridToRows(table);
+  assert.equal(rows.length, 6);
+  assert.equal(rows[1].selectable, true);
+  assert.equal(rows[3].selectable, false);
+  assert.equal(rows[5].selectable, false);
+  assert.deepEqual(gridStudyTypes(rows).map((s) => s.code), ['300', '600']);
+  assert.equal(findStudyTypeRow(rows, '2'), -1, 'תא פייג\'ר "2" אינו קוד');
+  assert.equal(findStudyTypeRow(rows, '600'), 1);
+  assert.equal(findStudyTypeRowPosition(rows, '12'), -1);
+  assert.equal(findStudyTypeRowPosition(rows, '600'), 2);
+  assert.equal(gridPageSignature(rows), '2|300,600');
+  // מערכים רגילים (בלי דגל) נשארים שורות-נתונים: תאימות לבדיקות ולקוד הקיים
+  assert.equal(findStudyTypeRow([header, ...dataRows], '605'), 2);
 });

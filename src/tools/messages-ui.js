@@ -113,7 +113,7 @@ function messagesApplyFilter() {
 
 function messagesSetReviewEnabled() {
   const on = msgRows.length > 0 && !messagesIsRunning();
-  for (const id of ['run-review', 'all-transfers', 'all-others', 'all-skip']) setDisabled(`${MP}-${id}`, !on);
+  for (const id of ['run-review', 'all-transfers', 'all-others', 'all-done', 'all-skip']) setDisabled(`${MP}-${id}`, !on);
 }
 
 // פעולת-צובר על השורות המוצגות (אחרי הסינון). pick(row) → פעולה או null (לא לגעת).
@@ -134,14 +134,14 @@ function messagesBulkDecide(pick, what) {
 function messagesRebuildRows() {
   const merged = messagesMergeDuplicates(messagesGetScanned());
   msgRows = messagesCrossCheck(merged, msgRoster);
+  // ממצא ב-10: "כבר בוצע" הוא רמז לבדיקה; ההחלטה שנבחרה נשמרת, ורק הכפתור "כל 'כבר בוצע': סמן כטופל" מחיל
   const keep = new Map();
-  for (const r of msgRows) {
-    if (r.alreadyDone) continue; // ההצלבה גוברת: מעבר שכבר בוצע → "סמן כטופל"
-    if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
-  }
+  for (const r of msgRows) if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
   msgDecisions = keep;
   messagesRenderReview();
 }
+
+const MESSAGES_DONE_HINT = (n) => `${n} בקשות-מעבר מסומנות "כבר בוצע" (רמז לבדיקה; "כל 'כבר בוצע': סמן כטופל" מחיל)`;
 
 function messagesLoadRoster() {
   const text = (($el(`${MP}-roster-input`) || {}).value || '');
@@ -160,7 +160,7 @@ function messagesLoadRoster() {
   log(`[הודעות] ${txt}`);
   messagesRebuildRows();
   const done = msgRows.filter((r) => r.alreadyDone).length;
-  msgUi.status(msgRows.length ? `${txt}. ${done ? `${done} בקשות-מעבר כבר בוצעו וסומנו "טופל"` : 'אין בקשות-מעבר שכבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
+  msgUi.status(msgRows.length ? `${txt}. ${done ? MESSAGES_DONE_HINT(done) : 'אין בקשות-מעבר שנראות כבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
 }
 
 function messagesClearRoster() {
@@ -307,7 +307,8 @@ function messagesMount(container, panelUi, page) {
       <div class="tt-box tt-box-info">
         "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
         (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
-        הדבקת מצבת מאקסל מסמנת בקשות-מעבר שכבר בוצעו.
+        הדבקת מצבת מאקסל מסמנת "כבר בוצע" על בקשת-מעבר של תלמיד שכבר בסניף-היעד: זה רמז לבדיקה, ההחלטה
+        לא משתנה מעצמה; "כל 'כבר בוצע': סמן כטופל" מחיל אותה.
       </div>
       ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
@@ -324,6 +325,7 @@ function messagesMount(container, panelUi, page) {
         <input id="${MP}-filter" class="tt-input tt-filter" type="search" placeholder="סינון מהיר: ת.ז. / נושא / גוף">
         ${buttonHtml({ id: `${MP}-all-transfers`, label: 'כל בקשות המעבר: אישור', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
         ${buttonHtml({ id: `${MP}-all-others`, label: 'כל השאר: טופל', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
+        ${buttonHtml({ id: `${MP}-all-done`, label: "כל 'כבר בוצע': סמן כטופל", kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות שמסומנות "כבר בוצע" לפי המצבת' })}
         ${buttonHtml({ id: `${MP}-all-skip`, label: 'הכל: דלג', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
       </div>
       <div id="${MP}-scanned" class="tt-scroll tt-scroll-tall"></div>
@@ -360,6 +362,7 @@ function messagesMount(container, panelUi, page) {
   $el(`${MP}-filter`).addEventListener('input', messagesApplyFilter);
   $el(`${MP}-all-transfers`).addEventListener('click', () => messagesBulkDecide((r) => (r.header === MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.APPROVE : null), 'כל בקשות המעבר: אישור'));
   $el(`${MP}-all-others`).addEventListener('click', () => messagesBulkDecide((r) => (r.header !== MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.HANDLED : null), 'כל השאר: טופל'));
+  $el(`${MP}-all-done`).addEventListener('click', () => messagesBulkDecide((r) => (r.alreadyDone ? MESSAGES_ACTION.HANDLED : null), "כל 'כבר בוצע': סמן כטופל"));
   $el(`${MP}-all-skip`).addEventListener('click', () => messagesBulkDecide(() => MESSAGES_ACTION.SKIP, 'הכל: דלג'));
   $el(`${MP}-run-review`).addEventListener('click', messagesRunReview);
   $el(`${MP}-copy-tsv`).addEventListener('click', messagesCopyTsv);
@@ -388,7 +391,7 @@ function messagesMount(container, panelUi, page) {
       messagesSetRunning(false);
       const done = msgRows.filter((r) => r.alreadyDone).length;
       msgUi.status(merged
-        ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${done} בקשות-מעבר כבר בוצעו לפי המצבת)` : ''}`
+        ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${MESSAGES_DONE_HINT(done)})` : ''}`
         : 'לא נמצאו הודעות במצב "נשלחה"');
     },
     onDone: (rows, report) => {

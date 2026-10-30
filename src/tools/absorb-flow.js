@@ -6,12 +6,12 @@
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
 import { log, maskId } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoStudyType, gotoInstitute, normalizeBranch, clearNavIntent } from '../core/navigate.js';
+import { getPage, gotoStudyType, gotoInstitute, normalizeBranch, clearNavIntent, classifyUrl } from '../core/navigate.js';
 import { acquireRunLock, refreshRunLock, releaseRunLock, RUN_LOCK_REFRESH_MS, RUN_LOCK_BUSY_MESSAGE } from '../core/lock.js';
 import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision,
   absorbShouldRecord, absorbQueueIsStale, buildRemainingReport, manualStudyTypeAction, absorbNormalizeId,
-  absorbBranchSourceTrusted,
+  absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation, absorbUnreadableGridDetail,
 } from './absorb-report.js';
 import {
   S, ABSORB_MAX_LANDINGS, absorbIsStopped, requestAbsorbStop, clearAbsorbStop, absorbStopError, isAbsorbStopError,
@@ -53,13 +53,16 @@ export function absorbSetHooks(hooks) { S.hooks = hooks || {}; }
 export function absorbGetResults() { return S.results.slice(); }
 export function absorbIsRunning() { return S.running; }
 // "עסוק" = רץ, או שנורה ניווט מלא והריצה ממתינה לטעינת הדף (S.running=false בכוונה, אך אסור להתחיל ריצה חדשה).
-export function absorbIsBusy() { return S.running || watchdogTimer !== null; }
+// ממצא ב-7: ‏navigating נשאר דלוק גם אחרי ש-beforeunload ניקה את כלב-השומר, כדי ש"התחל" בחלון הזה לא
+// ידרוס את התור השמור. נכבה ב-runQueue / finishRun / absorbStop / ניקוי התור.
+export function absorbIsBusy() { return S.running || watchdogTimer !== null || navigating; }
 function hook(name, ...args) { try { if (S.hooks[name]) S.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
 
 // ─── ניווט מלא: האם הדף מתחיל להיפרק, וכלב-שומר אם לא ─────────────────────
 let unloadSeen = false;
 let unloadWatched = false;
 let watchdogTimer = null;
+let navigating = false;
 
 function watchUnload() {
   if (unloadWatched) return;
@@ -75,6 +78,7 @@ function watchUnload() {
 function beginNavigation() {
   watchUnload();
   unloadSeen = false;
+  navigating = true;
   hook('onNavigating');
 }
 
@@ -129,6 +133,11 @@ async function ensureStudyTypePage(task, gen) {
   beginNavigation();
   const res = viaInstitute ? await gotoInstitute(branch) : await gotoStudyType(branch, code);
   if (absorbIsCancelled(gen)) checkStop('nav-cancelled', gen);
+  if (absorbNavTimeoutIsNavigation(res, unloadSeen)) {
+    // ממצא ב-2: pageRedirect בלי endRequest: הזמן פג אחרי שהדף התחיל להיפרק. זו טעינת דף, לא כשל.
+    log('[ניווט] הפוסטבק המנווט פג-זמן אחרי שהדף התחיל להיפרק: ממתינים לטעינה');
+    return { ok: true, navigated: true };
+  }
   if (!res || res.ok === false) {
     if (res && res.notFound) {
       return {
@@ -256,7 +265,10 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
   }
 
-  if (getPage().kind === 'newStudent') {
+  // ממצא ב-6: לפי הכתובת, לא לפי getPage: "שמירה" שנשארת באותו מסמך משנה את hidStudentState מ--1
+  // ל-1, ואז getPage מסווג 'other' והתלמיד היה מקבל "נשמר - לאמת ידנית" במקום מעבר לרשימה ואימות.
+  const hrefNow = (typeof location !== 'undefined' && location.href) || '';
+  if (classifyUrl(hrefNow) === 'newStudent') {
     const errs = absorbCollectValidationMessages();
     if (errs.length) {
       S.justSaved = null;
@@ -291,6 +303,10 @@ async function verifyAfterNewStudent(task, identity, mk, gen) {
         if (grid.found) {
           S.justSaved = null;
           return mk(ABSORB_STATUS.OK_NEW, note, '');
+        }
+        if (grid.unreadable) {
+          S.justSaved = null;
+          return mk(ABSORB_STATUS.VERIFY, [note, absorbUnreadableGridDetail(search.count)].filter(Boolean).join(' | '), searchListAction(task.studyType, task.branch));
         }
         if (grid.singleOther) {
           S.justSaved = null;
@@ -353,12 +369,21 @@ export async function processStudent(task, gen) {
 
   const justSaved = S.justSaved && absorbNormalizeId(S.justSaved) === absorbNormalizeId(identity);
   const savedNote = justSaved ? pendingSaveNote() : '';
+  // ממצא ב-9: "אישור" שנלחץ לשורה הזו והביא טעינה מלאה של אותו דף: "נמצא ברשימה" = נקלט, לא "כבר קיים".
+  const justConfirmed = !!(S.pendingConfirm && S.pendingConfirm.idx === myIdx && absorbNormalizeId(S.pendingConfirm.identity) === absorbNormalizeId(identity));
   const preGrid = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(pre));
   if (preGrid.found) {
     const via = preGrid.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : '';
     if (justSaved) { S.justSaved = null; log('[תלמיד חדש] נמצא ברשימה אחרי השמירה → נקלט'); return mk(ABSORB_STATUS.OK_NEW, [savedNote, via].filter(Boolean).join(' | '), ''); }
+    if (justConfirmed) { log('[אישור] הדף נטען מחדש אחרי "אישור" והתלמיד ברשימה → נקלט'); return mk(ABSORB_STATUS.OK, ['אומת ברשימה אחרי טעינת הדף', via].filter(Boolean).join(' | '), ''); }
     log('[קליטה] כבר קיים בסוג הלימוד');
     return mk(ABSORB_STATUS.EXISTS, via, '');
+  }
+  if (preGrid.unreadable) {
+    // ממצא ב-3: התווית מדווחת תוצאות אך לא נקראו מזהים: לא לוחצים "קליטה" על תלמיד שאולי ברשימה.
+    S.justSaved = null;
+    log(`[חיפוש] התווית מדווחת ${pre.count} תוצאות אך לא נקראו מזהים ברשימה: לאמת ידנית`);
+    return mk(ABSORB_STATUS.VERIFY, [savedNote, absorbUnreadableGridDetail(pre.count)].filter(Boolean).join(' | '), searchListAction(code, branch));
   }
   if (preGrid.singleOther) {
     // ממצא 10: החיפוש החזיר שורה אחת עם מזהה אחר. לא הצלחה ולא "לא נמצא": המשתמש מאמת.
@@ -435,7 +460,9 @@ export async function processStudent(task, gen) {
     const v = absorbRunClientValidation('PopValidation');
     if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המזהה, תאריך הלידה או הארץ לפי ההודעה, והרץ שוב');
 
-    saveAbsorbState(); // "אישור" עלול לטעון דף תלמיד-חדש
+    // "אישור" עלול לטעון דף תלמיד-חדש, או (ממצא ב-9) לטעון מחדש את אותו דף: מסמנים לפני.
+    S.pendingConfirm = { idx: myIdx, identity };
+    saveAbsorbState();
     beginNavigation();
     const confirmWait = absorbFireElement(confirmBtn, { startTimeoutMs: 3000, totalTimeoutMs: CONFIRM_BUDGET_MS });
     const outcome = await absorbWaitOutcome(confirmWait, CONFIRM_BUDGET_MS, gen);
@@ -469,6 +496,10 @@ export async function processStudent(task, gen) {
     if (!verify.executed) return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(verify), ABSORB_SEARCH_FAILED_ACTION);
     const found = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(verify));
     if (found.found) { log('◀ נקלט'); return mk(ABSORB_STATUS.OK, popupDetail || (found.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : ''), ''); }
+    if (found.unreadable) {
+      log(`◀ הרשימה מדווחת ${verify.count} תוצאות אך לא נקראו מזהים: לאמת ידנית`);
+      return mk(ABSORB_STATUS.VERIFY, [popupDetail, absorbUnreadableGridDetail(verify.count)].filter(Boolean).join(' | '), searchListAction(code, branch));
+    }
     if (found.singleOther) {
       log(`◀ ברשימה שורה אחת עם מזהה אחר (${maskId(found.singleOther)}): לאמת ידנית`);
       return mk(ABSORB_STATUS.VERIFY, [popupDetail, `ברשימה שורה אחת עם מזהה אחר: ${found.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
@@ -532,6 +563,7 @@ function recordResult(result, gen, idx) {
   S.results.push(result);
   S.curIdx = Math.max(S.curIdx, at + 1);
   if (S.pendingSave && S.pendingSave.idx === at) S.pendingSave = null; // ממצא 4: השמירה נסגרה עם השורה
+  if (S.pendingConfirm && S.pendingConfirm.idx === at) S.pendingConfirm = null; // ממצא ב-9
   absorbResetLandings();
   saveAbsorbState();
   hook('onResult', result, S.results);
@@ -574,6 +606,7 @@ function fillRemaining(status, detail, action) {
 
 function finishRun() {
   S.running = false;
+  navigating = false;
   clearAbsorbState();
   clearAbsorbStop();
   clearNavIntent(); // ממצא 7
@@ -586,6 +619,7 @@ function finishRun() {
 
 export async function runQueue() {
   S.running = true;
+  navigating = false;
   clearWatchdog();
   watchUnload();
   startLockRefresh();
@@ -667,6 +701,7 @@ export function absorbSavedQueueInfo() {
 export function absorbDiscardSavedQueue() {
   absorbNextGeneration();
   clearWatchdog();
+  navigating = false;
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
@@ -727,6 +762,9 @@ export async function absorbResumeIfPending(opts) {
   S.lastRecordedIdx = S.curIdx - 1;
   S.startedAt = st.startedAt || null;
   S.pendingSave = st.pendingSave && typeof st.pendingSave === 'object' ? st.pendingSave : null;
+  // ממצא ב-9: סמן "אישור נלחץ" שייך לשורה הנוכחית בלבד
+  S.pendingConfirm = st.pendingConfirm && typeof st.pendingConfirm === 'object' && st.pendingConfirm.idx === S.curIdx ? st.pendingConfirm : null;
+  if (S.pendingConfirm) log('[המשך] "אישור" נלחץ לפני הטעינה: אם התלמיד ברשימה, זה "נקלט"');
   if (S.curIdx >= S.queue.length) { finishRun(); return false; }
 
   if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
@@ -762,6 +800,7 @@ export function absorbStop() {
   requestAbsorbStop();
   absorbNextGeneration();
   clearWatchdog();
+  navigating = false;
   clearNavIntent(); // ממצא 7
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {

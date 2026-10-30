@@ -6,7 +6,7 @@ import { $el, isVisible, sleep } from '../core/dom.js';
 import { firePostback, waitPRM } from '../core/prm.js';
 import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
-import { getPage } from '../core/navigate.js';
+import { getPage, NAV_POSTBACK_BUDGET_MS } from '../core/navigate.js';
 import { absorbParseCount, absorbParsePostbackFromHref, absorbNormalizeId } from './absorb-report.js';
 import { checkStop, sleepCheckStop } from './absorb-state.js';
 
@@ -138,7 +138,7 @@ export function absorbActivateStudentsTab() {
   } catch (e) {
     return Promise.resolve({ ok: true, started: false });
   }
-  const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: 8000 });
+  const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS }); // ממצא ב-2
   setTimeout(() => {
     try { tabs.set_activeTabIndex(2); } catch (e) { log('[לשונית] הפעלת "רשימת תלמידים" נכשלה: ' + (e && e.message)); }
   }, 0);

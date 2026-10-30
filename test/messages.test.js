@@ -8,6 +8,7 @@ import {
   messagesIsRunning, messagesRunBulk, messagesScan, messagesRunTable,
   messagesNormId, messagesNormBranch, messagesExtractTransfer, messagesMergeDuplicates, messagesParseRoster, messagesRosterBranches,
   messagesCrossCheck, messagesDecisionCounts, messagesReviewEntries, messagesRowMatchesFilter, messagesShorten,
+  messagesFindFilterSelect, messagesActionOutcome,
 } from '../src/tools/messages.js';
 import { messagesTool } from '../src/tools/messages-ui.js';
 
@@ -266,7 +267,8 @@ test('messagesParseRoster: עמודות הפוכות (ת.ז. ואז סניף) מ
   assert.equal(only.ok, false);
 });
 
-test('messagesCrossCheck: במצבת / לא במצבת / ריק בלי ת.ז.; מעבר שכבר בוצע → טופל + כבר בוצע', () => {
+// ממצא ב-10 (ביקורת שנייה): "כבר בוצע" הוא רמז לבדיקה (נוסח "לסניף NN" לא אומת באתר): התג מוצג, ההצעה לא משתנה.
+test('messagesCrossCheck: במצבת / לא במצבת / ריק בלי ת.ז.; מעבר שכבר בוצע → תג "כבר בוצע", ההצעה נשארת "אישור מעבר"', () => {
   const roster = messagesParseRoster(`סניף${T}ת.ז.\n16${T}78901234\n05${T}012345678\n16${T}AB1234567`);
   const rows = messagesMergeDuplicates([
     msgRow({ uid: 'M1', personId: '078901234', body: 'בקשת מעבר עבור התלמיד ת.ז. 078901234 מסניף 05 לסניף 16.' }),
@@ -279,7 +281,7 @@ test('messagesCrossCheck: במצבת / לא במצבת / ריק בלי ת.ז.; �
   assert.equal(out.length, 5);
   assert.equal(out[0].rosterLabel, 'סניף 16');
   assert.equal(out[0].alreadyDone, true);
-  assert.equal(out[0].suggestedAction, MESSAGES_ACTION.HANDLED);
+  assert.equal(out[0].suggestedAction, MESSAGES_ACTION.APPROVE, 'ממצא ב-10: ההחלטה לא משתנה מעצמה; הכפתור "כל \'כבר בוצע\': סמן כטופל" מחיל');
   assert.equal(out[1].rosterLabel, 'סניף 05');
   assert.equal(out[1].alreadyDone, false);
   assert.equal(out[1].suggestedAction, MESSAGES_ACTION.APPROVE);
@@ -326,4 +328,39 @@ test('messagesShorten: קיצור עם שלוש נקודות', () => {
   assert.equal(messagesShorten('אבג', 10), 'אבג');
   assert.equal(messagesShorten('א'.repeat(20), 10), 'א'.repeat(9) + '…');
   assert.equal(messagesShorten(null, 5), '');
+});
+
+// ─── ממצא ב-11: תיבת-הסינון נבחרת לפי המזהה ddlMessageStatus, ורק אחרת לפי האופציות ────────
+function fakeSelect(id, texts) {
+  return { id, options: texts.map((t) => ({ text: t, value: t })) };
+}
+async function withSelects(selects, fn) {
+  const prev = globalThis.document;
+  globalThis.document = { querySelectorAll: (sel) => (sel === 'select' ? selects.slice() : []) };
+  try { return await fn(); } finally { if (prev === undefined) delete globalThis.document; else globalThis.document = prev; }
+}
+
+test('messagesFindFilterSelect (ממצא ב-11): מעדיפה select שה-id שלו מכיל ddlMessageStatus גם כשאחר עם אותן אופציות קודם לו', async () => {
+  const decoy = fakeSelect('ContentPlaceHolder1_ddlOther', ['נשלחה', 'טופלה']);
+  const real = fakeSelect('ContentPlaceHolder1_ddlMessageStatus', ['נשלחה', 'טופלה']);
+  await withSelects([decoy, real], () => { assert.equal(messagesFindFilterSelect(), real); });
+  await withSelects([decoy], () => { assert.equal(messagesFindFilterSelect(), decoy, 'בלי מזהה: לפי אופציות'); });
+  await withSelects([fakeSelect('x', ['א', 'ב'])], () => { assert.equal(messagesFindFilterSelect(), null); });
+});
+
+// ─── ממצא ב-4: אימות הפעולה כשהגריד חזר לעמוד אחר אחרי הפוסטבק ────────────────────────
+test('messagesActionOutcome (ממצא ב-4): אותו עמוד → לפי הספירה; עמוד אחר → הצלחה רק עם חלונית-הצלחה', () => {
+  const same = { pageBefore: 3, pageAfter: 3 };
+  assert.deepEqual(messagesActionOutcome(Object.assign({ before: 1, after: 0, popup: null }, same)), { ok: true });
+  assert.equal(messagesActionOutcome(Object.assign({ before: 1, after: 1, popup: null }, same)).ok, false);
+  assert.match(messagesActionOutcome(Object.assign({ before: 1, after: 1, popup: { kind: 'info', text: 'לא' } }, same)).reason, /האתר הודיע: "לא"/);
+  const moved = { pageBefore: 3, pageAfter: 1, before: 1, after: 0 };
+  assert.deepEqual(messagesActionOutcome(Object.assign({ popup: { kind: 'success', text: 'הצלחה' } }, moved)), { ok: true, pageChanged: true });
+  const noPopup = messagesActionOutcome(Object.assign({ popup: null }, moved));
+  assert.equal(noPopup.ok, false);
+  assert.match(noPopup.reason, /^הגריד חזר לעמוד אחר אחרי הפעולה/);
+  const errPopup = messagesActionOutcome(Object.assign({ popup: { kind: 'info', text: 'הפעולה אפשרית רק עבור בקשת מעבר' } }, moved));
+  assert.equal(errPopup.ok, false);
+  assert.match(errPopup.reason, /הגריד חזר לעמוד אחר אחרי הפעולה/);
+  assert.match(errPopup.reason, /הפעולה אפשרית רק עבור בקשת מעבר/);
 });

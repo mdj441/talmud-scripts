@@ -223,6 +223,7 @@ test('waitPRM: התחילה בקשה ולא נסגרה עד totalTimeout → {ok
     assert.equal(res.ok, false);
     assert.equal(res.started, true);
     assert.match(res.reason, /timeout/i);
+    assert.equal(res.timeout, true, 'ממצא ב-2: הקורא מבחין בין timeout לכשל אחר');
     assert.equal(fake.handlers.begin.length, 0, 'beginRequest handler הוסר');
     assert.equal(fake.handlers.end.length, 0, 'endRequest handler הוסר');
   });

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { S, saveAbsorbState, loadAbsorbState, absorbResetRun } from '../src/tools/absorb-state.js';
-import { absorbSetHooks, absorbStartRun, absorbStop, absorbDiscardSavedQueue, absorbResumeIfPending } from '../src/tools/absorb-flow.js';
+import { absorbSetHooks, absorbStartRun, absorbStop, absorbDiscardSavedQueue, absorbResumeIfPending, absorbIsBusy } from '../src/tools/absorb-flow.js';
+import { ABSORB_STATUS } from '../src/tools/absorb-report.js';
 import { saveNavState, loadNavState } from '../src/core/navigate.js';
 import { RUN_LOCK_KEY, readRunLock } from '../src/core/lock.js';
 
@@ -151,4 +152,134 @@ test('טקסטי "מה לעשות" (ממצא 12): בלי הוראות חלשות
   assert.ok(verifyLines.length >= 1);
   for (const line of verifyLines) assert.ok(line.includes('קלוט אותו ידנית'), `חסר "ואם אינו שם, קלוט אותו ידנית": ${line.trim()}`);
   assert.ok(src.includes('לחץ "קליטה" בדף סוג-הלימוד'), 'הוראת קליטה ידנית מפורטת');
+});
+
+// ─── ביקורת שנייה: דפי-דמה מינימליים (בלי DOM אמיתי) כדי להריץ את הזרימה עד רישום התוצאה ──────
+const SITE = 'https://talmud.edu.gov.il';
+const INST_00_URL = `${SITE}/Institutes/InstitutesDetails.aspx?InstituteID=491`;
+const ST_00_600_URL = `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10002&InstituteID=491`;
+const ABSORB_BASE = 'ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails';
+const fakeLocation = (href) => ({ href, protocol: 'https:', host: 'talmud.edu.gov.il', origin: SITE });
+
+function fakePrm() {
+  const h = { begin: [], end: [] };
+  const prm = {
+    _isInAsyncPostBack: false,
+    add_beginRequest: (f) => h.begin.push(f),
+    add_endRequest: (f) => h.end.push(f),
+    remove_beginRequest: (f) => { h.begin = h.begin.filter((x) => x !== f); },
+    remove_endRequest: (f) => { h.end = h.end.filter((x) => x !== f); },
+  };
+  // סבב postback מדומה: beginRequest ואז endRequest בלי שגיאה
+  const roundTrip = () => {
+    setTimeout(() => { for (const f of h.begin.slice()) f(prm, {}); }, 5);
+    setTimeout(() => { for (const f of h.end.slice()) f(prm, { get_error: () => null, set_errorHandled: () => {} }); }, 40);
+  };
+  return { prm, roundTrip };
+}
+
+function swapGlobals(next) {
+  const prev = {};
+  for (const k of Object.keys(next)) { prev[k] = globalThis[k]; globalThis[k] = next[k]; }
+  return () => { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v; } };
+}
+
+// דף סוג-לימוד 00/600 עם פירורי-לחם, חיפוש שמריץ postback מדומה, תווית-ספירה וגריד. התווית והגריד
+// נוצרים מחדש בכל קריאה (כמו אחרי postback שהחליף את האלמנטים: עדות-טריות). ‏calls סופר לחיצות.
+async function withStudyTypePage({ gridRows, countText }, fn) {
+  const { prm, roundTrip } = fakePrm();
+  const calls = { search: 0, absorb: 0 };
+  const crumbs = 'בית > איתור מוסד > עטרת שלמה > 00 > (600)כולל אברכים';
+  const crumbEl = { innerText: crumbs, textContent: crumbs };
+  const el = (over) => Object.assign({ value: '', getAttribute: () => null, setAttribute() {}, dispatchEvent() {}, click() {} }, over);
+  const grid = () => el({ querySelectorAll: () => gridRows.map((cells) => ({ querySelectorAll: () => cells.map((c) => ({ textContent: c })) })) });
+  const byId = {
+    [`${ABSORB_BASE}_txtStudenPassport`]: el(),
+    [`${ABSORB_BASE}_btnSearch`]: el({ click: () => { calls.search++; roundTrip(); } }),
+    ContentPlaceHolder1_btnStudentAcceptence3: el({ click: () => { calls.absorb++; roundTrip(); } }),
+  };
+  const restore = swapGlobals({
+    location: fakeLocation(ST_00_600_URL),
+    window: { addEventListener() {}, __doPostBack() {}, Page_Validators: [] },
+    Sys: { WebForms: { PageRequestManager: { getInstance: () => prm } } },
+    document: {
+      querySelector: (sel) => (sel === 'h1' ? { textContent: 'סוג לימוד 600 - כולל אברכים' } : (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) ? crumbEl : null)),
+      querySelectorAll: (sel) => (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) ? [crumbEl] : []),
+      getElementById: (id) => (id === `${ABSORB_BASE}_lblCountSearch` ? el({ textContent: countText })
+        : id === `${ABSORB_BASE}_gvIStudents` ? grid() : (byId[id] || null)),
+      body: { innerText: crumbs },
+    },
+  });
+  try { return await fn(calls); } finally { restore(); }
+}
+
+// ממשיך תור שמור של תלמיד אחד בדף-הדמה ומחזיר את התוצאה שנרשמה.
+async function resumeOne(task, extraState, pageOpts) {
+  return withStorages(() => withStudyTypePage(pageOpts, async (calls) => {
+    globalThis.sessionStorage.setItem('talmud.absorb.queue', JSON.stringify(Object.assign({ queue: [task], results: [], curIdx: 0, startedAt: new Date().toISOString() }, extraState)));
+    let results = null;
+    absorbSetHooks({ onDone: (r) => { results = r; } });
+    await absorbResumeIfPending();
+    return { results, calls };
+  }));
+}
+
+const GRID_WITH = [['', '1', 'תעודת זהות', '012345678', 'ראובן', 'כהן', '01/01/1990']];
+const TASK_00 = { line: 2, branch: '00', studyType: '600', idType: 'tz', identity: '012345678' };
+
+// ─── ממצא ב-7: "התחל" בין beforeunload לפריקה: ניווט שהוכרז נחשב "עסוק" גם אחרי שכלב-השומר נוקה ──
+// (הבדיקה הזו ראשונה: watchUnload נרשם פעם אחת לכל המודול, על ה-window הראשון שהוא רואה.)
+test('absorbIsBusy (ממצא ב-7): אחרי ניווט מלא ו-beforeunload (כלב-השומר נוקה) עדיין עסוק; absorbStop משחרר', async () => {
+  const listeners = {};
+  const restore = swapGlobals({
+    location: fakeLocation(INST_00_URL),
+    window: { addEventListener: (type, fn) => { listeners[type] = fn; }, __doPostBack() {} },
+    document: { querySelector: () => null, querySelectorAll: () => [], getElementById: () => null, body: { innerText: '' } },
+  });
+  try {
+    await withStorages(async () => {
+      globalThis.localStorage.setItem('talmud.nav.studyTypeIds', JSON.stringify({ '00|600': { id: '10002', instituteId: '491' } }));
+      await absorbStartRun([TASK_00]); // כתובת ישירה ידועה → ניווט מלא → NAVIGATED
+      assert.match(globalThis.location.href, /StudyTypeDetails/, 'נורה ניווט מלא');
+      assert.equal(absorbIsBusy(), true, 'ממתינים לטעינה: עסוק');
+      assert.equal(typeof listeners.beforeunload, 'function', 'מאזין beforeunload נרשם');
+      listeners.beforeunload(); // הדף מתחיל להיפרק: כלב-השומר נוקה
+      assert.equal(absorbIsBusy(), true, 'בין beforeunload לפריקה "התחל" חייב להישאר חסום');
+      absorbStop();
+      assert.equal(absorbIsBusy(), false, 'עצירה משחררת את הדגל');
+    });
+  } finally { restore(); }
+});
+
+// ─── ממצא ב-9: "אישור" שטען מחדש את אותו דף: "נמצא ברשימה" עם pendingConfirm תואם → "נקלט", לא "כבר קיים" ──
+test('saveAbsorbState (ממצא ב-9): pendingConfirm נשמר עם המצב ומתאפס ב-absorbResetRun', async () => {
+  await withStorages(() => {
+    S.queue = [TASK_00];
+    S.pendingConfirm = { idx: 0, identity: '012345678' };
+    saveAbsorbState();
+    assert.deepEqual(loadAbsorbState().pendingConfirm, { idx: 0, identity: '012345678' });
+    absorbResetRun();
+    assert.equal(S.pendingConfirm, null);
+  });
+});
+
+test('זרימה (ממצא ב-9): המשך אחרי טעינה עם pendingConfirm תואם והתלמיד ברשימה → "נקלט"; בלי pendingConfirm → "כבר קיים"', async () => {
+  const page = { gridRows: GRID_WITH, countText: 'נמצאו 1 רשומות בהתאם לקריטריון החיפוש' };
+  const confirmed = await resumeOne(TASK_00, { pendingConfirm: { idx: 0, identity: '012345678' } }, page);
+  assert.ok(confirmed.results && confirmed.results.length === 1, 'נרשמה תוצאה');
+  assert.equal(confirmed.results[0].status, ABSORB_STATUS.OK, `אחרי "אישור" שטען את הדף: ${confirmed.results[0].status}`);
+  assert.equal(confirmed.calls.absorb, 0, 'לא לוחצים "קליטה" שוב');
+  assert.equal(loadAbsorbState(), null, 'התור נוקה בסיום');
+  const plain = await resumeOne(TASK_00, {}, page);
+  assert.equal(plain.results[0].status, ABSORB_STATUS.EXISTS);
+});
+
+// ─── ממצא ב-3: ספירה 1+ אך לא נקראו מזהים → "לאמת ידנית", לא לחיצה על "קליטה" ─────────────
+test('זרימה (ממצא ב-3): החיפוש המקדים מדווח תוצאה אך עמודת המזהה אינה קריאה → "לאמת ידנית" עם פירוט, בלי "קליטה"', async () => {
+  const shifted = [['', '1', 'תעודת זהות', 'ראובן', '012345678', 'כהן']]; // המזהה לא בעמודה 3
+  const r = await resumeOne(TASK_00, {}, { gridRows: shifted, countText: 'נמצאו 1 רשומות בהתאם לקריטריון החיפוש' });
+  assert.ok(r.results && r.results.length === 1, 'נרשמה תוצאה');
+  assert.equal(r.results[0].status, ABSORB_STATUS.VERIFY, `סטטוס: ${r.results[0].status} (${r.results[0].detail})`);
+  assert.match(r.results[0].detail, /הרשימה הציגה 1 תוצאות אך לא ניתן לקרוא בה מזהים/);
+  assert.equal(r.calls.absorb, 0, 'אסור ללחוץ "קליטה" על תלמיד שאולי כבר ברשימה');
 });

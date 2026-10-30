@@ -32,9 +32,13 @@
 
   function gridHtml(students) {
     if (!students.length) return ''; // GridView ריק אינו מרונדר כלל (עובדה מהאתר)
-    let html = `<table class="grid" id="${BASE}_gvIStudents"><tr><th></th><th>סדר קליטה</th><th>סוג מזהה</th><th>ת.ז. / דרכון</th><th>שם</th><th>שם משפחה</th><th>תאריך לידה</th><th>סוג לימוד</th><th>תאריך קליטה</th><th>תאריך עזיבה</th><th>מצב אישור מעבר בין מ...</th></tr>`;
+    // ממצא ב-3: עם gridIdColumnShifted עמודה נוספת ("סניף") נדחפת לפני המזהה, ועמודה 3 אינה עמודת המזהה
+    const shifted = db.gridIdColumnShifted === true;
+    const extraTh = shifted ? '<th>סניף</th>' : '';
+    let html = `<table class="grid" id="${BASE}_gvIStudents"><tr><th></th><th>סדר קליטה</th><th>סוג מזהה</th>${extraTh}<th>ת.ז. / דרכון</th><th>שם</th><th>שם משפחה</th><th>תאריך לידה</th><th>סוג לימוד</th><th>תאריך קליטה</th><th>תאריך עזיבה</th><th>מצב אישור מעבר בין מ...</th></tr>`;
     students.forEach((s, i) => {
-      html += `<tr><td><input type="checkbox"></td><td>${i + 1}</td><td>${s.idType === '2' ? 'דרכון' : 'תעודת זהות'}</td><td>${C.esc(s.id)}</td><td>${C.esc(s.first)}</td><td>${C.esc(s.last)}</td><td>${C.esc(s.birth || '')}</td><td>${C.esc(st.code)}</td><td>${C.esc(s.accepted || today)}</td><td></td><td></td></tr>`;
+      const extraTd = shifted ? `<td>${C.esc(inst.branch)}</td>` : '';
+      html += `<tr><td><input type="checkbox"></td><td>${i + 1}</td><td>${s.idType === '2' ? 'דרכון' : 'תעודת זהות'}</td>${extraTd}<td>${C.esc(s.id)}</td><td>${C.esc(s.first)}</td><td>${C.esc(s.last)}</td><td>${C.esc(s.birth || '')}</td><td>${C.esc(st.code)}</td><td>${C.esc(s.accepted || today)}</td><td></td><td></td></tr>`;
     });
     return html + '</table>';
   }

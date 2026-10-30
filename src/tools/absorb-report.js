@@ -52,6 +52,8 @@ const ABSORB_ID_CELL_RE = /^[0-9A-Za-z][0-9A-Za-z\s-]{3,}$/;
 // 0 → "לא נמצא" תמיד; 1 → מותר fallback לשורת-נתונים יחידה; 2+ → רק התאמה מדויקת; null → בלי שער.
 // ממצא 10: ה-fallback מותר רק כשהתא מכיל את ספרות המזהה (אחרי נרמול). שורה יחידה עם מזהה *אחר*
 // אינה הצלחה: {found:false, singleOther:<התא>}, והזרימה מדווחת "לאמת ידנית".
+// ממצא ב-3: התווית אומרת 1+ אך אף תא לא זוהה כמזהה (למשל עמודה 3 אינה עמודת המזהה): הרשימה לא
+// קריאה, {found:false, unreadable:true}, והזרימה לא לוחצת "קליטה" על תלמיד שאולי כבר ברשימה.
 export function analyzeGrid(rows, identity, count) {
   const none = { found: false, matchType: null };
   if (count === 0) return none;
@@ -70,6 +72,7 @@ export function analyzeGrid(rows, identity, count) {
     if (absorbNormalizeId(cell) === target) exact = true;
   }
   if (exact) return { found: true, matchType: 'exact' };
+  if (dataRows === 0 && typeof count === 'number' && count >= 1) return { found: false, matchType: null, unreadable: true };
   if (dataRows === 1 && (count == null || count === 1)) {
     if (absorbNormalizeId(lastCell).includes(target)) return { found: true, matchType: 'single-row-fallback' };
     return { found: false, matchType: null, singleOther: lastCell };
@@ -175,6 +178,17 @@ export function absorbParsePostbackFromHref(href) {
 // 'institute' = דף המוסד שממנו הגענו (h1) עם אותו InstituteID בכתובת. מפה/כוונה: לא.
 export function absorbBranchSourceTrusted(source) {
   return source === 'breadcrumb' || source === 'institute';
+}
+
+// ממצא ב-2: פוסטבק מנווט שפג זמנו (pageRedirect בלי endRequest) אחרי שהדף כבר התחיל להיפרק
+// (beforeunload/pagehide) הוא טעינת-דף בדרך, לא כשל: ההמשך אחרי הטעינה, בלי לסמן "שגיאה".
+export function absorbNavTimeoutIsNavigation(res, unloadSeen) {
+  return !!(res && typeof res === 'object' && res.ok === false && res.timeout === true && unloadSeen === true);
+}
+
+// ממצא ב-3: פירוט לרשימה שלא ניתן לקרוא בה מזהים.
+export function absorbUnreadableGridDetail(count) {
+  return `הרשימה הציגה ${count} תוצאות אך לא ניתן לקרוא בה מזהים`;
 }
 
 // הוראה אופרטיבית לניווט ידני לסוג-לימוד (משותפת לכמה סטטוסים).

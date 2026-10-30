@@ -5,7 +5,7 @@ import {
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
-  absorbShouldRecord, absorbPrecheckDecision, absorbBranchSourceTrusted,
+  absorbShouldRecord, absorbPrecheckDecision, absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation,
 } from '../src/tools/absorb-report.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -413,3 +413,24 @@ test('absorbPrecheckDecision: אין עדות שהחיפוש רץ → שגיאה
 // ─── W1/W2: אמון בסניף השמור לפי provenance (בדיקה רטובה 10.9.2026) ──────────
 // בדף סוג-לימוד אין סניף ב-DOM. הסניף השמור נסמך רק כשנקרא מ-h1 של דף מוסד בטאב הזה
 // ושום ניווט לא דרס אותו ('h1'). 'pending' = gotoBranch כתב לפני ירי שאולי נבלע (F2).
+// ─── ממצא ב-3 (ביקורת שנייה): ספירה 1+ אך אף תא לא זוהה כמזהה → הרשימה לא קריאה, לא "לא נמצא" ──
+test('analyzeGrid (ממצא ב-3): count>=1 ו-0 שורות-מזהה → {found:false, unreadable:true}; count=0/null → כמו קודם', () => {
+  const shifted = [['', '1', 'תעודת זהות', 'משה', '337386692', 'כהן']]; // עמודה 3 אינה המזהה
+  assert.deepEqual(analyzeGrid(shifted, '337386692', 1), { found: false, matchType: null, unreadable: true });
+  assert.deepEqual(analyzeGrid([], '337386692', 2), { found: false, matchType: null, unreadable: true });
+  assert.deepEqual(analyzeGrid(shifted, '337386692', 0), { found: false, matchType: null });
+  assert.deepEqual(analyzeGrid(shifted, '337386692', null), { found: false, matchType: null });
+  assert.deepEqual(analyzeGrid(shifted, '337386692'), { found: false, matchType: null });
+  // יש שורת-מזהה אחת (אחרת): לא "לא קריא" אלא singleOther כמו קודם
+  const other = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(other, '337386692', 1), { found: false, matchType: null, singleOther: '000000123' });
+});
+
+// ─── ממצא ב-2: פוסטבק מנווט שפג זמנו אחרי שהדף התחיל להיפרק הוא ניווט, לא כשל ──────────
+test('absorbNavTimeoutIsNavigation (ממצא ב-2): רק timeout עם unloadSeen; כשל אחר או בלי פריקה → false', () => {
+  assert.equal(absorbNavTimeoutIsNavigation({ ok: false, timeout: true, reason: 'PRM timeout after 25000ms' }, true), true);
+  assert.equal(absorbNavTimeoutIsNavigation({ ok: false, timeout: true }, false), false);
+  assert.equal(absorbNavTimeoutIsNavigation({ ok: false, reason: 'PRM: server error' }, true), false);
+  assert.equal(absorbNavTimeoutIsNavigation({ ok: true }, true), false);
+  assert.equal(absorbNavTimeoutIsNavigation(null, true), false);
+});

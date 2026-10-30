@@ -64,8 +64,16 @@
 
     if (res.kind === 'navigate') {
       log(`postback navigate: ${target} → ${res.url}`);
-      // ניווט מלא: אין beginRequest (אינו MS AJAX). הדף נפרק.
-      setTimeout(() => { window.location.href = res.url; }, Math.max(20, delay() / 2));
+      // ניווט מלא. ברירת-מחדל: אין beginRequest (כמו submit רגיל). עם redirectFiresBeginRequest (ממצא ב-2,
+      // כמו pageRedirect באתר): beginRequest נורה, endRequest לא נורה לעולם, והדף נפרק אחרי redirectDelayMs.
+      let db = null;
+      try { db = window.__mockDb ? window.__mockDb.load() : null; } catch (e) { db = null; }
+      const redirectDelay = db && typeof db.redirectDelayMs === 'number' ? db.redirectDelayMs : Math.max(20, delay() / 2);
+      if (db && db.redirectFiresBeginRequest) {
+        inAsync = true;
+        fire(handlers.begin, prm, { get_postBackElement: () => document.getElementById(target.replace(/\$/g, '_')) });
+      }
+      setTimeout(() => { window.location.href = res.url; }, redirectDelay);
       return;
     }
 

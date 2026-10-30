@@ -54,6 +54,16 @@
       treeNavigates: true,
       // האם פירורי-הלחם בדף סוג-לימוד מציגים את מספר הסניף
       breadcrumbShowsBranch: true,
+      // ממצא ב-2: פוסטבק מנווט (עריכה בגריד, עץ) נורה כ-pageRedirect: beginRequest בלי endRequest,
+      // והדף נפרק אחרי redirectDelayMs (ברירת-מחדל: חצי מ-__mockDelayMs)
+      redirectFiresBeginRequest: false,
+      redirectDelayMs: null,
+      // ממצא ב-3: גריד התלמידים עם עמודה נוספת לפני המזהה (עמודה 3 אינה עמודת המזהה)
+      gridIdColumnShifted: false,
+      // ממצא ב-4 (דף ההודעות): אחרי פעולה הגריד חוזר לעמוד 1; הודעות ב-messagesStuck מקבלות חלונית-הצלחה
+      // אך נשארות "נשלחה" (פעולה שלא נתפסה בשרת)
+      messagesResetPageAfterAction: false,
+      messagesStuck: [],
       pendingNewStudent: null, // { id, idType, studyTypeInstId, birth, country }
       log: [],
     };

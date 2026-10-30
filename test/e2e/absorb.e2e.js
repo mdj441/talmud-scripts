@@ -179,26 +179,70 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
     } finally { await context.close(); }
   });
 
-  test('ממצא 4 + 12: "שמירה" עם חלונית-הצלחה (נשארים בדף) → שמירה אחת, טקסט החלונית בפירוט התוצאה', async () => {
+  // ממצא ב-6: "שמירה" שנשארת באותו מסמך משנה את hidStudentState (-1 → 1); הזרימה מזהה את הדף לפי הכתובת,
+  // עוברת לרשימת התלמידים ומאמתת: "נקלט (תלמיד חדש)", לא "נשמר - לאמת ידנית".
+  test('ממצא 4 + 12 + ב-6: "שמירה" עם חלונית-הצלחה (נשארים בדף) → שמירה אחת, אימות ברשימה, טקסט החלונית בפירוט', async () => {
     const { context, page } = await session({ afterSave: 'popup' });
     try {
       const run = await runAbsorb(page, `00${T}600${T}067890123${T}משה${T}כהן${T}10/10/1990`, { startUrl: URLS.institute(491) });
       assert.equal(run.results.length, 1, run.log);
-      assert.ok([ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.OK_NEW].includes(run.results[0].status), `סטטוס: ${run.results[0].status}\n${run.log}`);
+      assert.equal(run.results[0].status, ABSORB_STATUS.OK_NEW, `סטטוס: ${run.results[0].status}\n${run.log}`);
       assert.match(run.results[0].detail, /הפרטים נשמרו/, `הפירוט: "${run.results[0].detail}"`);
       const db = await readMockDb(page);
       assert.equal(db.enrolled['10002'].filter((s) => s.id === '067890123').length, 1, 'שמירה כפולה במסד-הדמה');
     } finally { await context.close(); }
   });
 
-  test('ממצא 4: "שמירה" שנשארת בדף בלי הודעה → שמירה אחת', async () => {
+  test('ממצא 4 + ב-6: "שמירה" שנשארת בדף בלי הודעה → שמירה אחת ואימות ברשימה: "נקלט (תלמיד חדש)"', async () => {
     const { context, page } = await session({ afterSave: 'stay' });
     try {
       const run = await runAbsorb(page, `00${T}600${T}067890123${T}משה${T}כהן${T}10/10/1990`, { startUrl: URLS.institute(491) });
       assert.equal(run.results.length, 1, run.log);
-      assert.ok([ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.OK_NEW].includes(run.results[0].status), `סטטוס: ${run.results[0].status}\n${run.log}`);
+      assert.equal(run.results[0].status, ABSORB_STATUS.OK_NEW, `סטטוס: ${run.results[0].status}\n${run.log}`);
       const db = await readMockDb(page);
       assert.equal(db.enrolled['10002'].filter((s) => s.id === '067890123').length, 1, 'שמירה כפולה במסד-הדמה');
+    } finally { await context.close(); }
+  });
+
+  // ─── ביקורת שנייה ───────────────────────────────────────────────────────────
+  test('ממצא ב-2: פוסטבק מנווט כ-pageRedirect (beginRequest בלי endRequest) ששרת איטי עונה לו אחרי 9 שניות → "נקלט", לא "שגיאה"', async () => {
+    const { context, page } = await session({ redirectFiresBeginRequest: true, redirectDelayMs: 9000 });
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}034567890`, { startUrl: URLS.institute(491), timeoutMs: 120000 });
+      assert.equal(run.results.length, 1, run.log);
+      assert.equal(run.results[0].status, 'נקלט', `סטטוס: ${run.results[0].status}\n${run.log}`);
+      assert.ok(!/PRM timeout after 8000/.test(run.log), 'תקציב 8 שניות פג לפני שהדף נפרק');
+      const db = await readMockDb(page);
+      assert.ok(db.enrolled['10002'].some((s) => s.id === '034567890'));
+    } finally { await context.close(); }
+  });
+
+  test('ממצא ב-3: החיפוש מדווח תוצאה אך עמודת המזהה אינה במקומה → "לאמת ידנית" עם פירוט, בלי "קליטה"', async () => {
+    const { context, page } = await session({ gridIdColumnShifted: true });
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}012345678`, { startUrl: URLS.institute(491) });
+      assert.equal(run.results.length, 1, run.log);
+      assert.equal(run.results[0].status, ABSORB_STATUS.VERIFY, `סטטוס: ${run.results[0].status}\n${run.log}`);
+      assert.match(run.results[0].detail, /הרשימה הציגה 1 תוצאות אך לא ניתן לקרוא בה מזהים/, run.results[0].detail);
+      const db = await readMockDb(page);
+      assert.equal(db.enrolled['10002'].length, 2, 'לא נוספה שורה');
+      assert.ok(!(db.log || []).some((l) => /confirm /.test(l)), `נלחץ "קליטה"/"אישור" על תלמיד שאולי ברשימה:\n${(db.log || []).join('\n')}`);
+    } finally { await context.close(); }
+  });
+
+  test('ממצא ב-8: הפייג\'ר של gvStudyType (טבלה מקוננת) אינו נקרא כסוגי-לימוד "1"/"12" ברשימת-הבחירה; ניווט לעמוד 2 (728) עובד', async () => {
+    const { context, page } = await session();
+    try {
+      await page.goto(URLS.institute(491));
+      await waitForPanel(page);
+      const options = await evalRetry(page, () => Array.from(document.querySelectorAll('#tt-absorb-dl-studytypes option')).map((o) => o.value));
+      assert.ok(options.includes('300') && options.includes('725'), `הקודים מהגריד: ${options.join(',')}`);
+      assert.ok(!options.includes('1') && !options.includes('2') && !options.includes('12'), `תאי הפייג'ר נקראו כקודים: ${options.join(',')}`);
+      const run = await runAbsorb(page, `00${T}728${T}034567890`);
+      // הגריד דפדף לעמוד 2 ו"עריכה" הביאה לדף סוג-הלימוד 728 (10009); שורת "[ניווט] →" לא נכתבת כשהדף נפרק קודם
+      assert.match(run.log, /נלמד: סניף 00 סוג 728 → 10009/, run.log);
+      assert.match(run.log, /דף studyType · סניף 00 \[breadcrumb\] · סוג 728/, run.log);
+      assert.ok(!/לא נמצא בגריד/.test(run.log), run.log);
     } finally { await context.close(); }
   });
 

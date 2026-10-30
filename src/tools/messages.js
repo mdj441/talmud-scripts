@@ -309,8 +309,9 @@ export function messagesRosterBranches(roster, personId) {
 }
 
 // הצלבה מול המצבת: לכל שורה עם ת.ז. "סניף NN" / "לא במצבת"; בלי ת.ז. → ''. בקשת-מעבר שהתלמיד כבר
-// במצבת בסניף-היעד שלה: alreadyDone, וההצעה הופכת ל"סמן כטופל" (המערכת שולחת הודעה גם על מעבר
-// שבעל-המערכת כבר ביצע בעצמו). roster=null → עמודה ריקה וההצעה המקורית. מחזיר מערך חדש.
+// במצבת בסניף-היעד שלה: alreadyDone (תג "כבר בוצע"). ממצא ב-10: זה רמז לבדיקה בלבד, כי הנוסח
+// "לסניף NN" בגוף ההודעה לא אומת באתר: ההצעה לא משתנה מעצמה; הכפתור "כל 'כבר בוצע': סמן כטופל"
+// בלשונית מחיל את ההחלטה על השורות המסומנות. roster=null → עמודה ריקה. מחזיר מערך חדש.
 export function messagesCrossCheck(rows, roster) {
   return (rows || []).map((r) => {
     const out = Object.assign({}, r, { rosterLabel: '', rosterBranches: [], alreadyDone: false, suggestedAction: messagesSuggestAction(r.header) });
@@ -319,10 +320,7 @@ export function messagesCrossCheck(rows, roster) {
     out.rosterBranches = branches;
     out.rosterLabel = branches.length ? branches.map((b) => `סניף ${b}`).join(', ') : 'לא במצבת';
     const transfer = r.transfer || messagesExtractTransfer(r.body);
-    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) {
-      out.alreadyDone = true;
-      out.suggestedAction = MESSAGES_ACTION.HANDLED;
-    }
+    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) out.alreadyDone = true;
     return out;
   });
 }
@@ -499,13 +497,18 @@ async function messagesGotoNextPage() {
 
 // ─── סינון "נשלחה" ──────────────────────────────────────────────────────────
 
+// ממצא ב-11: מעדיפים את ה-select שה-id שלו מכיל ddlMessageStatus (כמו באתר ובסקריפט הישן), ורק
+// אחרת את הראשון שהאופציות שלו כוללות "נשלחה" ו"טופלה". מספר המועמדים נרשם ליומן.
 export function messagesFindFilterSelect() {
   if (typeof document === 'undefined') return null;
-  for (const s of Array.from(document.querySelectorAll('select'))) {
-    const texts = Array.from(s.options).map((o) => messagesFlat(o.text));
-    if (texts.includes(MESSAGES_STATUS_SENT) && texts.includes(MESSAGES_STATUS_HANDLED)) return s;
-  }
-  return null;
+  const all = Array.from(document.querySelectorAll('select'));
+  const byId = all.filter((s) => /ddlMessageStatus/i.test(String(s.id || '')));
+  const byOptions = all.filter((s) => {
+    const texts = Array.from(s.options || []).map((o) => messagesFlat(o.text));
+    return texts.includes(MESSAGES_STATUS_SENT) && texts.includes(MESSAGES_STATUS_HANDLED);
+  });
+  log(`[הודעות] תיבות-סינון מועמדות: ${byId.length} לפי מזהה ddlMessageStatus, ${byOptions.length} לפי אופציות (נשלחה/טופלה)`);
+  return byId[0] || byOptions[0] || null;
 }
 
 async function messagesEnsureSentFilter() {
@@ -538,8 +541,21 @@ async function messagesClosePopupIfOpen(where) {
   return popup;
 }
 
+// טהורה (ממצא ב-4): הכרעת תוצאת הפעולה. אותו עמוד: מספר המופעים של ההודעה במצב "נשלחה" צריך
+// לרדת. העמוד השתנה (האתר חזר לעמוד אחר אחרי הפעולה): הגריד המוצג אינו ראיה; הצלחה רק עם
+// חלונית-הצלחה, אחרת "נכשל: הגריד חזר לעמוד אחר אחרי הפעולה" (עם הודעת האתר אם הייתה).
+export function messagesActionOutcome({ before, after, pageBefore, pageAfter, popup }) {
+  const siteSaid = popup && popup.kind !== 'success' && popup.text ? `האתר הודיע: "${messagesFlat(popup.text)}"` : '';
+  if (pageBefore !== pageAfter) {
+    if (popup && popup.kind === 'success') return { ok: true, pageChanged: true };
+    return { ok: false, reason: ['הגריד חזר לעמוד אחר אחרי הפעולה', siteSaid].filter(Boolean).join('; ') };
+  }
+  if (before > 0 && after >= before) return { ok: false, reason: siteSaid || 'ההודעה עדיין במצב "נשלחה" אחרי הפעולה' };
+  return { ok: true };
+}
+
 // פעולה אחת (performActionFast של הישן): סגירת חלונית ישנה → HidMessageRowID → postback → סגירת
-// חלונית ההצלחה → אימות מול הגריד (מספר המופעים של ההודעה במצב "נשלחה" צריך לרדת).
+// חלונית ההצלחה → אימות מול הגריד (messagesActionOutcome).
 async function messagesPerformAction(msg, action) {
   const target = MESSAGES_POSTBACK_TARGETS[action];
   if (!target) return { ok: false, reason: 'פעולה לא מוכרת: ' + action };
@@ -548,17 +564,20 @@ async function messagesPerformAction(msg, action) {
   if (!hid) return { ok: false, reason: 'לא נמצא השדה הנסתר של שורת ההודעה (HidMessageRowID)' };
   const countSent = () => messagesReadPage().filter((m) => m.uid === msg.uid && messagesIsSent(m)).length;
   const before = countSent();
+  const pageBefore = messagesCurrentPage();
   hid.value = String(msg.rowIndex);
   const res = await firePostback(target, '');
   if (!res.ok) return { ok: false, reason: res.reason || 'הפעולה נכשלה בשרת' };
   if (res.started === false) return { ok: false, reason: 'הלחיצה לא הפעילה בקשה לשרת' };
   const popup = await messagesClosePopupIfOpen('אחרי הפעולה');
-  if (before > 0 && countSent() >= before) {
-    const why = popup && popup.kind !== 'success' ? `האתר הודיע: "${messagesFlat(popup.text)}"` : 'ההודעה עדיין במצב "נשלחה" אחרי הפעולה';
-    return { ok: false, reason: why };
-  }
-  return { ok: true };
+  const pageAfter = messagesCurrentPage();
+  if (pageAfter !== pageBefore) log(`[הודעות] הגריד עבר מעמוד ${pageBefore} לעמוד ${pageAfter} אחרי הפעולה`);
+  return messagesActionOutcome({ before, after: countSent(), pageBefore, pageAfter, popup });
 }
+
+// ממצא ב-4: הודעה שקיבלה פעולה שלא ניתן היה לאמת מול הגריד (העמוד השתנה) ועדיין "נשלחה" בסבב הבא:
+// לא מבצעים שוב (גם במצב הגורף). מחזיר רשומת-כישלון לדוח.
+const MESSAGES_REPEAT_REASON = 'ההודעה עדיין במצב "נשלחה" אחרי פעולה שדווחה כהצלחה; לא מבצעים שוב';
 
 // ─── מצב גורף ───────────────────────────────────────────────────────────────
 
@@ -570,11 +589,20 @@ export async function messagesRunBulk() {
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
   const failed = new Set();
+  const attempted = new Set(); // ממצא ב-4: UID-ים שקיבלו פעולה בלי אימות מול הגריד (העמוד השתנה)
   let processed = 0, skipped = 0, consecutiveEmpty = 0;
   for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
     await messagesClosePopupIfOpen('בין פעולות');
     const list = messagesReadPage();
     if (!list.length) { log('[הודעות] אין הודעות בעמוד'); break; }
+    const repeat = list.find((m) => messagesIsSent(m) && !failed.has(m.uid) && attempted.has(m.uid));
+    if (repeat) {
+      skipped++;
+      failed.add(repeat.uid);
+      messagesRecord(repeat, messagesSuggestAction(repeat.header), MESSAGES_RESULT.FAILED_PREFIX + MESSAGES_REPEAT_REASON);
+      log(`[הודעות] ✗ ${MESSAGES_REPEAT_REASON} · ${repeat.header} · ${maskId(repeat.personId) || '-'}`);
+      continue;
+    }
     const target = list.find((m) => messagesIsSent(m) && !failed.has(m.uid));
     if (!target) {
       consecutiveEmpty++;
@@ -588,6 +616,7 @@ export async function messagesRunBulk() {
     messagesHook('onStatus', `טופלו ${processed}${skipped ? ` (נכשלו ${skipped})` : ''} · מטפל: ${action} · ${target.header}`);
     const t1 = Date.now();
     const res = await messagesPerformAction(target, action);
+    if (res.ok && res.pageChanged) attempted.add(target.uid);
     if (res.ok) {
       processed++;
       messagesRecord(target, action, MESSAGES_RESULT.DONE);
@@ -665,6 +694,7 @@ export async function messagesRunTable(entries) {
   await messagesEnsureSentFilter();
   await messagesGotoFirstPage();
   const handled = new Set(); // UID-ים שנרשמו בדוח לפחות פעם אחת
+  const attempted = new Set(); // ממצא ב-4: UID-ים שקיבלו פעולה בלי אימות מול הגריד (העמוד השתנה)
   let processed = 0, failedCount = 0, consecutiveEmpty = 0;
   for (let loops = 0; loops < MESSAGES_MAX_LOOPS && !MSG.stop; loops++) {
     await messagesClosePopupIfOpen('בין פעולות');
@@ -681,6 +711,13 @@ export async function messagesRunTable(entries) {
         continue;
       }
       if (!messagesIsSent(m)) continue;
+      if (attempted.has(m.uid)) {
+        p.left = 0;
+        failedCount++;
+        messagesRecord(m, p.action, MESSAGES_RESULT.FAILED_PREFIX + MESSAGES_REPEAT_REASON);
+        log(`[הודעות] ✗ ${MESSAGES_REPEAT_REASON} · ${m.header} · ${maskId(m.personId) || '-'}`);
+        continue;
+      }
       target = m;
       targetAction = p.action;
       break;
@@ -698,6 +735,7 @@ export async function messagesRunTable(entries) {
     const t1 = Date.now();
     const res = await messagesPerformAction(target, targetAction);
     handled.add(target.uid);
+    if (res.ok && res.pageChanged) attempted.add(target.uid);
     const p = pending.get(target.uid);
     if (res.ok) {
       processed++;

@@ -88,11 +88,13 @@
       html += `<tr onclick="selectedRowStudyType('${i}')" style="cursor:pointer"><td>${C.esc(st.code)}</td><td>${C.esc(st.desc)}</td><td>40</td><td>${C.esc(st.status)}</td><td>${D.enrolledOf(db, st.id).length}</td><td>0</td><td>13/09/1995</td></tr>`;
     });
     if (pages > 1) {
-      const links = [];
+      // כמו GridView אמיתי (ממצא ב-8): שורת-פייג'ר עם טבלה מקוננת, תא לכל מספר-עמוד. ה-tr-ים המקוננים
+      // נראים כשורות של הגריד למי שקורא table.querySelectorAll('tr').
+      const cells = [];
       for (let p = 1; p <= pages; p++) {
-        links.push(p === stPage ? `<span>${p}</span>` : `<a href="javascript:__doPostBack('${ST_PAGER_TARGET}','Page$${p}')">${p}</a>`);
+        cells.push(`<td>${p === stPage ? `<span>${p}</span>` : `<a href="javascript:__doPostBack('${ST_PAGER_TARGET}','Page$${p}')">${p}</a>`}</td>`);
       }
-      html += `<tr class="pager"><td colspan="7">${links.join(' ')}</td></tr>`;
+      html += `<tr class="pager"><td colspan="7"><table border="0"><tbody><tr>${cells.join('')}</tr></tbody></table></td></tr>`;
     }
     html += '</table>';
     document.getElementById(`${ST_BASE}_upGrid`).innerHTML = html;

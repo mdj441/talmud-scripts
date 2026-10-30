@@ -57,7 +57,8 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
 
     const totalTimer = setTimeout(() => {
       // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
-      finish({ ok: false, reason: `PRM timeout after ${totalTimeoutMs}ms` });
+      // ‏timeout:true (ממצא ב-2): הקורא מבחין בין "פג הזמן" (אולי pageRedirect בלי endRequest) לכשל אחר.
+      finish({ ok: false, timeout: true, reason: `PRM timeout after ${totalTimeoutMs}ms` });
     }, totalTimeoutMs);
   });
 }

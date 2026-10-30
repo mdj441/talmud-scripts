@@ -16,6 +16,9 @@ const BRANCH_IDS_KEY = 'talmud.nav.branchIds';
 const STUDY_TYPE_IDS_KEY = 'talmud.nav.studyTypeIds';
 const DEFAULT_ORIGIN = 'https://talmud.edu.gov.il';
 export const NAV_BRANCH_IDS_SEED = { '00': '491', '16': '4159' };
+// ממצא ב-2: תקציב לפוסטבק שמנווט (עריכה בגריד, עץ, טאב). כשהתשובה היא pageRedirect אין endRequest,
+// ושרת איטי מעבר ל-8 שניות גרם ל-{ok:false} ולסימון התלמיד "שגיאה" רגע לפני שהדף נפרק.
+export const NAV_POSTBACK_BUDGET_MS = 25000;
 
 // ─── כתובות ─────────────────────────────────────────────────────────────────
 
@@ -184,15 +187,55 @@ export function studyTypeKey(branch, code) {
   return b && /^\d+$/.test(c) ? `${b}|${c}` : null;
 }
 
-export function learnStudyTypeId(branch, code, id) {
+// טהורה (ממצא ב-1ב): הרשומה של (סניף|סוג) כ-{id, instituteId}. רשומה ישנה (מחרוזת id בלבד) נקראת
+// עם instituteId null; רשומה פגומה או חסרה → null.
+export function studyTypeRecord(map, branch, code) {
+  const key = studyTypeKey(branch, code);
+  const raw = key && map && typeof map === 'object' ? map[key] : null;
+  if (!raw) return null;
+  if (typeof raw === 'string') return /^\d+$/.test(raw) ? { id: raw, instituteId: null } : null;
+  if (typeof raw !== 'object') return null;
+  const id = String(raw.id == null ? '' : raw.id).trim();
+  if (!/^\d+$/.test(id)) return null;
+  const inst = String(raw.instituteId == null ? '' : raw.instituteId).trim();
+  return { id, instituteId: /^\d+$/.test(inst) ? inst : null };
+}
+
+// ממצא ב-1ב: הרשומה שומרת גם את ה-InstituteID שנצפה בכתובת, כדי שהכתובת הישירה תיבנה ממנו ולא
+// ממפת-הסניפים של עכשיו (שעלולה להשתנות בינתיים).
+export function learnStudyTypeId(branch, code, id, instituteId) {
   const key = studyTypeKey(branch, code);
   const i = String(id == null ? '' : id).trim();
   if (!key || !/^\d+$/.test(i)) return false;
+  const inst = String(instituteId == null ? '' : instituteId).trim();
+  const rec = { id: i, instituteId: /^\d+$/.test(inst) ? inst : null };
   const cur = loadStudyTypeIds();
-  if (cur[key] === i) return false;
-  cur[key] = i;
-  if (writeJson(STUDY_TYPE_IDS_KEY, cur)) { log(`[ניווט] נלמד: סניף ${key.split('|')[0]} סוג ${key.split('|')[1]} → ${i}`); return true; }
+  const prev = studyTypeRecord(cur, branch, code);
+  if (prev && prev.id === rec.id && prev.instituteId === rec.instituteId) return false;
+  cur[key] = rec;
+  if (writeJson(STUDY_TYPE_IDS_KEY, cur)) { log(`[ניווט] נלמד: סניף ${key.split('|')[0]} סוג ${key.split('|')[1]} → ${i} (מוסד ${rec.instituteId || '?'})`); return true; }
   return false;
+}
+
+// ממצא ב-1ג: דף סוג-לימוד שהסניף שלו נקרא מהדף: אם רשומה של (סניף אחר|אותו סוג) מצביעה על אותו
+// InstituteStudyTypeID, היא מורעלת (נלמדה ממקור לא-מאומת) ונמחקת. מחזיר את מספר הרשומות שנמחקו.
+function forgetPoisonedStudyTypeIds(instituteStudyTypeId, branch, code) {
+  const id = String(instituteStudyTypeId == null ? '' : instituteStudyTypeId).trim();
+  const c = String(code == null ? '' : code).trim();
+  if (!id || !c) return 0;
+  const cur = loadStudyTypeIds();
+  let removed = 0;
+  for (const key of Object.keys(cur)) {
+    const [b, kc] = key.split('|');
+    if (kc !== c || b === branch) continue;
+    const rec = studyTypeRecord(cur, b, kc);
+    if (!rec || rec.id !== id) continue;
+    delete cur[key];
+    removed++;
+    log(`[ניווט] הרשומה סניף ${b} סוג ${kc} → ${id} סותרת את הדף (מציג סניף ${branch}); נמחקה`);
+  }
+  if (removed) writeJson(STUDY_TYPE_IDS_KEY, cur);
+  return removed;
 }
 
 // ─── מצב-ניווט (sessionStorage): כוונת-ניווט + הדפים האחרונים ─────────────
@@ -290,18 +333,23 @@ function freshIntent(nav, now) {
 //   'breadcrumb' (הדף עצמו, מחייב) → 'institute' (דף המוסד האחרון בלשונית הזו, שה-h1 שלו נקרא,
 //   ושה-InstituteID שבכתובתו זהה לזה שבכתובת כאן) → 'map' (המפה הנלמדת, לא מאומת) → 'intent'
 //   (רמז בלבד; לא לומדים ממנו, ממצא 1ג) → null. הזרימה סומכת רק על breadcrumb/institute (ממצא 1ב).
-export function getPage() {
+// ‏opts.learn=false (ממצא ב-5): קריאה-בלבד, בלי ללמוד ובלי למחוק (אחרי קליק-עץ שמרנדר במקום, ה-h1
+// מציג סניף אחר באותה כתובת, ולימוד משם מוחק מיפוי נכון וכותב שגוי). ‏opts.init=true: טעינת-דף מלאה,
+// ורק אז דף מוסד שה-h1 שלו סותר את המפה מוחק את הרשומה הסותרת (ממצא 2).
+export function getPage(opts) {
+  const learn = !(opts && opts.learn === false);
+  const init = !!(opts && opts.init);
   const url = (typeof location !== 'undefined' && location.href) || '';
   const kind = classifyUrl(url);
 
   if (kind === 'institute') {
     const branch = parseBranchFromH1(h1Text());
     const instituteId = parseInstituteId(url);
-    if (branch && instituteId) {
-      forgetContradictingBranch(instituteId, branch); // ממצא 2
+    if (branch && instituteId && learn) {
+      if (init) forgetContradictingBranch(instituteId, branch); // ממצא 2, רק בטעינת-דף מלאה (ממצא ב-5)
       learnBranchId(branch, instituteId, { authoritative: false });
     }
-    if (branch) updateNavState({ lastInstituteUrl: url, lastInstituteBranch: branch });
+    if (branch && learn) updateNavState({ lastInstituteUrl: url, lastInstituteBranch: branch });
     return { kind, branch, branchSource: branch ? 'h1' : null, instituteId, studyType: null, url };
   }
 
@@ -329,9 +377,17 @@ export function getPage() {
       }
     }
     const trusted = branchSource === 'breadcrumb' || branchSource === 'institute' || branchSource === 'map';
-    if (branch && instituteId && trusted) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
-    if (branch && studyType && instituteStudyTypeId && trusted) learnStudyTypeId(branch, studyType, instituteStudyTypeId);
-    if (branch) updateNavState({ intent: null, lastStudyTypeUrl: url, lastStudyTypeBranch: branch, lastStudyTypeCode: studyType });
+    // ממצא ב-1א: רשומת סוג-לימוד רק ממקור שנקרא מהדף (breadcrumb/institute). סניף מהמפה בלבד אינו
+    // ראיה: רשומה שנלמדה ממנו הפנתה כל תלמיד של (סניף,סוג) לדף של סניף אחר, 8 נחיתות ו"דולג".
+    const verified = branchSource === 'breadcrumb' || branchSource === 'institute';
+    if (learn) {
+      if (branch && instituteId && trusted) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
+      if (branch && studyType && instituteStudyTypeId && verified) {
+        forgetPoisonedStudyTypeIds(instituteStudyTypeId, branch, studyType); // ממצא ב-1ג
+        learnStudyTypeId(branch, studyType, instituteStudyTypeId, instituteId);
+      }
+      if (branch) updateNavState({ intent: null, lastStudyTypeUrl: url, lastStudyTypeBranch: branch, lastStudyTypeCode: studyType });
+    }
     return { kind, branch, branchSource, instituteId, instituteStudyTypeId, studyType, url };
   }
 
@@ -348,7 +404,21 @@ export function getPage() {
   return { kind: 'other', branch: null, branchSource: null, studyType: null, url };
 }
 
+// ממצא ב-5: קריאה-בלבד של הדף (בלי ללמוד מפות ובלי לעדכן מצב-ניווט).
+export function readPage() {
+  return getPage({ learn: false });
+}
+
 // ─── גריד "סוגי לימוד למוסד" (gvStudyType) ──────────────────────────────────
+
+// ממצא ב-8: שורת-נתונים בגריד = tr עם onclick של selectedRowStudyType. שורות הפייג'ר (טבלה מקוננת
+// בתוך הגריד, כמו ב-GridView אמיתי) מכילות תאים "1","2" שעוברים את בדיקת-הספרות, ולכן gridToRows
+// מסמן כל שורה ב-selectable, והפונקציות הטהורות מדלגות על selectable===false. מערך רגיל (בלי הדגל,
+// למשל בבדיקות) נחשב שורת-נתונים.
+function isStudyTypeDataRow(row) {
+  if (!Array.isArray(row) || row.selectable === false) return false;
+  return /^\d+$/.test(String(row[0] ?? '').trim());
+}
 
 // טהורה: אינדקס שורת-נתונים (0-based, בלי כותרת/פייג'ר) של הקוד. אין => -1.
 export function findStudyTypeRow(rows, code) {
@@ -356,11 +426,9 @@ export function findStudyTypeRow(rows, code) {
   const target = String(code).trim();
   let dataIndex = -1;
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (!/^\d+$/.test(first)) continue;
+    if (!isStudyTypeDataRow(row)) continue;
     dataIndex++;
-    if (first === target) return dataIndex;
+    if (String(row[0]).trim() === target) return dataIndex;
   }
   return -1;
 }
@@ -370,10 +438,7 @@ export function findStudyTypeRowPosition(rows, code) {
   if (!Array.isArray(rows)) return -1;
   const target = String(code).trim();
   for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (/^\d+$/.test(first) && first === target) return i;
+    if (isStudyTypeDataRow(rows[i]) && String(rows[i][0]).trim() === target) return i;
   }
   return -1;
 }
@@ -392,9 +457,7 @@ export function gridPageSignature(rows) {
   if (!Array.isArray(rows)) return '';
   const codes = [];
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (/^\d+$/.test(first)) codes.push(first);
+    if (isStudyTypeDataRow(row)) codes.push(String(row[0]).trim());
   }
   return `${codes.length}|${codes.join(',')}`;
 }
@@ -404,19 +467,21 @@ export function gridStudyTypes(rows) {
   if (!Array.isArray(rows)) return [];
   const out = [];
   for (const row of rows) {
-    if (!Array.isArray(row)) continue;
-    const first = String(row[0] ?? '').trim();
-    if (!/^\d+$/.test(first)) continue;
-    out.push({ code: first, desc: String(row[1] ?? '').trim(), status: String(row[3] ?? '').trim() });
+    if (!isStudyTypeDataRow(row)) continue;
+    out.push({ code: String(row[0]).trim(), desc: String(row[1] ?? '').trim(), status: String(row[3] ?? '').trim() });
   }
   return out;
 }
 
+// מערך של מערכי-תאים לכל tr; לכל שורה דגל selectable (ממצא ב-8): יש onclick עם selectedRowStudyType.
 export function gridToRows(table) {
   if (!table || typeof table.querySelectorAll !== 'function') return [];
-  return Array.from(table.querySelectorAll('tr')).map(
-    (tr) => Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim())
-  );
+  return Array.from(table.querySelectorAll('tr')).map((tr) => {
+    const row = Array.from(tr.querySelectorAll('td,th')).map((cell) => (cell.textContent || '').trim());
+    const onclick = (typeof tr.getAttribute === 'function' && tr.getAttribute('onclick')) || '';
+    row.selectable = /selectedRowStudyType/.test(String(onclick));
+    return row;
+  });
 }
 
 // טהורה: href בפורמט javascript:__doPostBack('target','arg') → {target, arg}.
@@ -445,7 +510,7 @@ async function activateStudyTypeTab() {
     const href = typeof tab.getAttribute === 'function' ? tab.getAttribute('href') : null;
     const parsed = href ? parsePostbackHref(href) : null;
     if (parsed) return firePostback(parsed.target, parsed.arg);
-    const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: 8000 });
+    const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
     setTimeout(() => { try { tab.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
     const res = await wait;
     if (res && res.ok === false) return { ok: false, reason: 'מעבר לטאב סוגי הלימוד נכשל: ' + (res.reason || '') };
@@ -511,7 +576,7 @@ export async function gotoStudyTypeFromInstitute(code, opts) {
       try { window.selectedRowStudyType(rowIndex); } catch (e) {
         return { ok: false, reason: 'שגיאה בבחירת שורת סוג הלימוד: ' + (e && e.message) };
       }
-      const res = await firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType', '', { startTimeoutMs: 1500, totalTimeoutMs: 8000 });
+      const res = await firePostback('ctl00$ContentPlaceHolder1$btnUpdateStudyType', '', { startTimeoutMs: 1500, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
       return Object.assign({ method: 'grid', status }, res, { ok: res.ok !== false });
     }
 
@@ -593,12 +658,13 @@ export async function gotoInstitute(branch) {
     if (idx === -1) return { ok: false, notFound: true, reason: `סניף ${b} לא נמצא בעץ הסניפים` };
     const parsed = parsePostbackHref(hrefs[idx]);
     if (!parsed) return { ok: false, reason: 'קישור הסניף בעץ אינו בפורמט הצפוי' };
-    const res = await firePostback(parsed.target, parsed.arg, { startTimeoutMs: 1500, totalTimeoutMs: 8000 });
+    const res = await firePostback(parsed.target, parsed.arg, { startTimeoutMs: 1500, totalTimeoutMs: NAV_POSTBACK_BUDGET_MS });
     const out = Object.assign({ method: 'tree', branch: b }, res, { ok: res.ok !== false });
     // ממצא 3: ברטוב נצפה שקליק-עץ הוא postback א-סינכרוני שמרנדר את הסניף *במקום* (אותה כתובת).
     // אם הדף כבר מציג את הסניף המבוקש, אין טעינת דף בדרך: הקורא ממשיך מיד (גריד), בלי כלב-שומר.
+    // ממצא ב-5: קוראים את ה-h1 בלי ללמוד: הכתובת עדיין של הסניף הקודם, ולימוד משם מרעיל את המפה.
     if (out.ok) {
-      const now = getPage();
+      const now = readPage();
       if (now.kind === 'institute' && now.branch === b) out.inPlace = true;
     }
     return out;
@@ -618,7 +684,9 @@ export async function gotoStudyType(branch, code) {
   if (!b || !/^\d+$/.test(c)) return { ok: false, reason: `סניף/סוג לימוד לא תקינים: ${branch}/${code}` };
   updateNavState({ intent: { branch: b, studyType: c, at: Date.now() } });
 
-  const direct = studyTypePageUrl(loadStudyTypeIds()[studyTypeKey(b, c)], loadBranchIds()[b]);
+  // ממצא ב-1ב: הכתובת הישירה נבנית מה-InstituteID שנשמר ברשומה; רשומה ישנה (בלי מוסד) נופלת למפה.
+  const rec = studyTypeRecord(loadStudyTypeIds(), b, c);
+  const direct = rec ? studyTypePageUrl(rec.id, rec.instituteId || loadBranchIds()[b]) : null;
   if (direct) return navGoToUrl(direct, { branch: b, studyType: c });
 
   const page = getPage();

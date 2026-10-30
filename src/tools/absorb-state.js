@@ -28,6 +28,9 @@ export const S = {
   // ממצא 4: {idx, identity} של שמירה בדף תלמיד-חדש. נשמר עם המצב בכל שמירה (לא רק ברגע השמירה),
   // כדי ש-justSaved ישרוד גם נחיתה שנייה; נמחק ברישום התוצאה של אותה שורה.
   pendingSave: null,
+  // ממצא ב-9: {idx, identity} של "אישור" במודאל שנלחץ. אם "אישור" הוא טעינה מלאה של אותו דף, ההמשך
+  // מוצא את התלמיד ברשימה ומדווח "נקלט" (לא "כבר קיים"). נשמר עם המצב; נמחק ברישום התוצאה.
+  pendingConfirm: null,
   generation: 0,
 };
 
@@ -81,6 +84,7 @@ export function saveAbsorbState(extra) {
     queue: S.queue, results: S.results, curIdx: S.curIdx,
     startedAt: S.startedAt || new Date().toISOString(),
     pendingSave: S.pendingSave || null,
+    pendingConfirm: S.pendingConfirm || null,
   };
   if (extra) Object.assign(state, extra);
   try { sessionStorage.setItem(QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[מצב] שמירה נכשלה: ' + (e && e.message)); }
@@ -144,4 +148,5 @@ export function absorbResetRun() {
   S.lastRecordedIdx = -1;
   S.justSaved = null;
   S.pendingSave = null;
+  S.pendingConfirm = null;
 }
