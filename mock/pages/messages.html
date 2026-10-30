@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>הודעות - תלמו"ד (דמה)</title>
+<script src="/mock/shim.js"></script>
+<script src="/mock/db.js"></script>
+<script src="/mock/common.js"></script>
+</head>
+<body>
+<form id="aspnetForm" onsubmit="return false">
+<div id="mock-root"></div>
+</form>
+<script>
+(function () {
+  'use strict';
+  // דף ההודעות של הדמה (/Association/Default.aspx). מזהי-DOM כמו באתר (לפי הסקריפט הישן v5.0):
+  // גריד GVMessages עם שורות selectedRowSearch('N') + שדות נסתרים hdID/hidMessageHeader, פייג'ר GPager
+  // (« ‹ › » + span של העמוד), סינון מצב (1 נשלחה / 2 טופלה), HidMessageRowID, ושלושה postbacks של פעולה.
+  // הנחות הדמה (לא מאומתות מול האתר): הגריד מרונדר מחדש אחרי פעולה ונשאר באותו עמוד; פעולת "אישור/דחיית
+  // מעבר" על הודעה שאינה בקשת-מעבר מציגה הודעת-שגיאה ולא משנה כלום. כל התעודות בדויות.
+  const D = window.__mockDb, C = window.__mockCommon;
+  const db = D.load();
+  const GRID = 'ContentPlaceHolder1_GVMessages';
+  const PAGER = 'ContentPlaceHolder1_GPager_pager';
+  const DDL = 'ContentPlaceHolder1_ddlMessageStatus';
+  const HID = 'ContentPlaceHolder1_HidMessageRowID';
+  const PAGE_SIZE = 5;
+  const TRANSFER = 'בקשת מעבר תלמיד';
+
+  window.__mockLog = (m) => console.log('[mock-site] ' + m);
+  document.head.insertAdjacentHTML('beforeend', C.baseStyle());
+
+  function defaultMessages() {
+    const transferBody = (n) => `בקשת מעבר עבור התלמיד ת.ז. ${n} מסניף 00 לסניף 16. נא לאשר או לדחות.`;
+    return [
+      { id: 'm01', header: TRANSFER, body: transferBody('012345678'), status: 'נשלחה', date: '01/09/2026', from: 'סניף 16' },
+      { id: 'm02', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 023456789: כתובת חדשה.', status: 'נשלחה', date: '01/09/2026', from: 'מערכת' },
+      { id: 'm03', header: TRANSFER, body: transferBody('034567890'), status: 'נשלחה', date: '02/09/2026', from: 'סניף 05' },
+      { id: 'm04', header: 'הודעה כללית', body: 'תזכורת: יש להשלים את הדיווח החודשי עד סוף החודש.', status: 'נשלחה', date: '02/09/2026', from: 'מערכת' },
+      { id: 'm05', header: TRANSFER, body: transferBody('045678901'), status: 'נשלחה', date: '03/09/2026', from: 'סניף 16' },
+      { id: 'm06', header: 'אישור קליטה', body: 'התלמיד בעל דרכון AB1234567 נקלט בהצלחה.', status: 'נשלחה', date: '03/09/2026', from: 'מערכת' },
+      { id: 'm07', header: TRANSFER, body: transferBody('056789012'), status: 'נשלחה', date: '04/09/2026', from: 'סניף 05' },
+      { id: 'm08', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 067890123: שם משפחה.', status: 'נשלחה', date: '04/09/2026', from: 'מערכת' },
+      { id: 'm09', header: TRANSFER, body: transferBody('078901234'), status: 'טופלה', date: '20/08/2026', from: 'סניף 16', handledBy: 'approve' },
+      { id: 'm10', header: 'הודעה כללית', body: 'עדכון גרסה למערכת.', status: 'טופלה', date: '20/08/2026', from: 'מערכת', handledBy: 'handled' },
+      { id: 'm11', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 089012345.', status: 'טופלה', date: '21/08/2026', from: 'מערכת', handledBy: 'handled' },
+      { id: 'm12', header: TRANSFER, body: transferBody('090123456'), status: 'טופלה', date: '22/08/2026', from: 'סניף 05', handledBy: 'decline' },
+    ];
+  }
+  db.messages = db.messages || defaultMessages();
+  D.save(db);
+
+  // מצב-הדף (ViewState באתר): הסינון והעמוד הנוכחי. מתאפס בטעינה מלאה.
+  const state = { filter: String(db.messagesInitialFilter || '1'), page: 1 };
+  const STATUS_OF = { '1': 'נשלחה', '2': 'טופלה' };
+
+  function filtered() { return db.messages.filter((m) => m.status === STATUS_OF[state.filter]); }
+  function pageCount(list) { return Math.max(1, Math.ceil(list.length / PAGE_SIZE)); }
+  function clampPage(list) { state.page = Math.min(Math.max(1, state.page), pageCount(list)); }
+  function pageRows(list) { const s = (state.page - 1) * PAGE_SIZE; return list.slice(s, s + PAGE_SIZE); }
+
+  function pagerHtml(list) {
+    const n = pageCount(list), p = state.page;
+    const link = (sym, target) => (target
+      ? `<a href="javascript:__doPostBack('ctl00$ContentPlaceHolder1$GPager','Page$${target}')">${sym}</a>`
+      : `<span class="pager-off" style="color:#999">${sym}</span>`);
+    return `<div id="${PAGER}" style="margin-top:6px;font-size:14px">${link('«', p > 1 ? 1 : 0)} ${link('‹', p > 1 ? p - 1 : 0)} <span>${p}</span> מתוך ${n} ${link('›', p < n ? p + 1 : 0)} ${link('»', p < n ? n : 0)}</div>`;
+  }
+
+  function gridHtml(rows) {
+    if (!rows.length) return '<div style="padding:8px;color:#666">אין הודעות</div>'; // GridView ריק אינו מרונדר
+    let html = `<table class="grid" id="${GRID}"><tr><th>#</th><th>נושא</th><th>מאת</th><th>מצב</th><th>תאריך</th></tr>`;
+    rows.forEach((m, i) => {
+      html += `<tr onclick="selectedRowSearch('${i}')"><td>${i + 1}<input type="hidden" id="${GRID}_hdID_${i}" value="${C.esc(m.body)}"><input type="hidden" id="${GRID}_hidMessageHeader_${i}" value="${C.esc(m.header)}"></td>`
+        + `<td>${C.esc(m.header)}</td><td>${C.esc(m.from || '')}</td><td>${C.esc(m.status)}</td><td>${C.esc(m.date)}</td></tr>`;
+    });
+    return html + '</table>';
+  }
+
+  function renderGrid() {
+    const list = filtered();
+    clampPage(list);
+    document.getElementById('ContentPlaceHolder1_upMessages').innerHTML = gridHtml(pageRows(list)) + pagerHtml(list);
+  }
+
+  function render() {
+    const root = document.getElementById('mock-root');
+    root.innerHTML = C.treeHtml(db) + `
+<div class="page">
+  ${C.headerHtml('הודעות', ['בית', 'הודעות'])}
+  <div style="margin:6px 0">מצב הודעה:
+    <select id="${DDL}" onchange="__doPostBack('ctl00$ContentPlaceHolder1$ddlMessageStatus','')">
+      <option value="1"${state.filter === '1' ? ' selected' : ''}>נשלחה</option>
+      <option value="2"${state.filter === '2' ? ' selected' : ''}>טופלה</option>
+    </select>
+  </div>
+  <input type="hidden" id="${HID}" value="">
+  <div id="ContentPlaceHolder1_upMessages"></div>
+  <div style="margin-top:8px">
+    <input type="button" class="btn" id="ContentPlaceHolder1_btnTransferApprove" value="אישור מעבר" onclick="__doPostBack('ctl00$ContentPlaceHolder1$btnTransferApprove','')">
+    <input type="button" class="btn" id="ContentPlaceHolder1_btnTransferDecline" value="דחיית מעבר" onclick="__doPostBack('ctl00$ContentPlaceHolder1$btnTransferDecline','')">
+    <input type="button" class="btn" id="ContentPlaceHolder1_btnChangeMessageStatus" value="שנה מצב הודעה לטופל" onclick="__doPostBack('ctl00$ContentPlaceHolder1$btnChangeMessageStatus','')">
+  </div>
+</div>` + C.messagePopupHtml();
+    C.wireMessageButtons();
+    window.__mock.components['ucMessagePopUp_ModalPopupExtender1'] = window.__mockModal('ucMessagePopUp_pnlMessagePopup');
+    renderGrid();
+  }
+
+  window.selectedRowSearch = function (n) {
+    document.getElementById(HID).value = String(n);
+  };
+
+  const ACTIONS = {
+    'ctl00$ContentPlaceHolder1$btnTransferApprove': 'approve',
+    'ctl00$ContentPlaceHolder1$btnTransferDecline': 'decline',
+    'ctl00$ContentPlaceHolder1$btnChangeMessageStatus': 'handled',
+  };
+
+  window.__mock = {
+    components: {},
+    postback(target, arg) {
+      const m = C.handleMessagePostback(target);
+      if (m) return m;
+
+      if (target === 'ctl00$ContentPlaceHolder1$ddlMessageStatus') {
+        const v = document.getElementById(DDL).value;
+        return { kind: 'async', apply: () => { state.filter = v; state.page = 1; D.log(db, `messages filter → ${v}`); renderGrid(); } };
+      }
+
+      if (target === 'ctl00$ContentPlaceHolder1$GPager') {
+        const list = filtered();
+        const n = pageCount(list);
+        let p = state.page;
+        const mm = /^Page\$(\d+|Next|Prev|First|Last)$/.exec(arg || '');
+        if (mm) {
+          const a = mm[1];
+          p = a === 'Next' ? p + 1 : a === 'Prev' ? p - 1 : a === 'First' ? 1 : a === 'Last' ? n : parseInt(a, 10);
+        }
+        return { kind: 'async', apply: () => { state.page = p; clampPage(list); D.log(db, `messages page → ${state.page}`); renderGrid(); } };
+      }
+
+      const how = ACTIONS[target];
+      if (how) {
+        const raw = document.getElementById(HID).value;
+        return { kind: 'async', apply: () => {
+          const list = filtered();
+          clampPage(list);
+          const idx = parseInt(raw, 10);
+          const msg = Number.isFinite(idx) ? pageRows(list)[idx] : null;
+          if (!msg) { C.showMessage('לא נבחרה הודעה', ['ok']); D.log(db, `${how}: no row (${raw})`); return; }
+          if (how !== 'handled' && msg.header !== TRANSFER) {
+            C.showMessage('הפעולה אפשרית רק עבור בקשת מעבר תלמיד', ['ok']);
+            D.log(db, `${how}: not a transfer request (${msg.id})`);
+            return;
+          }
+          msg.status = 'טופלה';
+          msg.handledBy = how;
+          msg.handledAt = new Date().toISOString();
+          D.log(db, `${how} → ${msg.id}`);
+          C.showMessage('הצלחה: הפעולה בוצעה', ['ok']);
+          renderGrid();
+        } };
+      }
+
+      return { kind: 'none' };
+    },
+    onContinue() { D.log(db, 'user clicked המשך'); },
+    afterPostback() { D.save(db); },
+  };
+
+  render();
+})();
+</script>
+</body>
+</html>

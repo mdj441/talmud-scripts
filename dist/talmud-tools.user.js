@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         תלמוד - כלי אוטומציה
 // @namespace    https://github.com/mdj441/talmud-scripts
-// @version      3.3.2
-// @description  קליטה, עזיבה, הודעות ודיווח חודשי לתלמו"ד בסקריפט אחד (v3.3)
+// @version      4.0.0
+// @description  קליטה, עזיבה, הודעות ודיווח חודשי לתלמו"ד בסקריפט אחד (v4.0)
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
 // @grant        none
@@ -5098,6 +5098,7 @@ let reportUi = null;
 let reportRows = [];
 let reportBaseStatus = 'מוכן';
 let reportStuckTimer = null;
+let reportTotal = 0;
 
 const REPORT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '52px' },
@@ -5204,18 +5205,19 @@ function reportUiMount(container, panelUi, page) {
   $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
 
   reportSetHooks({
-    onStart: (list, idx) => { reportSetRunning(true); reportUi.progress(idx, list.length); },
+    onStart: (list, idx) => { reportTotal = list.length; reportSetRunning(true); reportUi.progress(idx, reportTotal); },
     onResume: (state) => {
+      reportTotal = state.branches.length;
       reportRows = Array.isArray(state.results) ? state.results.slice() : [];
       reportRenderRows();
       reportSetRunning(true);
-      reportUi.progress(reportRows.length, state.branches.length);
-      reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${state.branches.length}`);
+      reportUi.progress(reportRows.length, reportTotal);
+      reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${reportTotal}`);
       reportUi.open();
     },
-    onProgress: (idx, total, branch) => { reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1}/${total})`); },
+    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1}/${total})`); },
     onNavigating: (branch) => { reportSetStatus(`ממתין לטעינת דף המוסד של סניף ${branch}…`); },
-    onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(all.length, reportRows.length)); },
+    onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {
       reportRows = all.slice();
       reportRenderRows();
@@ -5596,7 +5598,7 @@ async function messagesEnsureSentFilter() {
   return { ok: res.ok !== false, found: true, changed: true };
 }
 
-// ─── חלונית ההודעה ואת הפעולה עצמה ──────────────────────────────────────────
+// ─── חלונית ההודעה והפעולה עצמה ──────────────────────────────────────────
 
 // קורא את החלונית (אם גלויה), רושם ביומן (ממוסך) וסוגר בלי "המשך". מחזיר את מה שנקרא או null.
 async function messagesClosePopupIfOpen(where) {
@@ -5806,7 +5808,7 @@ function messagesDownloadXlsx(list) {
       log(`[הודעות] יצירת אקסל נכשלה (${e && e.message}); מוריד TSV במקום`);
     }
   }
-  const ok = downloadText(`הודעות_${stamp}.tsv`, '﻿' + messagesBuildTsv(list), 'text/tab-separated-values;charset=utf-8');
+  const ok = downloadText(`הודעות_${stamp}.tsv`, '\uFEFF' + messagesBuildTsv(list), 'text/tab-separated-values;charset=utf-8');
   if (ok) log(`[הודעות] הורד TSV: ${list.length} שורות`);
   return { ok, format: 'tsv' };
 }
