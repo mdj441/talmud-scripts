@@ -175,9 +175,12 @@ function ensureStyle() {
   document.head.appendChild(style);
 }
 
-function toolsForPage(pageKind) {
+// כלי מתאים לדף לפי סוג הדף (pages) או לפי בדיקת-כתובת משלו (matches(page)); כלי עם תור פתוח מוצג בכל מקרה.
+function toolsForPage(page) {
+  const pageKind = page && page.kind;
   return tools.filter((t) => {
-    const fits = Array.isArray(t.pages) && t.pages.includes(pageKind);
+    let fits = Array.isArray(t.pages) && t.pages.includes(pageKind);
+    if (!fits && typeof t.matches === 'function') { try { fits = !!t.matches(page); } catch (e) { fits = false; } }
     let pending = false;
     try { pending = !!(t.hasPendingRun && t.hasPendingRun()); } catch (e) { pending = false; }
     return fits || pending;
@@ -229,7 +232,7 @@ export function activeTool() { return toolById(activeToolId); }
 export function mountPanel(page) {
   if (typeof document === 'undefined' || !document.body) return [];
   if ($el('tt-panel')) return []; // מופע אחר כבר מנהל את הדף
-  const list = toolsForPage(page.kind);
+  const list = toolsForPage(page);
   if (!list.length) return [];
   ensureStyle();
 

@@ -425,7 +425,8 @@ function messagesMount(container, panelUi, page) {
 export const messagesTool = {
   id: 'messages',
   title: 'הודעות',
-  pages: ['other'],
+  pages: [], // רק דף ההודעות, לפי הכתובת (לא כל דף "אחר" באתר; נצפה ברטוב 30.10: החלונית צצה גם בדף הכניסה)
+  matches: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
   hasPendingRun: () => false,
   isRunning: messagesIsRunning,
   onStop: messagesStop,

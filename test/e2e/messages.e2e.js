@@ -243,16 +243,15 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('4 דף אחר (לא הודעות): הלשונית מציגה רק "עובד בדף ההודעות בלבד"', async () => {
+  test('4 דף אחר (לא הודעות, לא מוסד): החלונית לא עולה בכלל (הלשונית מוגבלת לכתובת דף ההודעות)', async () => {
     const { context, page } = await openSession(browser, { script });
     try {
       await page.goto(`${SITE}/`);
-      await page.waitForSelector(SEL.panel, { timeout: 10000 });
-      await page.click(SEL.tab);
-      const txt = await evalRetry(page, (s) => document.querySelector(s.root).innerText, SEL);
-      assert.match(txt, /בדף ההודעות בלבד/);
-      const hasButtons = await page.$(SEL.scan);
-      assert.equal(hasButtons, null, 'לא אמורים להיות כפתורי-פעולה בדף אחר');
+      await sleep(1500); // האתחול מחכה 600 מ"ש אחרי הטעינה
+      const panel = await page.$(SEL.panel);
+      assert.equal(panel, null, 'בדף שאינו הודעות/מוסד/סוג-לימוד אסור שתעלה חלונית');
+      const fab = await page.$('#tt-fab');
+      assert.equal(fab, null, 'גם הכפתור הצף לא');
     } finally { await context.close(); }
   });
 

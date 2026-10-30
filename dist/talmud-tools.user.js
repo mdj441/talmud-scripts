@@ -1034,9 +1034,12 @@ function ensureStyle() {
   document.head.appendChild(style);
 }
 
-function toolsForPage(pageKind) {
+// כלי מתאים לדף לפי סוג הדף (pages) או לפי בדיקת-כתובת משלו (matches(page)); כלי עם תור פתוח מוצג בכל מקרה.
+function toolsForPage(page) {
+  const pageKind = page && page.kind;
   return tools.filter((t) => {
-    const fits = Array.isArray(t.pages) && t.pages.includes(pageKind);
+    let fits = Array.isArray(t.pages) && t.pages.includes(pageKind);
+    if (!fits && typeof t.matches === 'function') { try { fits = !!t.matches(page); } catch (e) { fits = false; } }
     let pending = false;
     try { pending = !!(t.hasPendingRun && t.hasPendingRun()); } catch (e) { pending = false; }
     return fits || pending;
@@ -1088,7 +1091,7 @@ function activeTool() { return toolById(activeToolId); }
 function mountPanel(page) {
   if (typeof document === 'undefined' || !document.body) return [];
   if ($el('tt-panel')) return []; // מופע אחר כבר מנהל את הדף
-  const list = toolsForPage(page.kind);
+  const list = toolsForPage(page);
   if (!list.length) return [];
   ensureStyle();
 
@@ -6794,7 +6797,8 @@ function messagesMount(container, panelUi, page) {
 const messagesTool = {
   id: 'messages',
   title: 'הודעות',
-  pages: ['other'],
+  pages: [], // רק דף ההודעות, לפי הכתובת (לא כל דף "אחר" באתר; נצפה ברטוב 30.10: החלונית צצה גם בדף הכניסה)
+  matches: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
   hasPendingRun: () => false,
   isRunning: messagesIsRunning,
   onStop: messagesStop,
@@ -6813,6 +6817,8 @@ registerTool(reportTool);
 registerTool(messagesTool);
 
 function initTalmudTools() {
+  // דף הכניסה (LogIn.aspx, גם אחרי פקיעת session): אין מה להציג שם (נצפה ברטוב 30.10)
+  if (typeof location !== 'undefined' && /\/LogIn\.aspx/i.test(location.pathname || '')) return false;
   const page = getPage();
   const mounted = mountPanel(page);
   if (!mounted.length) return false;

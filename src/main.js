@@ -16,6 +16,8 @@ registerTool(reportTool);
 registerTool(messagesTool);
 
 export function initTalmudTools() {
+  // דף הכניסה (LogIn.aspx, גם אחרי פקיעת session): אין מה להציג שם (נצפה ברטוב 30.10)
+  if (typeof location !== 'undefined' && /\/LogIn\.aspx/i.test(location.pathname || '')) return false;
   const page = getPage();
   const mounted = mountPanel(page);
   if (!mounted.length) return false;
