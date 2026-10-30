@@ -17,3 +17,6 @@ PROJECT-CARD.md
 
 # מטמון של תוסף העיצוב (מקומי)
 .impeccable/
+
+# עותקי-עבודה של סוכנים (מקומי)
+.claude/worktrees/

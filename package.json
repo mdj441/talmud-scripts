@@ -1,8 +1,18 @@
 {
   "name": "talmud-scripts",
   "version": "4.0.0",
+  "description": "סקריפט Tampermonkey אחד לעבודה שוטפת במערכת תלמו\"ד: קליטת תלמידים, עזיבת תלמידים, טיפול בהודעות ודיווח חודשי",
   "private": true,
+  "license": "MIT",
+  "author": "מרדכי יאקאב",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mdj441/talmud-scripts.git"
+  },
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node build.mjs",
     "test": "node --test \"test/*.test.js\"",

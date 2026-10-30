@@ -1,0 +1,6 @@
+# קבצי טקסט נשמרים עם LF בריפו ובעותק-העבודה, גם ב-Windows (מונע הבדלי-שורות בבנייה)
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.xlsx binary
