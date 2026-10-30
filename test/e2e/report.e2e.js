@@ -103,8 +103,9 @@ describe('דיווח חודשי: סביבת דמה', () => {
       assert.equal(db.reported['4159'], true, 'סניף 16 (4159) היה אמור להישאר מסומן');
       assert.equal(db.log.filter((l) => /monthly report sent/.test(l)).length, 2, db.log.join('\n'));
 
-      // חצה טעינות-דף: התחלנו ב-491 וסיימנו בדף של סניף 16 (4159)
-      assert.match(page.url(), /InstituteID=4159/);
+      // חצה טעינות-דף: התחלנו ב-491 וסיימנו בדף של סניף 16 (F2: הכתובת לא משתנה, ה-h1 כן)
+      assert.match(page.url(), /InstituteID=491/);
+      assert.match(await page.textContent('h1'), /סניף 16/);
       assert.match(logText, /לוחצים "המשך"/, 'שורת-יומן על לחיצת "המשך" חסרה');
       assert.match(logText, /\[המשך\] סניף 2\/3/, 'ההמשך אחרי טעינת דף לא נרשם ביומן');
       // המצב השמור נוקה בסיום
@@ -159,8 +160,8 @@ describe('דיווח חודשי: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('4. התחלה מדף של סניף 16: הסדר נשאר 00, 05, 16 (ניווט הלוך וחזור) והכל נשלח', async () => {
-    const { context, page } = await openSession(browser, { script });
+  test('4. התחלה מדף של סניף 16 (session=16): הסדר נשאר 00, 05, 16 (ניווט הלוך וחזור) והכל נשלח', async () => {
+    const { context, page } = await openSession(browser, { scenario: { session: { instituteId: '4159', studyTypeId: null } }, script });
     try {
       await startReport(page, URLS.institute(4159));
       const done = await waitForReportDone(page, 120000);

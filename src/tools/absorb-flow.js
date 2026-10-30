@@ -6,7 +6,7 @@
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
 import { log, maskId } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoStudyType, gotoInstitute, normalizeBranch, clearNavIntent, classifyUrl } from '../core/navigate.js';
+import { getPage, gotoStudyType, normalizeBranch, classifyUrl } from '../core/navigate.js';
 import { acquireRunLock, refreshRunLock, releaseRunLock, RUN_LOCK_REFRESH_MS, RUN_LOCK_BUSY_MESSAGE } from '../core/lock.js';
 import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision,
@@ -22,7 +22,7 @@ import {
 import {
   ABSORB_IDS, ABSORB_NEW_IDS, ABSORB_GENDER_LABELS, ABSORB_FAMILY_STATUS_LABELS,
   absorbSetAndWait, absorbSelectOption, absorbFireElement, absorbRunClientValidation, absorbCollectValidationMessages,
-  absorbActivateStudentsTab, readAbsorbGridRows, absorbSearch, absorbSearchFailReason, absorbCountGate,
+  absorbActivateStudentsTab, readAbsorbGridRows, absorbSearch, absorbSearchFailReason, absorbCountGate, absorbButtonEl,
   ABSORB_SEARCH_FAILED_ACTION, ABSORB_GRID_STALE_ACTION, absorbReadAndHidePopup, absorbModalVisible,
   absorbCloseAcceptModal, absorbNewStudentPageMatches, absorbWaitOutcome,
 } from './absorb-dom.js';
@@ -96,9 +96,9 @@ function armWatchdog(taskIdx) {
     const task = S.queue[taskIdx];
     const page = getPage();
     const b = task ? normalizeBranch(task.branch) : null;
-    // ממצא 3: גם דף מוסד של הסניף הנכון "מתאים" (העץ רינדר במקום): ממשיכים משם לגריד
+    // דף סוג-הלימוד הנכון (התווית = הסניף, ה-h1 = הקוד), או דף מוסד שה-h1 שלו הוא הסניף (משם הגריד): "מתאים"
     const fits = !!task && ((page.kind === 'studyType' && page.branch === b && page.studyType === String(task.studyType) && absorbBranchSourceTrusted(page.branchSource))
-      || (page.kind === 'institute' && page.branch === b));
+      || (page.kind === 'institute' && page.branch === b && page.branchSource === 'h1'));
     if (fits) {
       log('[ניווט] הדף התעדכן בלי טעינה מלאה — ממשיכים במקום');
     } else {
@@ -114,24 +114,24 @@ function armWatchdog(taskIdx) {
 }
 
 // ─── שלב 1: הדף הנכון ───────────────────────────────────────────────────────
-// ממצא 1ב: המסלול המהיר ("כבר בדף הנכון") מותר רק כשהסניף נקרא מהדף עצמו (פירורי-לחם) או
-// אומת בדף המוסד שממנו הגענו (institute). סניף מהמפה/מהכוונה בלבד: מנווטים דרך דף המוסד של
-// הסניף (ה-h1 שם מאמת), ומשם לסוג-הלימוד.
+// עובדות F1/F3: המסלול המהיר ("כבר בדף הנכון") מותר רק כשזה דף סוג-לימוד שהתווית lblInstituteBranchNumber
+// שלו היא הסניף המבוקש וה-h1 שלו הוא הקוד המבוקש. h1 ריק (GET ישיר), תווית של סניף אחר, או דף מוסד:
+// מנווטים דרך העץ והגריד (gotoStudyType), כמו המשתמש באתר. אין כתובות ישירות ואין מפות.
 async function ensureStudyTypePage(task, gen) {
   const branch = normalizeBranch(task.branch);
   const code = String(task.studyType);
   const page = getPage();
-  let viaInstitute = false;
-  if (page.kind === 'studyType' && page.studyType === code) {
-    if (page.branch === branch && absorbBranchSourceTrusted(page.branchSource)) return { ok: true, navigated: false };
-    if (!page.branch) log(`[ניווט] דף סוג-לימוד ${code}, אך הסניף לא ניתן לזיהוי מהדף: מנווטים דרך דף המוסד כדי לוודא`);
-    else if (page.branch !== branch) log(`[ניווט] דף סוג-לימוד ${code} של סניף ${page.branch}; צריך סניף ${branch}`);
-    else { log(`[ניווט] דף סוג-לימוד ${code}: הסניף ${branch} ידוע רק מ-${page.branchSource}, לא מהדף: מאמתים דרך דף המוסד`); viaInstitute = true; }
+  if (page.kind === 'studyType') {
+    if (page.studyType === code && page.branch === branch && absorbBranchSourceTrusted(page.branchSource)) return { ok: true, navigated: false };
+    if (!page.studyType) log('[ניווט] דף סוג-לימוד בלי כותרת (h1 ריק: כניסה ישירה לפי כתובת): לא מזוהה, מנווטים דרך העץ והגריד');
+    else if (page.studyType !== code) log(`[ניווט] דף סוג-לימוד ${page.studyType}; צריך סוג ${code} בסניף ${branch}`);
+    else if (!page.branch) log(`[ניווט] דף סוג-לימוד ${code}, אך הסניף לא ניתן לזיהוי מהתווית: מנווטים דרך העץ כדי לוודא`);
+    else log(`[ניווט] דף סוג-לימוד ${code} של סניף ${page.branch} (לפי התווית); צריך סניף ${branch}`);
   }
   checkStop('before-nav', gen);
   saveAbsorbState();
   beginNavigation();
-  const res = viaInstitute ? await gotoInstitute(branch) : await gotoStudyType(branch, code);
+  const res = await gotoStudyType(branch, code);
   if (absorbIsCancelled(gen)) checkStop('nav-cancelled', gen);
   if (absorbNavTimeoutIsNavigation(res, unloadSeen)) {
     // ממצא ב-2: pageRedirect בלי endRequest: הזמן פג אחרי שהדף התחיל להיפרק. זו טעינת דף, לא כשל.
@@ -142,14 +142,16 @@ async function ensureStudyTypePage(task, gen) {
     if (res && res.notFound) {
       return {
         ok: false, reason: res.reason,
-        action: `בדוק בדף המוסד של סניף ${branch}, בלשונית "סוגי לימוד למוסד", שסוג ${code} קיים ואינו "סגור". אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`,
+        action: /בעץ/.test(String(res.reason || ''))
+          ? `בדוק שסניף ${branch} מופיע בעץ-הצד של האתר. אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`
+          : `בדוק בדף המוסד של סניף ${branch}, בלשונית "סוגי לימוד למוסד", שסוג ${code} קיים ואינו "סגור". אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`,
       };
     }
     return { ok: false, reason: (res && res.reason) || 'הניווט נכשל', action: manualStudyTypeAction(branch, code) };
   }
-  const how = res.method === 'url' ? `כתובת ישירה${res.hop ? ' (קפיצה לדף מוסד ידוע)' : ''}${viaInstitute ? ' (דף המוסד, לאימות הסניף)' : ''}`
-    : res.method === 'grid' ? `${res.treeInPlace ? 'עץ הסניפים (במקום) + ' : ''}גריד סוגי-הלימוד בדף המוסד`
-      : res.method === 'tree' ? 'עץ הסניפים' : res.method || '?';
+  const how = res.method === 'url' ? 'מעבר לדף המוסדות (אין עץ בדף הזה; משם העץ והגריד)'
+    : res.method === 'grid' ? 'גריד סוגי-הלימוד בדף המוסד'
+      : res.method === 'tree' ? 'עץ הסניפים (טעינת דף; משם הגריד)' : res.method || '?';
   log(`[ניווט] → סניף ${branch} סוג ${code} · ${how}`);
   if (res.status && /סגור/.test(res.status)) log(`[ניווט] שים לב: סוג לימוד ${code} מסומן "${res.status}" בגריד`);
   return { ok: true, navigated: true };
@@ -157,7 +159,7 @@ async function ensureStudyTypePage(task, gen) {
 
 // ─── דף תלמיד-חדש ───────────────────────────────────────────────────────────
 
-// יוצאים מדף תלמיד-חדש לדף סוג-הלימוד (הכתובת כבר ידועה — היינו שם).
+// יוצאים מדף תלמיד-חדש לדף סוג-הלימוד: דרך העץ אם יש בדף, אחרת דרך דף המוסדות (ומשם העץ והגריד אחרי הטעינה).
 async function leaveNewStudentPage(task, recorded, gen) {
   if (absorbIsCancelled(gen)) { log('[תלמיד חדש] ניסיון שבוטל — לא יוצאים מהדף'); return CONTINUE; }
   saveAbsorbState();
@@ -399,7 +401,7 @@ export async function processStudent(task, gen) {
   checkStop('after-precheck', gen);
 
   // ── שלב 3: "קליטה" ──
-  const absorbBtn = $el(ABSORB_IDS.absorbBtn);
+  const absorbBtn = absorbButtonEl(); // F5: לפי סיומת btnStudentAcceptence3, לא לפי מזהה מלא
   if (!absorbBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "קליטה" לא נמצא בדף', `בדוק שיש לך הרשאת קליטה לסוג לימוד זה ושאינו "סגור"; אם יש, ${MANUAL_ABSORB_ACTION}`);
   try {
     const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
@@ -609,7 +611,6 @@ function finishRun() {
   navigating = false;
   clearAbsorbState();
   clearAbsorbStop();
-  clearNavIntent(); // ממצא 7
   dropRunLock(); // ממצא 5
   const report = buildRemainingReport(S.results);
   saveAbsorbLastResults(S.results, report); // ממצא 6: תמונת-תוצאות אחרונה שורדת טעינת-דף
@@ -671,7 +672,6 @@ export async function runQueue() {
 export async function absorbStartRun(tasks) {
   if (!takeRunLock('התחלה')) return false;
   clearAbsorbStop();
-  clearNavIntent(); // ממצא 7: כוונה ישנה מריצה קודמת אינה ראיה
   absorbNextGeneration();
   clearWatchdog();
   absorbResetRun();
@@ -705,7 +705,6 @@ export function absorbDiscardSavedQueue() {
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
-  clearNavIntent(); // ממצא 7
   dropRunLock();
   log('[המשך] התור השמור נמחק לבקשת המשתמש');
   return true;
@@ -801,7 +800,6 @@ export function absorbStop() {
   absorbNextGeneration();
   clearWatchdog();
   navigating = false;
-  clearNavIntent(); // ממצא 7
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {
       fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');

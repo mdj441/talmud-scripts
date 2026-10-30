@@ -174,10 +174,10 @@ export function absorbParsePostbackFromHref(href) {
   return null;
 }
 
-// ממצא 1ב: אילו מקורות של "סניף הדף" מספיקים כדי לקלוט במקום. 'breadcrumb' = הדף עצמו;
-// 'institute' = דף המוסד שממנו הגענו (h1) עם אותו InstituteID בכתובת. מפה/כוונה: לא.
+// F3 (30.10.2026): בדף סוג-לימוד הסניף נקרא *רק* מהתווית lblInstituteBranchNumber ('label'). פירורי-לחם,
+// כתובת, מפה או כוונה אינם מקור, ולכן רק 'label' מספיק כדי לקלוט במקום.
 export function absorbBranchSourceTrusted(source) {
-  return source === 'breadcrumb' || source === 'institute';
+  return source === 'label';
 }
 
 // ממצא ב-2: פוסטבק מנווט שפג זמנו (pageRedirect בלי endRequest) אחרי שהדף כבר התחיל להיפרק

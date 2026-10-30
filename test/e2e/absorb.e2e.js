@@ -1,8 +1,11 @@
-// תרחישי הקליטה 9a–9h על סביבת-הדמה. הסקריפט האמיתי (dist/) רץ בכרום אמיתי.
+// תרחישי הקליטה 9a-9h על סביבת-הדמה. הסקריפט האמיתי (dist/) רץ בכרום אמיתי.
+// הדמה מדמה את ה-session של האתר (F1-F3): הדף הולך אחרי הלחיצה האחרונה בעץ, לא אחרי הכתובת.
 // כל התעודות בדויות. הרצה: npm run test:e2e   (HEADED=1 להצגת הדפדפן)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, readResults, readReport, readLog, sleep, evalRetry } from './harness.js';
+
+const NO_SESSION = { instituteId: null, studyTypeId: null };
 import { ABSORB_STATUS } from '../../src/tools/absorb-report.js';
 
 const T = '\t';
@@ -65,11 +68,16 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('9d דרכון + ארץ לסניף אחר (16) מדף מוסד 00 → "נקלט"', async () => {
+  test('9d דרכון + ארץ לסניף אחר (16) מדף מוסד 00 → "נקלט"; העץ מנווט בלי לשנות את הכתובת (F2)', async () => {
     const { context, page } = await session();
     try {
+      const urls = trackNavigations(page);
       const run = await runAbsorb(page, `16${T}600${T}AB1234567${T}${T}${T}05/05/1994${T}ארצות הברית`, { startUrl: URLS.institute(491) });
       assert.equal(run.results[0].status, 'נקלט', run.log);
+      assert.ok(!urls.some((u) => /InstituteID=4159/.test(u)), `אסור לנווט לפי כתובת של הסניף; ניווטים: ${urls.join(' | ')}`);
+      assert.ok(urls.some((u) => /InstituteID=491/.test(u)), 'לחיצת העץ טענה מחדש את אותה כתובת (של 00)');
+      assert.match(run.log, /לוחצים בעץ-הצד על סניף 16/, 'היומן מתעד ניווט דרך העץ');
+      assert.match(run.log, /גריד סוגי-הלימוד: שורה 600/, 'ואז דרך הגריד');
       const db = await readMockDb(page);
       const row = (db.enrolled['10269'] || []).find((s) => s.id === 'AB1234567');
       assert.ok(row, 'הדרכון לא נקלט לסניף 16');
@@ -138,32 +146,54 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
     return openSession(browser3, { scenario, script: script3 });
   }
 
-  test('ממצא 1: בלי סניף בפירורי-הלחם, סניף מהמפה בלבד אינו מספיק: קליטה ל-00 מדף 16/600 עוברת דרך דף המוסד של 00', async () => {
-    const { context, page } = await session({ breadcrumbShowsBranch: false });
+  // מלכודת F1/F3 (30.10.2026): המשתמש עומד על דף סוג-לימוד שהגיע אליו ב-GET ישיר עם InstituteID של סניף 16,
+  // אך ה-session הוא של 00/600: פירורי-הלחם אומרים "16", התווית אומרת "00", ה-h1 ריק, והפקדים עובדים על 00/600.
+  // שורה בתור ל-16/600: אסור לקלוט במקום. הסקריפט מנווט דרך העץ ל-16 ואז דרך הגריד, ו"נקלט" מגיע ל-16/600.
+  test('F1/F3: דף סוג-לימוד ב-GET ישיר של 16 כש-session=00 → לא קולטים במקום; עץ ל-16, גריד, ונקלט ל-16/600', async () => {
+    const { context, page } = await session({ session: { instituteId: '491', studyTypeId: '10002' } });
     try {
-      // שתי המפות יודעות את 00/600: בלי התיקון, קפיצה ישירה וקליטה במקום על סמך המפה (מעגלי)
-      await seedStorage(page, { local: { 'talmud.nav.studyTypeIds': { '00|600': '10002' } } });
       const urls = trackNavigations(page);
-      const run = await runAbsorb(page, `00${T}600${T}034567890`, { startUrl: URLS.studyType(10269, 4159) });
+      const run = await runAbsorb(page, `16${T}600${T}034567890`, { startUrl: URLS.studyType(10269, 4159) });
+      assert.equal(run.results.length, 1, run.log);
       assert.equal(run.results[0].status, 'נקלט', run.log);
-      assert.ok(urls.some((u) => /InstitutesDetails\.aspx\?InstituteID=491/.test(u)), `חובה ביקור בדף המוסד של 00 לאימות הסניף. ביקורים: ${urls.join(' | ')}`);
-      assert.match(run.log, /\[institute\]|מאמתים דרך דף המוסד/, 'היומן מתעד את מקור הסניף');
       const db = await readMockDb(page);
-      assert.ok(db.enrolled['10002'].some((s) => s.id === '034567890'));
+      assert.ok((db.enrolled['10269'] || []).some((s2) => s2.id === '034567890'), 'התלמיד היה אמור להיקלט לסוג-הלימוד של סניף 16');
+      assert.ok(!(db.enrolled['10002'] || []).some((s2) => s2.id === '034567890'), 'נקלט בטעות לסוג-הלימוד של סניף 00 (ה-session)');
+      assert.match(run.log, /h1 ריק|לא מזוהה/, 'היומן מתעד שהדף לא זוהה (h1 ריק)');
+      assert.match(run.log, /לוחצים בעץ-הצד על סניף 16/, 'הניווט עבר דרך העץ');
+      assert.match(run.log, /גריד סוגי-הלימוד: שורה 600/, 'ואז דרך הגריד');
+      assert.ok(!/\[חיפוש\][^\n]*\n[^\n]*דף institute/.test(run.log), 'לא חיפשו בדף של סניף 00 לפני הניווט');
+      assert.ok(urls.some((u) => /InstitutesDetails\.aspx/.test(u)), `חובה מעבר דרך דף המוסד; ניווטים: ${urls.join(' | ')}`);
+      assert.match(page.url(), /StudyTypeDetails\.aspx$/, 'דף סוג-הלימוד דרך הגריד הוא בלי query');
     } finally { await context.close(); }
   });
 
-  test('ממצא 3: קליק-עץ שמרנדר במקום (סניף 05 מדף מוסד 00) → "נקלט" בלי להמתין לכלב-השומר', async () => {
-    const { context, page } = await session({ treeNavigates: false });
+  test('F1: דף מוסד ב-GET ישיר בלי session (h1 ריק) → הסניף לא מזוהה, ניווט דרך העץ, ונקלט', async () => {
+    const { context, page } = await session({ session: NO_SESSION });
     try {
-      const t0 = Date.now();
-      const run = await runAbsorb(page, `05${T}600${T}034567890`, { startUrl: URLS.institute(491) });
-      const elapsed = Date.now() - t0;
+      const urls = trackNavigations(page);
+      await page.goto(URLS.institute(4159));
+      await waitForPanel(page);
+      const h1 = await page.textContent('h1');
+      assert.equal(h1.trim(), '', 'בלי session ה-h1 ריק');
+      const run = await runAbsorb(page, `00${T}600${T}034567890`);
       assert.equal(run.results[0].status, 'נקלט', run.log);
-      assert.ok(!/לא הגיעה טעינת דף/.test(run.log), 'כלב-השומר לא היה אמור להתערב');
-      assert.ok(elapsed < 20000, `הריצה ארכה ${elapsed}ms (המתנת כלב-שומר של 12 שניות?)`);
+      assert.match(run.log, /דף institute(?! · סניף)/, 'בטעינה הראשונה אין סניף מזוהה');
+      assert.ok(!urls.some((u) => /InstituteID=491/.test(u)), `לא מנווטים לפי כתובת של הסניף; ניווטים: ${urls.join(' | ')}`);
       const db = await readMockDb(page);
-      assert.ok((db.enrolled['10301'] || []).some((s) => s.id === '034567890'), 'התלמיד לא נקלט לסניף 05');
+      assert.ok(db.enrolled['10002'].some((s2) => s2.id === '034567890'));
+    } finally { await context.close(); }
+  });
+
+  test('F3: דף סוג-לימוד 00/600 דרך הגריד (בלי query, התווית 00) → קליטה במקום בלי ניווט', async () => {
+    const { context, page } = await session({ session: { instituteId: '491', studyTypeId: '10002' } });
+    try {
+      const urls = trackNavigations(page);
+      const run = await runAbsorb(page, `00${T}600${T}034567890`, { startUrl: URLS.studyTypeCurrent() });
+      assert.equal(run.results[0].status, 'נקלט', run.log);
+      assert.match(run.log, /דף studyType · סניף 00 \[label\] · סוג 600/, run.log);
+      assert.equal(urls.filter((u) => !/StudyTypeDetails\.aspx$/.test(u)).length, 0, `לא היה צורך בניווט; ניווטים: ${urls.join(' | ')}`);
+      assert.ok(!/בעץ-הצד|גריד סוגי-הלימוד/.test(run.log), 'לא נווט');
     } finally { await context.close(); }
   });
 
@@ -239,10 +269,11 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
       assert.ok(options.includes('300') && options.includes('725'), `הקודים מהגריד: ${options.join(',')}`);
       assert.ok(!options.includes('1') && !options.includes('2') && !options.includes('12'), `תאי הפייג'ר נקראו כקודים: ${options.join(',')}`);
       const run = await runAbsorb(page, `00${T}728${T}034567890`);
-      // הגריד דפדף לעמוד 2 ו"עריכה" הביאה לדף סוג-הלימוד 728 (10009); שורת "[ניווט] →" לא נכתבת כשהדף נפרק קודם
-      assert.match(run.log, /נלמד: סניף 00 סוג 728 → 10009/, run.log);
-      assert.match(run.log, /דף studyType · סניף 00 \[breadcrumb\] · סוג 728/, run.log);
+      // הגריד דפדף לעמוד 2 ו"עריכה" הביאה לדף סוג-הלימוד 728 (10009, "סגור": הקליטה נחסמת, וזה בסדר כאן)
+      assert.match(run.log, /דף studyType · סניף 00 \[label\] · סוג 728/, run.log);
       assert.ok(!/לא נמצא בגריד/.test(run.log), run.log);
+      const db = await readMockDb(page);
+      assert.equal(db.session.studyTypeId, '10009', 'ה-session של הדמה עבר לסוג-הלימוד 728');
     } finally { await context.close(); }
   });
 

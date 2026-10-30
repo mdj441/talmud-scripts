@@ -117,7 +117,9 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       assert.equal(run.results.length, 2, run.log);
       assert.deepEqual(run.results.map((r) => r.status), ['הצליח', 'הצליח'], run.log);
       assert.deepEqual(run.results.map((r) => r.branch), ['00', '16']);
-      assert.match(page.url(), /InstituteID=4159/, 'הריצה הייתה אמורה להסתיים בדף המוסד של סניף 16');
+      // F2: לחיצת העץ טוענת מחדש את אותה כתובת (של 00); הדף עצמו הוא של סניף 16 (h1)
+      assert.match(page.url(), /InstituteID=491/, 'הכתובת לא משתנה בלחיצה בעץ');
+      assert.match(await page.textContent('h1'), /סניף 16/, 'הריצה הייתה אמורה להסתיים בדף המוסד של סניף 16');
       const db = await readMockDb(page);
       assert.equal(db.enrolled['10002'].find((s) => s.id === '012345678').left, '01/09/2026');
       assert.equal(db.enrolled['10269'].find((s) => s.id === '045678901').left, '01/09/2026');

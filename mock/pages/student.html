@@ -29,17 +29,19 @@
   const parseDate = (s) => { const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s || '').trim()); return m ? new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null; };
   const hebrewOnly = (s) => /^[֐-׿\s'"-]+$/.test(String(s || '').trim());
 
+  // F2: לא נבדק אם עץ-הצד קיים בדף תלמיד-חדש. הדמה מרנדרת אותו *בלי* עץ, כדי שהמסלול "אין עץ בדף:
+  // מעבר לדף המוסדות לפי כתובת, ומשם העץ והגריד" ייבדק ב-e2e.
   function render() {
     const root = document.getElementById('mock-root');
     if (!pending) {
       // הבאג של עץ-הצד: דף פרטי-תלמיד ריק (hidStudentState לא -1)
-      root.innerHTML = C.treeHtml(db) + `<div class="page">${C.headerHtml('פרטי תלמיד', ['בית', 'איתור תלמיד'])}
+      root.innerHTML = `<div class="page" style="margin-right:0">${C.headerHtml('פרטי תלמיד', ['בית', 'איתור תלמיד'])}
         <input type="hidden" id="${SD}_hidStudentState" value=""><p>לא נבחר תלמיד.</p></div>` + C.messagePopupHtml();
       C.wireMessageButtons();
       return;
     }
-    root.innerHTML = C.treeHtml(db) + `
-<div class="page">
+    root.innerHTML = `
+<div class="page" style="margin-right:0">
   ${C.headerHtml('פרטי תלמיד', ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', 'פרטי מוסד', 'פרטי תלמיד'])}
   <div id="${TAB_ID}">
     <div class="ajax__tab_header">
@@ -119,7 +121,9 @@
           D.log(db, `save new student ${pending.id} → enrolled to ${pending.studyTypeInstId} (afterSave=${db.afterSave})`);
           D.save(db);
         };
-        const stUrl = `/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=${pending.studyTypeInstId}&InstituteID=${pending.instituteId}`;
+        // F3: החזרה לדף סוג-הלימוד היא לפי ה-session (סוג-הלימוד שממנו הגענו), בלי query
+        D.setSession(db, { instituteId: String(pending.instituteId), studyTypeId: String(pending.studyTypeInstId) });
+        const stUrl = '/StudyType/StudyTypeDetails.aspx';
         if (db.afterSave === 'stay') {
           return { kind: 'async', apply: () => { commit(); document.getElementById(`${SD}_hidStudentState`).value = '1'; } };
         }

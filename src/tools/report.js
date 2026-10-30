@@ -307,9 +307,14 @@ async function reportProcessBranch(state, idx, branch) {
   }
   if (reportStopRequested(state)) return mk(REPORT_STATUS.STOPPED, 'נעצר לפני השליחה', 'הרץ שוב; סניפים שכבר דווחו ידולגו אוטומטית');
 
-  // לשונית "מצב תמיכה" (חובה לפני השליחה, כמו הישן: קליק צד-לקוח)
+  // לשונית "מצב תמיכה" (חובה לפני השליחה, כמו הישן: קליק צד-לקוח). F4 (30.10.2026): שינוי לשונית
+  // ב-tabInstituteDetails הוא postback א-סינכרוני: רושמים waitPRM, לוחצים מ-setTimeout(0), וממתינים לסיום.
   const tab = $el(REPORT_IDS.supportTab);
-  if (tab) { try { tab.click(); } catch (e) { /* לא קריטי */ } } else log('[דיווח] לשונית "מצב תמיכה" לא נמצאה; מנסים לשלוח בכל זאת');
+  if (tab) {
+    const tabWait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 25000 });
+    setTimeout(() => { try { tab.click(); } catch (e) { /* לא קריטי */ } }, 0);
+    await tabWait;
+  } else log('[דיווח] לשונית "מצב תמיכה" לא נמצאה; מנסים לשלוח בכל זאת');
   await sleep(300);
   reportTouch(state);
   reportSaveState(state);

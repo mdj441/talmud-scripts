@@ -4,10 +4,9 @@ import { readFileSync } from 'node:fs';
 import { S, saveAbsorbState, loadAbsorbState, absorbResetRun } from '../src/tools/absorb-state.js';
 import { absorbSetHooks, absorbStartRun, absorbStop, absorbDiscardSavedQueue, absorbResumeIfPending, absorbIsBusy } from '../src/tools/absorb-flow.js';
 import { ABSORB_STATUS } from '../src/tools/absorb-report.js';
-import { saveNavState, loadNavState } from '../src/core/navigate.js';
 import { RUN_LOCK_KEY, readRunLock } from '../src/core/lock.js';
 
-// הזרימה בלי DOM: מצב (sessionStorage), כוונת-ניווט, נעילת-ריצה, וטקסטי "מה לעשות".
+// הזרימה בלי DOM: מצב (sessionStorage), נעילת-ריצה, ניווט דרך העץ, וטקסטי "מה לעשות".
 // כל התעודות בדויות.
 
 function fakeStorage(initial = {}) {
@@ -32,7 +31,6 @@ async function withStorages(fn) {
 }
 
 const TASK = { line: 2, branch: '00', studyType: '600', idType: 'tz', identity: '034567890' };
-const INTENT = { branch: '16', studyType: '600', at: Date.now() };
 
 // ─── ממצא 4: pendingSave חי במצב השמור עד רישום התוצאה של אותה שורה ─────────
 test('saveAbsorbState (ממצא 4): pendingSave נשמר מ-S בכל שמירה, לא רק כשמעבירים extra', async () => {
@@ -48,32 +46,12 @@ test('saveAbsorbState (ממצא 4): pendingSave נשמר מ-S בכל שמירה,
   });
 });
 
-// ─── ממצא 7: כוונת-הניווט נמחקת בכל סיום/עצירה/התחלה/ניקוי ───────────────────
-test('absorbDiscardSavedQueue (ממצא 7): מוחק את הכוונה ומשאיר את שאר מצב-הניווט', async () => {
-  await withStorages(() => {
-    saveNavState({ intent: INTENT, lastInstituteUrl: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491' });
-    absorbDiscardSavedQueue();
-    assert.equal(loadNavState().intent, null);
-    assert.ok(loadNavState().lastInstituteUrl);
-  });
-});
-
-test('absorbStop (ממצא 7): גם בלי ריצה פעילה הכוונה נמחקת', async () => {
-  await withStorages(() => {
-    saveNavState({ intent: INTENT });
-    absorbStop();
-    assert.equal(loadNavState().intent, null);
-  });
-});
-
-test('absorbStartRun → finishRun (ממצא 7 + 5): הכוונה נמחקת והנעילה משוחררת בסיום', async () => {
+test('absorbStartRun → finishRun (ממצא 5): הנעילה משוחררת בסיום', async () => {
   await withStorages(async () => {
-    saveNavState({ intent: INTENT });
     let done = 0;
     absorbSetHooks({ onDone: () => { done++; } });
     await absorbStartRun([]);
     assert.equal(done, 1);
-    assert.equal(loadNavState().intent, null);
     assert.equal(readRunLock(), null, 'הנעילה שוחררה ב-finishRun');
   });
 });
@@ -157,7 +135,9 @@ test('טקסטי "מה לעשות" (ממצא 12): בלי הוראות חלשות
 // ─── ביקורת שנייה: דפי-דמה מינימליים (בלי DOM אמיתי) כדי להריץ את הזרימה עד רישום התוצאה ──────
 const SITE = 'https://talmud.edu.gov.il';
 const INST_00_URL = `${SITE}/Institutes/InstitutesDetails.aspx?InstituteID=491`;
-const ST_00_600_URL = `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10002&InstituteID=491`;
+const ST_00_600_URL = `${SITE}/StudyType/StudyTypeDetails.aspx`; // F3: דרך הגריד, בלי query
+const ST_16_600_DIRECT = `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10269&InstituteID=4159`;
+const TREE_HREFS = ["javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\00')", "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\16')"];
 const ABSORB_BASE = 'ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails';
 const fakeLocation = (href) => ({ href, protocol: 'https:', host: 'talmud.edu.gov.il', origin: SITE });
 
@@ -184,26 +164,36 @@ function swapGlobals(next) {
   return () => { for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v; } };
 }
 
-// דף סוג-לימוד 00/600 עם פירורי-לחם, חיפוש שמריץ postback מדומה, תווית-ספירה וגריד. התווית והגריד
-// נוצרים מחדש בכל קריאה (כמו אחרי postback שהחליף את האלמנטים: עדות-טריות). ‏calls סופר לחיצות.
-async function withStudyTypePage({ gridRows, countText }, fn) {
+// דף סוג-לימוד עם h1 "סוג לימוד 600", התווית lblInstituteBranchNumber (F3: מקור הסניף היחיד), פירורי-לחם
+// מטעים, חיפוש שמריץ postback מדומה, תווית-ספירה וגריד. התווית והגריד נוצרים מחדש בכל קריאה (כמו אחרי
+// postback שהחליף את האלמנטים: עדות-טריות). כפתור "קליטה" במזהה המלא של האתר (F5), נמצא לפי סיומת.
+// ‏calls סופר לחיצות; ‏calls.tree = ארגומנט הלחיצה בעץ (אם יש עץ בדף).
+async function withStudyTypePage({ gridRows, countText, url = ST_00_600_URL, label = '00', crumbs = 'בית > איתור מוסד > פרטי מוסד > פרטי סוג לימוד', tree = null }, fn) {
   const { prm, roundTrip } = fakePrm();
-  const calls = { search: 0, absorb: 0 };
-  const crumbs = 'בית > איתור מוסד > עטרת שלמה > 00 > (600)כולל אברכים';
+  const calls = { search: 0, absorb: 0, tree: null };
   const crumbEl = { innerText: crumbs, textContent: crumbs };
   const el = (over) => Object.assign({ value: '', getAttribute: () => null, setAttribute() {}, dispatchEvent() {}, click() {} }, over);
   const grid = () => el({ querySelectorAll: () => gridRows.map((cells) => ({ querySelectorAll: () => cells.map((c) => ({ textContent: c })) })) });
+  const absorbBtn = el({ click: () => { calls.absorb++; roundTrip(); } });
+  const treeAnchors = (tree || []).map((h) => ({ getAttribute: (n) => (n === 'href' ? h : null) }));
   const byId = {
     [`${ABSORB_BASE}_txtStudenPassport`]: el(),
     [`${ABSORB_BASE}_btnSearch`]: el({ click: () => { calls.search++; roundTrip(); } }),
-    ContentPlaceHolder1_btnStudentAcceptence3: el({ click: () => { calls.absorb++; roundTrip(); } }),
+    [`${ABSORB_BASE}_btnStudentAcceptence3`]: absorbBtn,
   };
   const restore = swapGlobals({
-    location: fakeLocation(ST_00_600_URL),
-    window: { addEventListener() {}, __doPostBack() {}, Page_Validators: [] },
+    location: fakeLocation(url),
+    window: { addEventListener() {}, __doPostBack(t, a) { if (/tvTalmud/.test(t)) calls.tree = a; roundTrip(); }, Page_Validators: [] },
     Sys: { WebForms: { PageRequestManager: { getInstance: () => prm } } },
     document: {
-      querySelector: (sel) => (sel === 'h1' ? { textContent: 'סוג לימוד 600 - כולל אברכים' } : (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) ? crumbEl : null)),
+      querySelector: (sel) => {
+        if (sel === 'h1') return { textContent: 'סוג לימוד 600 - כולל אברכים' };
+        if (sel === '[id$="lblInstituteBranchNumber"]') return label == null ? null : { textContent: label };
+        if (sel === '[id$="btnStudentAcceptence3"]') return absorbBtn;
+        if (sel === '[id$="tvTalmud"]') return tree ? { querySelectorAll: () => treeAnchors } : null;
+        if (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel)) return crumbEl;
+        return null;
+      },
       querySelectorAll: (sel) => (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) ? [crumbEl] : []),
       getElementById: (id) => (id === `${ABSORB_BASE}_lblCountSearch` ? el({ textContent: countText })
         : id === `${ABSORB_BASE}_gvIStudents` ? grid() : (byId[id] || null)),
@@ -232,15 +222,14 @@ const TASK_00 = { line: 2, branch: '00', studyType: '600', idType: 'tz', identit
 test('absorbIsBusy (ממצא ב-7): אחרי ניווט מלא ו-beforeunload (כלב-השומר נוקה) עדיין עסוק; absorbStop משחרר', async () => {
   const listeners = {};
   const restore = swapGlobals({
-    location: fakeLocation(INST_00_URL),
+    location: fakeLocation(`${SITE}/Students/StudentsDetails.aspx?`),
     window: { addEventListener: (type, fn) => { listeners[type] = fn; }, __doPostBack() {} },
     document: { querySelector: () => null, querySelectorAll: () => [], getElementById: () => null, body: { innerText: '' } },
   });
   try {
     await withStorages(async () => {
-      globalThis.localStorage.setItem('talmud.nav.studyTypeIds', JSON.stringify({ '00|600': { id: '10002', instituteId: '491' } }));
-      await absorbStartRun([TASK_00]); // כתובת ישירה ידועה → ניווט מלא → NAVIGATED
-      assert.match(globalThis.location.href, /StudyTypeDetails/, 'נורה ניווט מלא');
+      await absorbStartRun([TASK_00]); // דף בלי עץ → כתובת דף המוסדות → ניווט מלא → NAVIGATED
+      assert.match(globalThis.location.href, /Institutes\/InstitutesDetails\.aspx$/, 'נורה ניווט מלא לדף המוסדות (בלי query)');
       assert.equal(absorbIsBusy(), true, 'ממתינים לטעינה: עסוק');
       assert.equal(typeof listeners.beforeunload, 'function', 'מאזין beforeunload נרשם');
       listeners.beforeunload(); // הדף מתחיל להיפרק: כלב-השומר נוקה
@@ -282,4 +271,36 @@ test('זרימה (ממצא ב-3): החיפוש המקדים מדווח תוצא�
   assert.equal(r.results[0].status, ABSORB_STATUS.VERIFY, `סטטוס: ${r.results[0].status} (${r.results[0].detail})`);
   assert.match(r.results[0].detail, /הרשימה הציגה 1 תוצאות אך לא ניתן לקרוא בה מזהים/);
   assert.equal(r.calls.absorb, 0, 'אסור ללחוץ "קליטה" על תלמיד שאולי כבר ברשימה');
+});
+
+// ─── מלכודת F1/F3: דף סוג-לימוד 600 שהגיע אליו ב-GET ישיר עם InstituteID של 16, והתווית אומרת 00 ─────
+// (פירורי-הלחם מראים "16" מהכתובת; ה-h1 מלא כי במקרה הזה השרת כן רינדר אותו). שורה בתור לסניף 16/600:
+// אסור לקלוט במקום. הזרימה לוחצת בעץ על 16 (טעינת דף) ולא נוגעת ב"קליטה".
+test('זרימה (F1/F3): תווית 00 ופירורי-לחם 16 בדף סוג-לימוד 600, שורה ל-16/600 → לחיצה בעץ על 16, בלי "קליטה"', async () => {
+  const task16 = { line: 2, branch: '16', studyType: '600', idType: 'tz', identity: '034567890' };
+  const page = { gridRows: [], countText: '', url: ST_16_600_DIRECT, label: '00', crumbs: 'בית > איתור מוסד > עטרת שלמה > 16 > (600)כולל', tree: TREE_HREFS };
+  await withStorages(() => withStudyTypePage(page, async (calls) => {
+    globalThis.sessionStorage.setItem('talmud.absorb.queue', JSON.stringify({ queue: [task16], results: [], curIdx: 0, startedAt: new Date().toISOString() }));
+    let done = 0;
+    absorbSetHooks({ onDone: () => { done++; } });
+    await absorbResumeIfPending();
+    assert.equal(calls.absorb, 0, 'אסור ללחוץ "קליטה" בדף של סניף אחר');
+    assert.equal(calls.search, 0, 'גם לא מחפשים: הדף אינו הדף הנכון');
+    assert.equal(calls.tree, 'sעטרת שלמה\\16', 'נלחץ בעץ על סניף 16');
+    assert.equal(done, 0, 'הריצה ממתינה לטעינת הדף');
+    assert.equal(absorbIsBusy(), true);
+    assert.match(globalThis.location.href, /InstituteStudyTypeID=10269/, 'הכתובת לא שונתה (העץ מנווט, לא כתובת)');
+    const st = loadAbsorbState();
+    assert.equal(st.curIdx, 0, 'התור נשמר לפני הניווט, השורה עדיין פתוחה');
+    absorbStop();
+  }));
+});
+
+test('זרימה (F3): דף סוג-לימוד 600 שהתווית שלו 00 ושורה ל-00/600 → המסלול המהיר: חיפוש במקום, בלי עץ', async () => {
+  const page = { gridRows: GRID_WITH, countText: 'נמצאו 1 רשומות בהתאם לקריטריון החיפוש', tree: TREE_HREFS, crumbs: 'עטרת שלמה > 16 > (600)כולל (מטעה)' };
+  const r = await resumeOne(TASK_00, {}, page);
+  assert.ok(r.results && r.results.length === 1, 'נרשמה תוצאה');
+  assert.equal(r.results[0].status, ABSORB_STATUS.EXISTS);
+  assert.equal(r.calls.tree, null, 'לא לוחצים בעץ כשהתווית מאשרת את הסניף');
+  assert.ok(r.calls.search >= 1);
 });

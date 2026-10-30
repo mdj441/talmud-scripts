@@ -8,7 +8,7 @@ import { log } from '../core/log.js';
 import { downloadCsv, copyTextToClipboard } from '../core/csv.js';
 import { COUNTRIES } from '../data/countries.js';
 import { detectIdType } from '../core/identity.js';
-import { loadBranchIds, loadStudyTypeIds, readBranchesFromTree, gridToRows, gridStudyTypes, forgetNavMaps } from '../core/navigate.js';
+import { readBranchesFromTree, gridToRows, gridStudyTypes } from '../core/navigate.js';
 import { parseAbsorbInput, absorbTextToFieldRows, absorbFieldRowsToText, ABSORB_FIELD_ORDER } from './absorb-parse.js';
 import { loadXlsxFile } from './absorb-xlsx.js';
 import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './absorb-report.js';
@@ -21,7 +21,7 @@ import { esc, buttonHtml, buttonsRowHtml, fieldHtml, resultsTableHtml, reportBox
 
 const P = 'tt-absorb';
 const COUNTRY_NAMES = COUNTRIES.map((c) => c.he).sort((a, b) => a.localeCompare(b, 'he'));
-// סוגי-לימוד מוכרים (מהאתר, סניף 00) לרשימת-הבחירה כשעוד לא נלמדו סוגי הסניף
+// סוגי-לימוד מוכרים (מהאתר, סניף 00) לרשימת-הבחירה כשאין גריד סוגי-לימוד בדף
 const COMMON_STUDY_TYPES = ['300', '600', '605', '700', '705', '708', '720', '725', '728'];
 const GENDERS = [['', ''], ['זכר', 'זכר'], ['נקבה', 'נקבה']];
 const FAMILY = [['', ''], ['רווק', 'רווק'], ['נשוי', 'נשוי'], ['גרוש', 'גרוש'], ['אלמן', 'אלמן']];
@@ -44,18 +44,15 @@ function emptyRow() {
   return { fields: { branch: '', studyType: '', identifier: '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' } };
 }
 
-// ─── רשימות-בחירה ──────────────────────────────────────────────────────────
+// ─── רשימות-בחירה: מהדף בלבד (עץ-הצד, גריד סוגי-הלימוד), בלי מפות נלמדות ───────────────
 function knownBranches(page) {
-  const set = new Set(Object.keys(loadBranchIds()));
-  if (page && page.kind === 'institute') for (const b of readBranchesFromTree()) set.add(b);
+  const set = new Set(readBranchesFromTree()); // העץ קיים בדף המוסד ובדף סוג-הלימוד (F2)
   if (page && page.branch) set.add(page.branch);
   return Array.from(set).sort();
 }
 
 function knownStudyTypes(branch, page) {
   const set = new Set();
-  const learned = loadStudyTypeIds();
-  for (const key of Object.keys(learned)) if (!branch || key.startsWith(`${branch}|`)) set.add(key.split('|')[1]);
   if (page && page.kind === 'institute' && (!branch || page.branch === branch)) {
     try {
       const table = document.querySelector('table[id$="gvStudyType"]');
@@ -285,11 +282,6 @@ async function start() {
   if (started === false) setRunning(false); // ממצא 5: לשונית אחרת רצה; ההודעה הוצגה דרך onLocked
 }
 
-function forgetMaps() {
-  forgetNavMaps();
-  ui.status('המיפויים הנלמדים נמחקו. הניווט הבא ילמד אותם מחדש מהאתר');
-}
-
 function stop() {
   ui.status('עוצר…');
   log('⛔ עצירה לבקשת המשתמש');
@@ -368,9 +360,6 @@ function mount(container, panelUi, page) {
       { id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' },
       { id: `${P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
     ])}
-    <div class="tt-row tt-row-tight" style="justify-content:flex-end">
-      ${buttonHtml({ id: `${P}-forget-maps`, label: 'שכח מיפויים', kind: 'subtle', size: 'small', title: 'מוחק את הכתובות שנלמדו (סניף→מוסד, סוג-לימוד→כתובת). לשימוש כשהניווט נוחת בסניף הלא-נכון' })}
-    </div>
     <div id="${P}-results-wrap" hidden>
       <div class="tt-row" style="justify-content:space-between"><b>תוצאות</b>
         <span>${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
@@ -399,7 +388,6 @@ function mount(container, panelUi, page) {
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
   $el(`${P}-xlsx-file`).addEventListener('change', handleXlsx);
-  $el(`${P}-forget-maps`).addEventListener('click', forgetMaps);
 
   absorbSetHooks({
     getStartDate: startDate,

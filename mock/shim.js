@@ -113,8 +113,11 @@
     };
   };
 
-  // TabContainer מדומה
-  window.__mockTabs = function (containerId, count, initial) {
+  // TabContainer מדומה. F4 (מתוקן, 30.10.2026): באתר set_activeTabIndex מפעיל postback א-סינכרוני (UpdatePanel)
+  // שבמהלכו $find מחזיר null והפקדים שבלשונית נבנים מחדש. עם opts.postbackTarget הדף מקבל את ה-postback
+  // (ארגומנט "activeTabChanged:<i>") ומחיל אותו דרך _commit(i) כשהוא מסתיים; בלי opts: שינוי מיידי בצד-לקוח.
+  window.__mockTabs = function (containerId, count, initial, opts) {
+    const o = opts || {};
     let active = typeof initial === 'number' ? initial : 0;
     const render = () => {
       const c = document.getElementById(containerId);
@@ -131,7 +134,12 @@
     setTimeout(render, 0);
     return {
       get_activeTabIndex() { return active; },
-      set_activeTabIndex(i) { active = Number(i); render(); },
+      set_activeTabIndex(i) {
+        if (Number(i) === active) return;
+        if (o.postbackTarget) { window.__doPostBack(o.postbackTarget, 'activeTabChanged:' + Number(i)); return; }
+        active = Number(i); render();
+      },
+      _commit(i) { active = Number(i); render(); },
       _count: count,
     };
   };

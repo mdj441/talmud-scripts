@@ -73,9 +73,11 @@ test('ABSORB_STATUS.VERIFY (ממצא 10): "לאמת ידנית" קיים ואי�
   assert.equal(isAbsorbSuccess(ABSORB_STATUS.VERIFY), false);
 });
 
-test('absorbBranchSourceTrusted (ממצא 1ב): רק breadcrumb/institute מספיקים לקליטה במקום', () => {
-  assert.equal(absorbBranchSourceTrusted('breadcrumb'), true);
-  assert.equal(absorbBranchSourceTrusted('institute'), true);
+test('absorbBranchSourceTrusted (F3): רק התווית lblInstituteBranchNumber (label) מספיקה לקליטה במקום', () => {
+  assert.equal(absorbBranchSourceTrusted('label'), true);
+  assert.equal(absorbBranchSourceTrusted('breadcrumb'), false, 'פירורי-הלחם מטעים (סניף מהכתובת)');
+  assert.equal(absorbBranchSourceTrusted('h1'), false, 'בדף סוג-לימוד ה-h1 הוא הקוד, לא הסניף');
+  assert.equal(absorbBranchSourceTrusted('institute'), false);
   assert.equal(absorbBranchSourceTrusted('map'), false);
   assert.equal(absorbBranchSourceTrusted('intent'), false);
   assert.equal(absorbBranchSourceTrusted(null), false);
