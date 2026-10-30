@@ -1,7 +1,9 @@
 // תרחישי כלי ההודעות על סביבת-הדמה. הסקריפט האמיתי (dist/) רץ בכרום אמיתי. כל התעודות בדויות.
 // הרצה: npm run build && node --test "test/e2e/messages.e2e.js"   (HEADED=1 להצגת הדפדפן)
-// הדמה: 11 הודעות "נשלחה" ב-3 עמודים (5 בעמוד): m01-m08, m13 (זהה ל-m01: אותו UID), m14 (כמו m03 בנוסח
-// "תזכורת": UID שונה, אותה ת.ז.), m15 (בקשת מעבר על 078901234 לסניף 16). אחרי מיזוג: 9 שורות.
+// הדמה (לפי עובדות האתר החי מ-30.10.2026): הסינון בטעינה "הכל"; 10 שורות בעמוד; 14 הודעות "נשלחה" ב-2 עמודים:
+// עמוד 1: m01-m08, m13 (זהה ל-m01: אותו UID), m14 (כמו m03 בנוסח "תזכורת": UID שונה, אותה ת.ז.);
+// עמוד 2: m15 (בקשת מעבר על 078901234), m16-m18 ("מעבר תלמיד" אינפורמטיבי: ממוסדך ת.ז. / ממוסדך דרכון / אל מוסדך).
+// אחרי מיזוג: 12 שורות. בקשות-מעבר: m01, m03, m05, m07, m13, m14, m15 (5 שורות).
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { launch, openSession, readMockDb, readUserscript, evalRetry, sleep, URLS, SITE } from './harness.js';
@@ -41,7 +43,11 @@ const SEL = {
 };
 
 const APPROVE = 'אישור מעבר', DECLINE = 'דחיית מעבר', HANDLED = 'שנה מצב הודעה לטופל', SKIP = 'דלג';
-const SENT_IDS = ['m01', 'm02', 'm03', 'm04', 'm05', 'm06', 'm07', 'm08', 'm13', 'm14', 'm15'];
+const TRANSFER = 'בקשת מעבר תלמיד', TRANSFER_DONE = 'מעבר תלמיד';
+const SENT_IDS = ['m01', 'm02', 'm03', 'm04', 'm05', 'm06', 'm07', 'm08', 'm13', 'm14', 'm15', 'm16', 'm17', 'm18'];
+const APPROVE_IDS = ['m01', 'm03', 'm05', 'm07', 'm13', 'm14', 'm15'];
+const HANDLED_IDS = ['m02', 'm04', 'm06', 'm08', 'm16', 'm17', 'm18'];
+const SCAN_TEXT = /נסרקו 14 הודעות מ-2 עמודים \(12 שורות אחרי מיזוג כפילויות\)/;
 
 let browser;
 let script;
@@ -108,7 +114,7 @@ async function readReview(page) {
       uid: tr.getAttribute('data-uid'), uids: (tr.getAttribute('data-uids') || '').split(',').filter(Boolean),
       id: td[0].textContent.trim(), header: td[1].textContent.trim(), body: td[2].textContent.trim(), bodyFull: td[2].getAttribute('title') || '',
       date: td[3].textContent.trim(), count: td[4].textContent.trim(), roster: td[5].textContent.trim(),
-      done: !!tr.querySelector('.tt-tag-done'), decision: sel ? sel.value : '', hidden: tr.hidden,
+      done: !!tr.querySelector('.tt-tag-done'), pending: !!tr.querySelector('.tt-tag-pending'), decision: sel ? sel.value : '', hidden: tr.hidden,
     };
   }), SEL);
 }
@@ -130,28 +136,28 @@ describe('טיפול בהודעות: סביבת דמה', () => {
   before(async () => { browser = await launch(); script = readUserscript(); });
   after(async () => { if (browser) await browser.close(); });
 
-  test('1 מצב גורף: 11 "נשלחה" בשלושה עמודים (מתחיל בסינון "טופלה") → כולן "טופלה"; מעברים approve, אחרות handled', async () => {
+  test('1 מצב גורף: 14 "נשלחה" בשני עמודים (מתחיל בסינון "טופלה") → כולן "טופלה"; בקשות-מעבר approve, "מעבר תלמיד" ואחרות handled', async () => {
     const { context, page, consoleLines } = await openSession(browser, { scenario: { messagesInitialFilter: '2' }, script });
     try {
       await openBulk(page);
       await page.click(SEL.bulkRun);
       const rep = await waitForReport(page);
       const log = await readLog(page);
-      assert.match(rep.text, /בוצעו=11/, rep.text + '\n' + log);
+      assert.match(rep.text, /בוצעו=14/, rep.text + '\n' + log);
       assert.match(rep.text, /נכשלו=0/, rep.text);
       assert.doesNotMatch(rep.text, /נעצר/);
       assert.match(log, /משנה סינון ל"נשלחה"/, 'הסקריפט היה צריך להחליף את הסינון מ"טופלה" ל"נשלחה"');
 
       const db = await readMockDb(page);
       assert.equal(db.messages.filter((m) => m.status === 'נשלחה').length, 0, 'נשארו הודעות במצב נשלחה');
-      for (const id of ['m01', 'm03', 'm05', 'm07', 'm13', 'm14', 'm15']) assert.equal(byId(db, id).handledBy, 'approve', id);
-      for (const id of ['m02', 'm04', 'm06', 'm08']) assert.equal(byId(db, id).handledBy, 'handled', id);
+      for (const id of APPROVE_IDS) assert.equal(byId(db, id).handledBy, 'approve', id);
+      for (const id of HANDLED_IDS) assert.equal(byId(db, id).handledBy, 'handled', id);
       // ההודעות שכבר היו "טופלה" לא נגעו בהן
       assert.equal(byId(db, 'm12').handledBy, 'decline');
       assert.equal(byId(db, 'm09').handledBy, 'approve');
 
       const rows = await readTable(page, SEL.results);
-      assert.equal(rows.length, 11, 'טבלת התוצאות');
+      assert.equal(rows.length, 14, 'טבלת התוצאות');
       assert.ok(rows.every((r) => r[4] === 'בוצע'), JSON.stringify(rows));
       assert.ok(rows.some((r) => r[2] === '012345678'), 'ת.ז. מלאה בטבלת התוצאות');
       assert.doesNotMatch(log, /012345678/, 'ת.ז. מלאה דלפה ליומן');
@@ -159,15 +165,21 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('2 דרך אקסל: סריקה → הדבקה (דחייה, דלג, טופל, דחייה-לא-חוקית) → ביצוע; דחייה על UID כפול מטפלת בשני המופעים', async () => {
+  test('2 דרך אקסל: סריקה (מסינון "הכל" בטעינה) → הדבקה (דחייה, דלג, טופל, דחייה-לא-חוקית) → ביצוע; דחייה על UID כפול מטפלת בשני המופעים', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script });
     try {
       await openMessages(page);
+      // עובדה M1: בטעינה הסינון הוא "הכל" (value -1); הסריקה חייבת לעבור ל"נשלחה"
+      const initialFilter = await evalRetry(page, () => document.getElementById('ContentPlaceHolder1_ddlMessageStatus').value);
+      assert.equal(initialFilter, '-1', 'הדמה צריכה להתחיל בסינון "הכל" כמו האתר');
       const scanTxt = await scanAndWait(page);
-      assert.match(scanTxt, /נסרקו 11 הודעות מ-3 עמודים \(9 שורות אחרי מיזוג כפילויות\)/, scanTxt);
+      assert.match(scanTxt, SCAN_TEXT, scanTxt);
+      assert.match(await readLog(page), /משנה סינון ל"נשלחה"/, 'הסריקה צריכה להחליף את הסינון מ"הכל" ל"נשלחה"');
+      const filterAfter = await evalRetry(page, () => document.getElementById('ContentPlaceHolder1_ddlMessageStatus').value);
+      assert.equal(filterAfter, '1');
 
       const review = await readReview(page);
-      assert.equal(review.length, 9);
+      assert.equal(review.length, 12);
       const m01 = review.find((r) => r.id === '012345678');
       const m02 = review.find((r) => r.id === '023456789');
       const m04 = review.find((r) => r.header === 'הודעה כללית');
@@ -244,13 +256,13 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('5 סקירה: מיזוג כפילויות (UID זהה פעמיים = 2; שני UID-ים עם אותה ת.ז. = 2) → שינוי החלטה בשורה ממוזגת → בצע → שתי ההודעות טופלו', async () => {
+  test('5 סקירה: מיזוג כפילויות (UID זהה פעמיים = 2; שני UID-ים עם אותה ת.ז. = 2); "מעבר תלמיד" → טופל → שינוי החלטה בשורה ממוזגת → בצע → שתי ההודעות טופלו', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script });
     try {
       await openMessages(page);
       await scanAndWait(page);
       const review = await readReview(page);
-      assert.equal(review.length, 9, JSON.stringify(review));
+      assert.equal(review.length, 12, JSON.stringify(review));
       const r01 = review.find((r) => r.id === '012345678');
       const r03 = review.find((r) => r.id === '034567890');
       assert.equal(r01.count, '2', 'm01 + m13 (אותו UID)');
@@ -259,11 +271,15 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       assert.equal(r03.uids.length, 2);
       assert.ok(review.filter((r) => r.count !== '1').length === 2, 'רק שתי שורות ממוזגות');
       assert.ok(review.every((r) => r.roster === ''), 'בלי מצבת: עמודת "במצבת" ריקה');
-      assert.ok(review.filter((r) => r.header === 'בקשת מעבר תלמיד').every((r) => r.decision === APPROVE));
-      assert.ok(review.filter((r) => r.header !== 'בקשת מעבר תלמיד').every((r) => r.decision === HANDLED));
+      assert.ok(review.filter((r) => r.header === TRANSFER).every((r) => r.decision === APPROVE));
+      assert.ok(review.filter((r) => r.header !== TRANSFER).every((r) => r.decision === HANDLED));
+      // עובדה M3: שלושת נוסחי "מעבר תלמיד" האינפורמטיביים נקראים עם המזהה (ת.ז. / דרכון) וברירת-המחדל "טופל"
+      const done = review.filter((r) => r.header === TRANSFER_DONE);
+      assert.deepEqual(done.map((r) => r.id).sort(), ['100200300', '200300400', 'CD7654321'], JSON.stringify(done));
       assert.ok(r01.bodyFull.includes('012345678'), 'הגוף המלא ב-title');
+      assert.ok(r01.bodyFull.includes('מסוג לימוד 600 בסניף 09'), 'הנוסח החי של בקשת-המעבר');
       const summary0 = await readText(page, SEL.summary);
-      assert.match(summary0, /9 שורות · אישור מעבר=5 · דחיית מעבר=0 · טופל=4 · דלג=0/, summary0);
+      assert.match(summary0, /12 שורות · אישור מעבר=5 · דחיית מעבר=0 · טופל=7 · דלג=0/, summary0);
 
       await setDecision(page, r03.uid, DECLINE);
       const summary1 = await readText(page, SEL.summary);
@@ -271,63 +287,89 @@ describe('טיפול בהודעות: סביבת דמה', () => {
 
       await page.click(SEL.runReview);
       const rep = await waitForReport(page);
-      assert.match(rep.text, /בוצעו=11 · נכשלו=0 · דולגו=0/, rep.text + '\n' + (await readLog(page)));
+      assert.match(rep.text, /בוצעו=14 · נכשלו=0 · דולגו=0/, rep.text + '\n' + (await readLog(page)));
 
       const db = await readMockDb(page);
       assert.equal(byId(db, 'm03').handledBy, 'decline');
       assert.equal(byId(db, 'm14').handledBy, 'decline', 'ההחלטה חלה על כל ה-UID-ים של השורה הממוזגת');
       assert.equal(byId(db, 'm01').handledBy, 'approve');
       assert.equal(byId(db, 'm13').handledBy, 'approve');
-      assert.equal(byId(db, 'm15').handledBy, 'approve', 'בלי מצבת אין "כבר בוצע"');
-      for (const id of ['m02', 'm04', 'm06', 'm08']) assert.equal(byId(db, id).handledBy, 'handled', id);
+      assert.equal(byId(db, 'm15').handledBy, 'approve', 'בלי מצבת אין "כנראה בוצע"');
+      for (const id of HANDLED_IDS) assert.equal(byId(db, id).handledBy, 'handled', id);
       assert.equal(db.messages.filter((m) => m.status === 'נשלחה').length, 0);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
 
-  // ממצא ב-10: "כבר בוצע" הוא רמז לבדיקה: ההחלטה נשארת "אישור מעבר" עד שלוחצים "כל 'כבר בוצע': סמן כטופל".
-  test('6 מצבת: הדבקה → "במצבת" / "לא במצבת" / ריק; "כבר בוצע" לא משנה את ההחלטה; הכפתור "כל \'כבר בוצע\': סמן כטופל" מחיל; הביצוע לא מאשר אותה', async () => {
+  // עובדות 30.10.2026: בבקשת-מעבר מוסד אחר מבקש תלמיד שלנו. במצבת (בכל סניף) → "ממתין" (לאשר או לדחות);
+  // לא במצבת → "כנראה בוצע". ממצא ב-10: שניהם רמז לבדיקה: ההחלטה נשארת "אישור מעבר" עד שלוחצים
+  // "כל 'כנראה בוצע': סמן כטופל". "מעבר תלמיד" האינפורמטיבי: עמודת המצבת בלי תג, ברירת-מחדל "טופל".
+  test('6 מצבת: בקשת-מעבר במצבת → "סניף NN" + ממתין; לא במצבת → "כנראה בוצע"; התג לא משנה החלטה; "כל \'כנראה בוצע\': סמן כטופל" מחיל; הביצוע מסמן אותה כטופל', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script });
     try {
       await openMessages(page);
       await scanAndWait(page);
       await page.click(SEL.rosterSummary);
-      // כמו הדבקה מאקסל: כותרת, טאבים, אפסים מובילים שנמחקו
-      await page.fill(SEL.rosterInput, ['סניף' + T + 'ת.ז./דרכון', '16' + T + '78901234', '05' + T + '12345678', '16' + T + 'AB1234567'].join('\n'));
+      // כמו הדבקה מאקסל: כותרת, טאבים, אפסים מובילים שנמחקו (גם בסניף). 034567890 (m03+m14) אינו במצבת.
+      await page.fill(SEL.rosterInput, [
+        'סניף' + T + 'ת.ז./דרכון',
+        '16' + T + '78901234', // m15
+        '05' + T + '12345678', // m01+m13
+        '9' + T + '45678901', // m05 (הסניף שבגוף ההודעה הוא 09)
+        '16' + T + '056789012', // m07 (בגוף: סניף 05; במצבת: 16. בכל סניף = עדיין אצלנו)
+        '16' + T + 'AB1234567', // m06 (אישור קליטה)
+        '09' + T + '100200300', // m16 (מעבר תלמיד, ממוסדך)
+      ].join('\n'));
       await page.click(SEL.rosterLoad);
       const rosterTxt = await readText(page, SEL.rosterStatus);
-      assert.match(rosterTxt, /נטענה מצבת: 3 שורות/, rosterTxt);
+      assert.match(rosterTxt, /נטענה מצבת: 6 שורות/, rosterTxt);
+      assert.match(await readText(page, SEL.status), /1 בקשות-מעבר .* "כנראה בוצע".*4 ממתינות/, 'שורת-המצב אחרי טעינת המצבת');
 
       const review = await readReview(page);
       const r15 = review.find((r) => r.id === '078901234');
       const r01 = review.find((r) => r.id === '012345678');
+      const r03 = review.find((r) => r.id === '034567890');
+      const r05 = review.find((r) => r.id === '045678901');
+      const r07 = review.find((r) => r.id === '056789012');
       const r02 = review.find((r) => r.id === '023456789');
       const r04 = review.find((r) => r.header === 'הודעה כללית');
       const r06 = review.find((r) => r.id === 'AB1234567');
-      assert.match(r15.roster, /סניף 16/, JSON.stringify(r15));
-      assert.equal(r15.done, true, 'תלמיד שכבר בסניף-היעד → כבר בוצע');
-      assert.equal(r15.decision, APPROVE, 'ממצא ב-10: התג אינו משנה את ההחלטה מעצמו');
-      let summaryBefore = await readText(page, SEL.summary);
-      assert.match(summaryBefore, /אישור מעבר=5 .* טופל=4 .* כבר בוצע=1/, summaryBefore);
-      await page.click(SEL.allDone);
-      const r15b = (await readReview(page)).find((r) => r.id === '078901234');
-      assert.equal(r15b.decision, HANDLED, 'הכפתור מחיל "סמן כטופל" על המסומנות "כבר בוצע"');
-      assert.match(r01.roster, /סניף 05/);
-      assert.equal(r01.done, false, 'במצבת בסניף 05, מבקש ל-16 → עדיין לא בוצע');
-      assert.equal(r01.decision, APPROVE);
-      assert.equal(r02.roster, 'לא במצבת');
+      const r16 = review.find((r) => r.id === '100200300');
+      const r17 = review.find((r) => r.id === 'CD7654321');
+      const pendingOf = (r) => ({ roster: r.roster.replace(/\s*ממתין$/, ''), pending: r.pending, done: r.done });
+      assert.deepEqual(pendingOf(r15), { roster: 'סניף 16', pending: true, done: false }, JSON.stringify(r15));
+      assert.deepEqual(pendingOf(r01), { roster: 'סניף 05', pending: true, done: false }, JSON.stringify(r01));
+      assert.deepEqual(pendingOf(r05), { roster: 'סניף 09', pending: true, done: false }, 'סניף "9" במצבת מרופד ל-09');
+      assert.deepEqual(pendingOf(r07), { roster: 'סניף 16', pending: true, done: false }, 'במצבת בסניף אחר מזה שבגוף: עדיין אצלנו → ממתין');
+      assert.match(r03.roster, /^לא במצבת/, JSON.stringify(r03));
+      assert.equal(r03.done, true, 'בקשת-מעבר על תלמיד שאינו במצבת → כנראה בוצע');
+      assert.equal(r03.pending, false);
+      assert.equal(r03.decision, APPROVE, 'ממצא ב-10: התג אינו משנה את ההחלטה מעצמו');
+      assert.deepEqual(pendingOf(r02), { roster: 'לא במצבת', pending: false, done: false }, 'לא בקשת-מעבר: בלי תג');
       assert.equal(r04.roster, '', 'בלי ת.ז.: עמודה ריקה');
-      assert.match(r06.roster, /סניף 16/);
-      assert.equal(r06.done, false, 'לא בקשת מעבר');
+      assert.deepEqual(pendingOf(r06), { roster: 'סניף 16', pending: false, done: false }, 'לא בקשת מעבר');
+      assert.deepEqual(pendingOf(r16), { roster: 'סניף 09', pending: false, done: false }, '"מעבר תלמיד": לפי המצבת, בלי תג');
+      assert.equal(r16.decision, HANDLED);
+      assert.deepEqual(pendingOf(r17), { roster: 'לא במצבת', pending: false, done: false }, '"מעבר תלמיד" עם דרכון שאינו במצבת: בלי תג');
+      assert.equal(r17.decision, HANDLED);
+      const summaryBefore = await readText(page, SEL.summary);
+      assert.match(summaryBefore, /אישור מעבר=5 .* טופל=7 .* ממתין=4 · כנראה בוצע=1/, summaryBefore);
+
+      await page.click(SEL.allDone);
+      const after = await readReview(page);
+      assert.equal(after.find((r) => r.id === '034567890').decision, HANDLED, 'הכפתור מחיל "סמן כטופל" על המסומנות "כנראה בוצע"');
+      assert.ok(after.filter((r) => r.pending).every((r) => r.decision === APPROVE), '"ממתין" לא נגע');
       const summary = await readText(page, SEL.summary);
-      assert.match(summary, /אישור מעבר=4 .* טופל=5 .* כבר בוצע=1/, summary);
+      assert.match(summary, /אישור מעבר=4 .* טופל=8 .* ממתין=4 · כנראה בוצע=1/, summary);
 
       await page.click(SEL.runReview);
       const rep = await waitForReport(page);
-      assert.match(rep.text, /בוצעו=11 · נכשלו=0/, rep.text);
+      assert.match(rep.text, /בוצעו=14 · נכשלו=0/, rep.text);
       const db = await readMockDb(page);
-      assert.equal(byId(db, 'm15').handledBy, 'handled', 'המעבר שכבר בוצע סומן כטופל, לא אושר שוב');
-      assert.equal(byId(db, 'm01').handledBy, 'approve');
+      assert.equal(byId(db, 'm03').handledBy, 'handled', 'הבקשה על תלמיד שאינו במצבת סומנה כטופל, לא אושרה');
+      assert.equal(byId(db, 'm14').handledBy, 'handled', 'וגם המופע השני של אותה בקשה (שורה ממוזגת)');
+      for (const id of ['m01', 'm05', 'm07', 'm13', 'm15']) assert.equal(byId(db, id).handledBy, 'approve', `${id} ממתין → אושר`);
+      for (const id of HANDLED_IDS) assert.equal(byId(db, id).handledBy, 'handled', id);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -339,13 +381,13 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       await scanAndWait(page);
       await page.click(SEL.allSkip);
       let summary = await readText(page, SEL.summary);
-      assert.match(summary, /דלג=9/, summary);
+      assert.match(summary, /דלג=12/, summary);
       let review = await readReview(page);
       assert.ok(review.every((r) => r.decision === SKIP));
 
       await page.click(SEL.allTransfers);
       summary = await readText(page, SEL.summary);
-      assert.match(summary, /אישור מעבר=5 .* דלג=4/, summary);
+      assert.match(summary, /אישור מעבר=5 .* דלג=7/, summary);
 
       await page.fill(SEL.filter, '023456789');
       review = await readReview(page);
@@ -357,15 +399,15 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       review = await readReview(page);
       assert.ok(review.every((r) => !r.hidden));
       summary = await readText(page, SEL.summary);
-      assert.match(summary, /אישור מעבר=5 · דחיית מעבר=0 · טופל=1 · דלג=3/, summary);
+      assert.match(summary, /אישור מעבר=5 · דחיית מעבר=0 · טופל=1 · דלג=6/, summary);
 
       await page.click(SEL.runReview);
       const rep = await waitForReport(page);
-      assert.match(rep.text, /בוצעו=8 · נכשלו=0 · דולגו=3/, rep.text);
+      assert.match(rep.text, /בוצעו=8 · נכשלו=0 · דולגו=6/, rep.text);
       const db = await readMockDb(page);
-      for (const id of ['m01', 'm03', 'm05', 'm07', 'm13', 'm14', 'm15']) assert.equal(byId(db, id).handledBy, 'approve', id);
+      for (const id of APPROVE_IDS) assert.equal(byId(db, id).handledBy, 'approve', id);
       assert.equal(byId(db, 'm02').handledBy, 'handled');
-      for (const id of ['m04', 'm06', 'm08']) assert.equal(byId(db, id).status, 'נשלחה', `${id} דולגה`);
+      for (const id of ['m04', 'm06', 'm08', 'm16', 'm17', 'm18']) assert.equal(byId(db, id).status, 'נשלחה', `${id} דולגה`);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -385,45 +427,46 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       const done = db.messages.filter((m) => m.handledAt).length;
       assert.ok(remaining > 0 && done >= 1 && remaining + done === SENT_IDS.length, `remaining=${remaining} done=${done}`);
       const review = await readReview(page);
-      assert.equal(review.length, 9, 'טבלת הסקירה נשארת אחרי עצירה');
+      assert.equal(review.length, 12, 'טבלת הסקירה נשארת אחרי עצירה');
       const runEnabled = await evalRetry(page, (s) => !document.querySelector(s.runReview).disabled, SEL);
       assert.equal(runEnabled, true, '"בצע לפי הטבלה" חוזר להיות זמין');
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
 
-  // ממצא ב-4: האתר חוזר לעמוד 1 אחרי פעולה. (א) m06 (עמוד 2, אינה בקשת-מעבר) עם "דחיית מעבר": האתר מודיע
-  // שגיאה ולא משנה כלום; הגריד המוצג (עמוד 1) אינו ראיה → "נכשל: הגריד חזר לעמוד אחר", לא "בוצע".
-  // (ב) m15 (עמוד 3) "תקועה": חלונית-הצלחה אך נשארת "נשלחה"; מסלול האקסל בלי כמות → בלי התיקון היא
-  // מקבלת פעולה שוב ושוב עד תקרת הלולאה. עם התיקון: פעולה אחת, ובסבב הבא שורת-כישלון בדוח.
+  // ממצא ב-4: האתר חוזר לעמוד 1 אחרי פעולה. (א) m18 (עמוד 2, "מעבר תלמיד" אינפורמטיבי, אינה בקשת-מעבר) עם
+  // "דחיית מעבר": האתר מודיע שגיאה ולא משנה כלום; הגריד המוצג (עמוד 1) אינו ראיה → "נכשל: הגריד חזר לעמוד
+  // אחר", לא "בוצע". (ב) m15 (עמוד 2) "תקועה": חלונית-הצלחה אך נשארת "נשלחה"; מסלול האקסל בלי כמות → בלי
+  // התיקון היא מקבלת פעולה שוב ושוב עד תקרת הלולאה. עם התיקון: פעולה אחת, ובסבב הבא שורת-כישלון בדוח.
   test('9 ממצא ב-4: הגריד חוזר לעמוד 1 אחרי פעולה → פעולה שנכשלה לא מדווחת "בוצע"; הודעה "תקועה" לא מקבלת פעולה פעמיים', async () => {
     const { context, page, consoleLines } = await openSession(browser, { scenario: { messagesResetPageAfterAction: true, messagesStuck: ['m15'] }, script });
     try {
       await openMessages(page);
       await scanAndWait(page);
       const review = await readReview(page);
-      const m06 = review.find((r) => r.id === 'AB1234567');
+      const m18 = review.find((r) => r.id === '200300400');
       const m15 = review.find((r) => r.id === '078901234');
-      assert.ok(m06 && m15, JSON.stringify(review));
+      assert.ok(m18 && m15, JSON.stringify(review));
+      assert.equal(m18.header, TRANSFER_DONE);
       await page.click(SEL.excelSummary);
       const header = ['UID', 'נושא', 'ת.ז./דרכון', 'תאריך', 'גוף ההודעה', 'פעולה'].join(T);
       const line = (r, action) => [r.uid, r.header, r.id, r.date, 'גוף', action].join(T);
-      await page.fill(SEL.input, [header, line(m06, DECLINE), line(m15, APPROVE)].join('\n'));
+      await page.fill(SEL.input, [header, line(m18, DECLINE), line(m15, APPROVE)].join('\n'));
       await page.click(SEL.load);
       await page.click(SEL.runTable);
       const rep = await waitForReport(page, 60000);
       const log = await readLog(page);
       assert.match(rep.text, /בוצעו=1 · נכשלו=2/, rep.text + '\n' + log);
       const db = await readMockDb(page);
-      assert.equal(byId(db, 'm06').status, 'נשלחה');
-      assert.equal(byId(db, 'm06').handledBy, undefined);
+      assert.equal(byId(db, 'm18').status, 'נשלחה');
+      assert.equal(byId(db, 'm18').handledBy, undefined);
       assert.equal((db.stuckAttempts || {}).m15, 1, `m15 קיבלה פעולה ${(db.stuckAttempts || {}).m15} פעמים`);
       const rows = await readTable(page, SEL.results);
       const st = {};
       for (const r of rows) st[r[0]] = (st[r[0]] || []).concat(r[4]);
-      assert.equal(st[m06.uid].length, 1);
-      assert.match(st[m06.uid][0], /^נכשל: הגריד חזר לעמוד אחר אחרי הפעולה/, st[m06.uid][0]);
-      assert.match(st[m06.uid][0], /הפעולה אפשרית רק עבור בקשת מעבר/, st[m06.uid][0]);
+      assert.equal(st[m18.uid].length, 1);
+      assert.match(st[m18.uid][0], /^נכשל: הגריד חזר לעמוד אחר אחרי הפעולה/, st[m18.uid][0]);
+      assert.match(st[m18.uid][0], /הפעולה אפשרית רק עבור בקשת מעבר/, st[m18.uid][0]);
       assert.deepEqual(st[m15.uid].map((s) => s.replace(/:.*$/, '')), ['בוצע', 'נכשל']);
       assert.match(rep.text, new RegExp(m15.uid), 'שורת "מה נשאר" להודעה התקועה');
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));

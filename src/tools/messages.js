@@ -45,7 +45,10 @@ export const MESSAGES_IDS = {
   hidRowId: 'ContentPlaceHolder1_HidMessageRowID',
 };
 
+// נושאי ההודעות מהאתר החי (30.10.2026). "בקשת מעבר תלמיד": מוסד אחר ביקש להעביר אליו תלמיד שלנו, ועלינו
+// לאשר או לדחות. "מעבר תלמיד": אינפורמטיבי (מעבר ממוסדנו / אל מוסדנו אושר), רק לסמן כטופל.
 export const MESSAGES_TRANSFER_HEADER = 'בקשת מעבר תלמיד';
+export const MESSAGES_TRANSFER_DONE_HEADER = 'מעבר תלמיד';
 export const MESSAGES_STATUS_SENT = 'נשלחה';
 export const MESSAGES_STATUS_HANDLED = 'טופלה';
 export const MESSAGES_TSV_HEADER = ['UID', 'נושא', 'ת.ז./דרכון', 'תאריך', 'גוף ההודעה', 'פעולה'];
@@ -210,12 +213,20 @@ export function messagesNormBranch(s) {
   return m[1].padStart(2, '0');
 }
 
-// "מסניף X לסניף Y" מגוף בקשת-מעבר (נוסח הדמה; הנוסח באתר האמיתי לא אומת). חסר → ''.
+// פרטי המעבר מגוף ההודעה, לפי הנוסחים מהאתר החי (30.10.2026):
+// בקשת-מעבר: "...מסוג לימוד NNN בסניף NN. אנא אשר או דחה את המעבר." → {branch:'NN' (2 ספרות), studyType:'NNN',
+//   direction:'out'}: הסניף וסוג-הלימוד הנוכחיים של התלמיד אצלנו (מוסד אחר מבקש לקחת אותו).
+// "מעבר תלמיד" אינפורמטיבי: "...אל מוסדך אושר..." → direction 'in'; "...ממוסדך אושר..." → 'out-done'; בלי סניף.
+// אחר → הכול ריק.
 export function messagesExtractTransfer(body) {
-  const b = String(body == null ? '' : body);
-  const from = /מסניף\s*:?\s*(\d{1,3})/.exec(b);
-  const to = /לסניף\s*:?\s*(\d{1,3})/.exec(b);
-  return { from: from ? messagesNormBranch(from[1]) : '', to: to ? messagesNormBranch(to[1]) : '' };
+  const b = messagesFlat(body);
+  const out = { branch: '', studyType: '', direction: '' };
+  if (!b) return out;
+  const m = /מסוג\s+לימוד\s*:?\s*(\d{1,5})\s+בסניף\s*:?\s*(\d{1,3})/.exec(b);
+  if (m) return { branch: messagesNormBranch(m[2]), studyType: m[1], direction: 'out' };
+  if (/אל\s+מוסדך/.test(b)) out.direction = 'in';
+  else if (/ממוסדך/.test(b)) out.direction = 'out-done';
+  return out;
 }
 
 function messagesNormBody(body) {
@@ -246,7 +257,7 @@ export function messagesMergeDuplicates(list) {
       header, personId: r.personId || '', body: messagesFlat(r.body), date: r.date || '', dates: r.date ? [r.date] : [],
       transfer: messagesExtractTransfer(r.body),
       suggestedAction: r.suggestedAction || messagesSuggestAction(header),
-      rosterLabel: '', rosterBranches: [], alreadyDone: false,
+      rosterLabel: '', rosterBranches: [], pending: false, probablyDone: false,
     });
   }
   return Array.from(map.values());
@@ -308,19 +319,22 @@ export function messagesRosterBranches(roster, personId) {
   return (roster.byId.get(messagesNormId(personId)) || []).slice();
 }
 
-// הצלבה מול המצבת: לכל שורה עם ת.ז. "סניף NN" / "לא במצבת"; בלי ת.ז. → ''. בקשת-מעבר שהתלמיד כבר
-// במצבת בסניף-היעד שלה: alreadyDone (תג "כבר בוצע"). ממצא ב-10: זה רמז לבדיקה בלבד, כי הנוסח
-// "לסניף NN" בגוף ההודעה לא אומת באתר: ההצעה לא משתנה מעצמה; הכפתור "כל 'כבר בוצע': סמן כטופל"
-// בלשונית מחיל את ההחלטה על השורות המסומנות. roster=null → עמודה ריקה. מחזיר מערך חדש.
+// הצלבה מול המצבת: לכל שורה עם ת.ז. "סניף NN" / "לא במצבת"; בלי ת.ז. → ''. עובדות 30.10.2026: בבקשת-מעבר
+// מוסד אחר מבקש תלמיד שלנו, ולכן: התלמיד במצבת (בכל סניף) → הבקשה עדיין רלוונטית, pending (תג "ממתין":
+// לאשר או לדחות); אינו במצבת → כבר לא אצלנו, probablyDone (תג "כנראה בוצע"). שניהם רמז לבדיקה בלבד:
+// ההצעה לא משתנה מעצמה (ממצא ב-10); הכפתור "כל 'כנראה בוצע': סמן כטופל" בלשונית מחיל. "מעבר תלמיד"
+// האינפורמטיבי וכל נושא אחר: עמודת המצבת בלבד, בלי תג. roster=null → עמודה ריקה. מחזיר מערך חדש.
 export function messagesCrossCheck(rows, roster) {
   return (rows || []).map((r) => {
-    const out = Object.assign({}, r, { rosterLabel: '', rosterBranches: [], alreadyDone: false, suggestedAction: messagesSuggestAction(r.header) });
+    const out = Object.assign({}, r, { rosterLabel: '', rosterBranches: [], pending: false, probablyDone: false, suggestedAction: messagesSuggestAction(r.header) });
     if (!roster || !roster.byId || !r.personId) return out;
     const branches = messagesRosterBranches(roster, r.personId);
     out.rosterBranches = branches;
     out.rosterLabel = branches.length ? branches.map((b) => `סניף ${b}`).join(', ') : 'לא במצבת';
-    const transfer = r.transfer || messagesExtractTransfer(r.body);
-    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER && transfer.to && branches.includes(transfer.to)) out.alreadyDone = true;
+    if (messagesFlat(r.header) === MESSAGES_TRANSFER_HEADER) {
+      if (branches.length) out.pending = true;
+      else out.probablyDone = true;
+    }
     return out;
   });
 }

@@ -14,6 +14,12 @@ import { messagesTool } from '../src/tools/messages-ui.js';
 
 const T = '\t';
 
+// נוסחי ההודעות מהאתר החי (30.10.2026), עם שמות ומזהים בדויים.
+const LIVE_REQUEST = (name, id, studyType, branch) => `מוסד אחר ביקש להעביר אליו את התלמיד ${name}, בעל ת.ז. ${id} מסוג לימוד ${studyType} בסניף ${branch}. אנא אשר או דחה את המעבר.`;
+const LIVE_OUT_DONE = (name, idPhrase) => `מעבר התלמיד ${name}, ${idPhrase} ממוסדך אושר על ידי תהליך אישור אוטומטי.`;
+const LIVE_IN = (name, id) => `מעבר התלמיד ${name}, בעל ת.ז. ${id} אל מוסדך אושר על ידי המוסד בו הוא לומד.`;
+const TRANSFER_DONE = 'מעבר תלמיד';
+
 // ─── עשן: import ב-Node ─────────────────────────────────────────────────────
 test('smoke: המודולים נטענים ב-Node והחוזה של הלשונית שלם', () => {
   for (const fn of [messagesRunBulk, messagesScan, messagesRunTable]) assert.equal(typeof fn, 'function');
@@ -47,6 +53,14 @@ test('messagesExtractId: ת.ז. בכתיבים שונים', () => {
   assert.equal(messagesExtractId('תלמיד ת.ז 23456789 עבר'), '23456789');
   assert.equal(messagesExtractId('תז. 034567890'), '034567890');
 });
+test('messagesExtractId: הנוסחים מהאתר החי בדיוק: "בעל ת.ז. <9 ספרות>" / "בעל דרכון <אותיות+ספרות>"; סוג-הלימוד והסניף אינם מזהה', () => {
+  assert.equal(messagesExtractId(LIVE_REQUEST('ראובן דמה', '012345678', '600', '09')), '012345678');
+  assert.equal(messagesExtractId(LIVE_OUT_DONE('שמעון דמה', 'בעל ת.ז. 100200300')), '100200300');
+  assert.equal(messagesExtractId(LIVE_OUT_DONE('לוי דמה', 'בעל דרכון cd7654321')), 'CD7654321');
+  assert.equal(messagesExtractId(LIVE_IN('יהודה דמה', '200300400')), '200300400');
+  assert.equal(messagesExtractId('מוסד אחר ביקש להעביר אליו את התלמיד פלוני דמה מסוג לימוד 600 בסניף 09.'), '', 'בלי מזהה: 600 ו-09 אינם ת.ז.');
+});
+
 test('messagesExtractId: דרכון באותיות גדולות; רצף ספרות חשוף; אין', () => {
   assert.equal(messagesExtractId('התלמיד בעל דרכון ab1234567 נקלט'), 'AB1234567');
   assert.equal(messagesExtractId('מספר 045678901 עודכן'), '045678901');
@@ -71,9 +85,10 @@ test('messagesNormalizeAction: כינויים של הישן, אותיות גדו
   assert.equal(messagesNormalizeAction('משהו אחר'), MESSAGES_ACTION.SKIP);
 });
 
-test('messagesSuggestAction: בקשת מעבר → אישור; אחרת → טופל', () => {
+test('messagesSuggestAction: בקשת מעבר → אישור; "מעבר תלמיד" (אינפורמטיבי) ואחרת → טופל', () => {
   assert.equal(messagesSuggestAction('בקשת מעבר תלמיד'), MESSAGES_ACTION.APPROVE);
   assert.equal(messagesSuggestAction(' בקשת מעבר תלמיד '), MESSAGES_ACTION.APPROVE);
+  assert.equal(messagesSuggestAction(TRANSFER_DONE), MESSAGES_ACTION.HANDLED);
   assert.equal(messagesSuggestAction('עדכון פרטי תלמיד'), MESSAGES_ACTION.HANDLED);
   assert.equal(messagesSuggestAction(''), MESSAGES_ACTION.HANDLED);
 });
@@ -186,7 +201,7 @@ test('messagesBuildReport: ריק → סיכום אפסים בלי שורות', 
 });
 
 // ─── סקירה בתוך החלונית: מיזוג כפילויות, מצבת, הצלבה ───────────────────────
-const msgRow = (over) => Object.assign({ uid: 'M1', header: 'בקשת מעבר תלמיד', personId: '012345678', body: 'בקשת מעבר עבור התלמיד ת.ז. 012345678 מסניף 00 לסניף 16.', date: '01/09/2026', count: 1, suggestedAction: MESSAGES_ACTION.APPROVE }, over);
+const msgRow = (over) => Object.assign({ uid: 'M1', header: 'בקשת מעבר תלמיד', personId: '012345678', body: LIVE_REQUEST('ראובן דמה', '012345678', '600', '09'), date: '01/09/2026', count: 1, suggestedAction: MESSAGES_ACTION.APPROVE }, over);
 
 test('messagesNormId / messagesNormBranch: אפסים מובילים, רווחים, אותיות', () => {
   assert.equal(messagesNormId('012345678'), messagesNormId('12345678'));
@@ -199,18 +214,26 @@ test('messagesNormId / messagesNormBranch: אפסים מובילים, רווחי
   assert.equal(messagesNormBranch(''), '');
 });
 
-test('messagesExtractTransfer: "מסניף X לסניף Y" מהגוף; חסר → ריק', () => {
-  assert.deepEqual(messagesExtractTransfer('בקשת מעבר עבור התלמיד ת.ז. 012345678 מסניף 00 לסניף 16. נא לאשר'), { from: '00', to: '16' });
-  assert.deepEqual(messagesExtractTransfer('מעבר לסניף 5'), { from: '', to: '05' });
-  assert.deepEqual(messagesExtractTransfer('עודכנו פרטי התלמיד'), { from: '', to: '' });
-  assert.deepEqual(messagesExtractTransfer(null), { from: '', to: '' });
+// עובדות 30.10.2026: בבקשת-מעבר מוסד אחר מבקש תלמיד שלנו; "מסוג לימוד NNN בסניף NN" = הסניף וסוג-הלימוד
+// הנוכחיים שלו אצלנו (direction 'out'). ב"מעבר תלמיד" האינפורמטיבי: "אל מוסדך" = 'in', "ממוסדך אושר" = 'out-done'.
+test('messagesExtractTransfer: "מסוג לימוד NNN בסניף NN" → סניף (2 ספרות), סוג-לימוד, out; "אל מוסדך" → in; "ממוסדך אושר" → out-done; אחר → ריק', () => {
+  const empty = { branch: '', studyType: '', direction: '' };
+  assert.deepEqual(messagesExtractTransfer(LIVE_REQUEST('ראובן דמה', '012345678', '600', '09')), { branch: '09', studyType: '600', direction: 'out' });
+  assert.deepEqual(messagesExtractTransfer(LIVE_REQUEST('ראובן דמה', '012345678', '600', '9')), { branch: '09', studyType: '600', direction: 'out' }, 'סניף בספרה אחת מרופד');
+  assert.deepEqual(messagesExtractTransfer(LIVE_REQUEST('ראובן דמה', '012345678', '1200', '16')), { branch: '16', studyType: '1200', direction: 'out' });
+  assert.deepEqual(messagesExtractTransfer(LIVE_IN('יהודה דמה', '200300400')), { branch: '', studyType: '', direction: 'in' });
+  assert.deepEqual(messagesExtractTransfer(LIVE_OUT_DONE('שמעון דמה', 'בעל ת.ז. 100200300')), { branch: '', studyType: '', direction: 'out-done' });
+  assert.deepEqual(messagesExtractTransfer(LIVE_OUT_DONE('לוי דמה', 'בעל דרכון CD7654321')), { branch: '', studyType: '', direction: 'out-done' });
+  assert.deepEqual(messagesExtractTransfer('עודכנו פרטי התלמיד'), empty);
+  assert.deepEqual(messagesExtractTransfer('בקשת מעבר עבור התלמיד ת.ז. 012345678 מסניף 00 לסניף 16.'), empty, 'נוסח הדמה הישן אינו נתמך עוד');
+  assert.deepEqual(messagesExtractTransfer(null), empty);
 });
 
 test('messagesMergeDuplicates: אותו נושא + אותה ת.ז. → שורה אחת עם כמות ורשימת UID-ים; הסדר נשמר', () => {
   const list = [
     msgRow({ uid: 'M1', count: 2 }), // אותה הודעה פעמיים בגריד (UID זהה)
     msgRow({ uid: 'M2', header: 'עדכון פרטי תלמיד', personId: '023456789', body: 'עודכן', suggestedAction: MESSAGES_ACTION.HANDLED }),
-    msgRow({ uid: 'M3', body: 'בקשת מעבר עבור התלמיד ת.ז. 012345678 מסניף 00 לסניף 16 (תזכורת).', date: '03/09/2026' }), // נוסח שונה, אותה ת.ז.
+    msgRow({ uid: 'M3', body: LIVE_REQUEST('ראובן דמה', '012345678', '600', '09') + ' (תזכורת)', date: '03/09/2026' }), // נוסח שונה, אותה ת.ז.
     msgRow({ uid: 'M4', header: 'עדכון פרטי תלמיד', personId: '23456789', body: 'אחר', suggestedAction: MESSAGES_ACTION.HANDLED }), // ת.ז. של M2 בלי אפס מוביל
   ];
   const rows = messagesMergeDuplicates(list);
@@ -221,7 +244,7 @@ test('messagesMergeDuplicates: אותו נושא + אותה ת.ז. → שורה 
   assert.equal(rows[0].count, 3);
   assert.equal(rows[0].date, '01/09/2026');
   assert.deepEqual(rows[0].dates, ['01/09/2026', '03/09/2026']);
-  assert.deepEqual(rows[0].transfer, { from: '00', to: '16' });
+  assert.deepEqual(rows[0].transfer, { branch: '09', studyType: '600', direction: 'out' });
   assert.equal(rows[0].suggestedAction, MESSAGES_ACTION.APPROVE);
   assert.equal(rows[1].uid, 'M2');
   assert.deepEqual(rows[1].uids, ['M2', 'M4']);
@@ -267,39 +290,68 @@ test('messagesParseRoster: עמודות הפוכות (ת.ז. ואז סניף) מ
   assert.equal(only.ok, false);
 });
 
-// ממצא ב-10 (ביקורת שנייה): "כבר בוצע" הוא רמז לבדיקה (נוסח "לסניף NN" לא אומת באתר): התג מוצג, ההצעה לא משתנה.
-test('messagesCrossCheck: במצבת / לא במצבת / ריק בלי ת.ז.; מעבר שכבר בוצע → תג "כבר בוצע", ההצעה נשארת "אישור מעבר"', () => {
-  const roster = messagesParseRoster(`סניף${T}ת.ז.\n16${T}78901234\n05${T}012345678\n16${T}AB1234567`);
+// עובדות 30.10.2026: בבקשת-מעבר מוסד אחר מבקש תלמיד שלנו. תלמיד שעדיין במצבת (בכל סניף) → הבקשה עדיין
+// רלוונטית: "ממתין" (לאשר או לדחות). תלמיד שאינו במצבת → כבר לא אצלנו: "כנראה בוצע" (רמז; ההצעה לא משתנה,
+// הכפתור "כל 'כנראה בוצע': סמן כטופל" מחיל). "מעבר תלמיד" האינפורמטיבי: טופל, עמודת המצבת לפי המצבת, בלי תג.
+test('messagesCrossCheck: בקשת-מעבר שהתלמיד במצבת → "סניף NN" + ממתין; לא במצבת → "כנראה בוצע"; ההצעה נשארת "אישור מעבר"; "מעבר תלמיד" → טופל בלי תג', () => {
+  const roster = messagesParseRoster(`סניף${T}ת.ז.\n16${T}78901234\n05${T}012345678\n16${T}AB1234567\n9${T}100200300`);
   const rows = messagesMergeDuplicates([
-    msgRow({ uid: 'M1', personId: '078901234', body: 'בקשת מעבר עבור התלמיד ת.ז. 078901234 מסניף 05 לסניף 16.' }),
-    msgRow({ uid: 'M2' }), // 012345678 במצבת בסניף 05, מבקש לסניף 16 → עדיין לא בוצע
-    msgRow({ uid: 'M3', header: 'עדכון פרטי תלמיד', personId: '023456789', body: 'עודכן', suggestedAction: MESSAGES_ACTION.HANDLED }),
-    msgRow({ uid: 'M4', header: 'הודעה כללית', personId: '', body: 'תזכורת', suggestedAction: MESSAGES_ACTION.HANDLED }),
-    msgRow({ uid: 'M5', header: 'אישור קליטה', personId: 'AB1234567', body: 'נקלט', suggestedAction: MESSAGES_ACTION.HANDLED }),
+    msgRow({ uid: 'M1', personId: '078901234', body: LIVE_REQUEST('דן דמה', '078901234', '600', '05') }), // במצבת בסניף 16 (לא הסניף שבגוף): עדיין אצלנו
+    msgRow({ uid: 'M2' }), // 012345678 במצבת בסניף 05
+    msgRow({ uid: 'M3', personId: '034567890', body: LIVE_REQUEST('גד דמה', '034567890', '600', '09') }), // לא במצבת: כנראה כבר עבר
+    msgRow({ uid: 'M4', header: 'עדכון פרטי תלמיד', personId: '023456789', body: 'עודכן', suggestedAction: MESSAGES_ACTION.HANDLED }),
+    msgRow({ uid: 'M5', header: 'הודעה כללית', personId: '', body: 'תזכורת', suggestedAction: MESSAGES_ACTION.HANDLED }),
+    msgRow({ uid: 'M6', header: 'אישור קליטה', personId: 'AB1234567', body: 'נקלט', suggestedAction: MESSAGES_ACTION.HANDLED }),
+    msgRow({ uid: 'M7', header: TRANSFER_DONE, personId: '100200300', body: LIVE_OUT_DONE('שמעון דמה', 'בעל ת.ז. 100200300'), suggestedAction: MESSAGES_ACTION.HANDLED }),
+    msgRow({ uid: 'M8', header: TRANSFER_DONE, personId: '200300400', body: LIVE_IN('יהודה דמה', '200300400'), suggestedAction: MESSAGES_ACTION.HANDLED }),
   ]);
   const out = messagesCrossCheck(rows, roster);
-  assert.equal(out.length, 5);
+  assert.equal(out.length, 8);
+  const tags = (r) => [r.pending, r.probablyDone];
   assert.equal(out[0].rosterLabel, 'סניף 16');
-  assert.equal(out[0].alreadyDone, true);
-  assert.equal(out[0].suggestedAction, MESSAGES_ACTION.APPROVE, 'ממצא ב-10: ההחלטה לא משתנה מעצמה; הכפתור "כל \'כבר בוצע\': סמן כטופל" מחיל');
+  assert.deepEqual(tags(out[0]), [true, false], 'במצבת (בכל סניף) → ממתין');
+  assert.equal(out[0].suggestedAction, MESSAGES_ACTION.APPROVE);
   assert.equal(out[1].rosterLabel, 'סניף 05');
-  assert.equal(out[1].alreadyDone, false);
+  assert.deepEqual(tags(out[1]), [true, false]);
   assert.equal(out[1].suggestedAction, MESSAGES_ACTION.APPROVE);
   assert.equal(out[2].rosterLabel, 'לא במצבת');
-  assert.equal(out[3].rosterLabel, '');
-  assert.equal(out[4].rosterLabel, 'סניף 16');
-  assert.equal(out[4].alreadyDone, false, 'לא בקשת מעבר');
-  // בלי מצבת: העמודה ריקה וההצעה לא משתנה
+  assert.deepEqual(tags(out[2]), [false, true], 'בקשת-מעבר על תלמיד שאינו במצבת → כנראה בוצע');
+  assert.equal(out[2].suggestedAction, MESSAGES_ACTION.APPROVE, 'ההחלטה לא משתנה מעצמה; הכפתור "כל \'כנראה בוצע\': סמן כטופל" מחיל');
+  assert.equal(out[3].rosterLabel, 'לא במצבת');
+  assert.deepEqual(tags(out[3]), [false, false], 'לא בקשת-מעבר: בלי תג');
+  assert.equal(out[4].rosterLabel, '', 'בלי ת.ז.: עמודה ריקה');
+  assert.deepEqual(tags(out[4]), [false, false]);
+  assert.equal(out[5].rosterLabel, 'סניף 16');
+  assert.deepEqual(tags(out[5]), [false, false]);
+  assert.equal(out[6].rosterLabel, 'סניף 09', 'מעבר תלמיד (ממוסדך): לפי המצבת, סניף מרופד');
+  assert.deepEqual(tags(out[6]), [false, false]);
+  assert.equal(out[6].suggestedAction, MESSAGES_ACTION.HANDLED);
+  assert.equal(out[7].rosterLabel, 'לא במצבת', 'מעבר תלמיד (אל מוסדך): לפי המצבת');
+  assert.deepEqual(tags(out[7]), [false, false]);
+  assert.equal(out[7].suggestedAction, MESSAGES_ACTION.HANDLED);
+  // בלי מצבת: העמודה ריקה, בלי תגים, וההצעה לא משתנה
   const none = messagesCrossCheck(rows, null);
-  assert.equal(none[0].rosterLabel, '');
+  assert.ok(none.every((r) => r.rosterLabel === '' && !r.pending && !r.probablyDone));
   assert.equal(none[0].suggestedAction, MESSAGES_ACTION.APPROVE);
   assert.notEqual(none, rows, 'מחזיר מערך חדש');
+});
+
+test('messagesCrossCheck: מצבת שאקסל מחק בה אפסים מובילים ומזהה עם רווחים עדיין מצליבה', () => {
+  const roster = messagesParseRoster('5,12345678\n16,78901234');
+  const out = messagesCrossCheck(messagesMergeDuplicates([
+    msgRow({ uid: 'M1' }), // 012345678
+    msgRow({ uid: 'M2', personId: ' 0789-01234 ', body: LIVE_REQUEST('דן דמה', '078901234', '600', '05') }),
+  ]), roster);
+  assert.equal(out[0].rosterLabel, 'סניף 05');
+  assert.equal(out[0].pending, true);
+  assert.equal(out[1].rosterLabel, 'סניף 16');
+  assert.equal(out[1].pending, true);
 });
 
 test('messagesDecisionCounts / messagesReviewEntries: החלטה לכל שורה (ברירת-מחדל: ההצעה), כולל כל ה-UID-ים של שורה ממוזגת', () => {
   const rows = messagesMergeDuplicates([
     msgRow({ uid: 'M1', count: 2 }),
-    msgRow({ uid: 'M3', body: 'תזכורת ת.ז. 012345678 לסניף 16' }),
+    msgRow({ uid: 'M3', body: 'תזכורת: בעל ת.ז. 012345678 מסוג לימוד 600 בסניף 09' }),
     msgRow({ uid: 'M2', header: 'עדכון פרטי תלמיד', personId: '023456789', body: 'עודכן', suggestedAction: MESSAGES_ACTION.HANDLED }),
     msgRow({ uid: 'M9', header: 'הודעה כללית', personId: '', body: 'תזכורת', suggestedAction: MESSAGES_ACTION.HANDLED }),
   ]);
@@ -320,7 +372,7 @@ test('messagesRowMatchesFilter: לפי ת.ז., נושא או גוף; ריק → 
   assert.equal(messagesRowMatchesFilter(row, ''), true);
   assert.equal(messagesRowMatchesFilter(row, '12345678'), true);
   assert.equal(messagesRowMatchesFilter(row, 'מעבר'), true);
-  assert.equal(messagesRowMatchesFilter(row, 'לסניף 16'), true);
+  assert.equal(messagesRowMatchesFilter(row, 'בסניף 09'), true);
   assert.equal(messagesRowMatchesFilter(row, 'קליטה'), false);
 });
 
