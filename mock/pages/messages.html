@@ -129,6 +129,10 @@
       const m = C.handleMessagePostback(target);
       if (m) return m;
 
+      // F2 (הנחה לדף הזה: לא נמדד): לחיצה בעץ קובעת את ה-session ומנווטת לדף המוסד
+      const t = C.handleTreePostback(db, target, arg, '/Institutes/InstitutesDetails.aspx');
+      if (t) return t;
+
       if (target === 'ctl00$ContentPlaceHolder1$ddlMessageStatus') {
         const v = document.getElementById(DDL).value;
         return { kind: 'async', apply: () => { state.filter = v; state.page = 1; D.log(db, `messages filter → ${v}`); renderGrid(); } };

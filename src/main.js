@@ -16,7 +16,7 @@ registerTool(reportTool);
 registerTool(messagesTool);
 
 export function initTalmudTools() {
-  const page = getPage({ init: true }); // טעינת-דף מלאה: כאן מותר למחוק רשומת-סניף סותרת (ממצא ב-5)
+  const page = getPage();
   const mounted = mountPanel(page);
   if (!mounted.length) return false;
   restoreLog();

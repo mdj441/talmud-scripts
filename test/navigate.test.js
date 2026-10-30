@@ -3,28 +3,33 @@ import assert from 'node:assert/strict';
 import {
   getPage, classifyUrl, findStudyTypeRow, findStudyTypeRowPosition, gridToRows, gridPageSignature, gridStudyTypes,
   gotoStudyTypeFromInstitute, gotoInstitute, gotoStudyType, findBranchHref, branchesFromTreeHrefs, parsePostbackHref,
-  saveNavState, loadNavState, clearNavState, clearNavIntent, forgetNavMaps,
-  parseBranchFromH1, parseStudyTypeFromH1, parseBranchFromBreadcrumb, parseSelectedRowIndex, normalizeBranch,
-  parseInstituteId, parseInstituteStudyTypeId, mergeBranchIds, institutePageUrl, studyTypePageUrl, loadBranchIds,
-  branchForInstituteId, learnBranchId, loadStudyTypeIds, learnStudyTypeId, studyTypeKey, studyTypeRecord, NAV_BRANCH_IDS_SEED,
-  readPage,
+  parseBranchFromH1, parseStudyTypeFromH1, parseSelectedRowIndex, normalizeBranch,
+  parseInstituteId, parseInstituteStudyTypeId, institutesPageUrl, readBranchesFromTree,
 } from '../src/core/navigate.js';
+
+// עובדות מהאתר החי (30.10.2026): הדף הולך אחרי ה-session של השרת ולא אחרי הכתובת. הסניף בדף
+// המוסד נקרא מה-h1 (או מהתווית "מספר סניף"), בדף סוג-הלימוד רק מהתווית lblInstituteBranchNumber.
+// פירורי-הלחם מטעים ואינם מקור. ניווט: עץ-הצד (טעינה מלאה, הכתובת לא משתנה) ואז הגריד.
 
 const INST_00 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=491';
 const INST_16 = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4159';
 const ST_16_600 = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10269&InstituteID=4159';
+const ST_NO_QUERY = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx';
+const HUB = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx';
 
 test('smoke: כל היצוא הוא פונקציות (import ב-Node לא זרק)', () => {
   for (const fn of [getPage, classifyUrl, findStudyTypeRow, gridToRows, gotoStudyTypeFromInstitute, gotoInstitute, gotoStudyType,
-    findBranchHref, parsePostbackHref, saveNavState, loadNavState, clearNavState, learnBranchId, learnStudyTypeId]) {
+    findBranchHref, parsePostbackHref, institutesPageUrl, readBranchesFromTree]) {
     assert.equal(typeof fn, 'function');
   }
 });
 
 // ─── classifyUrl ─────────────────────────────────────────────────────────────
-test('classifyUrl: מוסד / סוג-לימוד / תלמיד-חדש / אחר / לא-מחרוזת', () => {
+test('classifyUrl: מוסד / סוג-לימוד (עם ובלי query) / תלמיד-חדש / אחר / לא-מחרוזת', () => {
   assert.equal(classifyUrl(INST_00), 'institute');
+  assert.equal(classifyUrl(HUB), 'institute');
   assert.equal(classifyUrl(ST_16_600), 'studyType');
+  assert.equal(classifyUrl(ST_NO_QUERY), 'studyType');
   assert.equal(classifyUrl('https://talmud.edu.gov.il/Students/StudentsDetails.aspx?'), 'newStudent');
   assert.equal(classifyUrl('https://talmud.edu.gov.il/Home/Default.aspx'), 'other');
   assert.equal(classifyUrl(undefined), 'other');
@@ -40,52 +45,31 @@ test('parseInstituteId / parseInstituteStudyTypeId: מהכתובת, לא רגי�
   assert.equal(parseInstituteStudyTypeId(INST_00), null);
 });
 
-test('parseBranchFromH1: "<מוסד> סניף NN" → מרופד; אין → null', () => {
+test('parseBranchFromH1: "<מוסד> סניף NN" → מרופד; ריק/אין → null', () => {
   assert.equal(parseBranchFromH1('עטרת שלמה סניף 07'), '07');
   assert.equal(parseBranchFromH1('עטרת שלמה סניף 0'), '00');
   assert.equal(parseBranchFromH1('עטרת שלמה סניף 26'), '26');
   assert.equal(parseBranchFromH1('פרטי מוסד'), null);
+  assert.equal(parseBranchFromH1(''), null);
   assert.equal(parseBranchFromH1(null), null);
 });
 
-test('parseStudyTypeFromH1: "סוג לימוד 600 - ..." → "600"', () => {
+test('parseStudyTypeFromH1: "סוג לימוד 600 - ..." → "600"; ריק → null', () => {
   assert.equal(parseStudyTypeFromH1('סוג לימוד 600 - כולל אברכים יום שלם'), '600');
   assert.equal(parseStudyTypeFromH1('פרטי סוג לימוד'), null);
-});
-
-test('parseBranchFromBreadcrumb: "... > עטרת שלמה > 16 > (600)כולל..." → "16" רק כשהקוד תואם', () => {
-  const crumbs = 'בית > איתור עמותות ומוסדות > פרטי עמותה > איתור מוסד > עטרת שלמה > 16 > (600)כולל אברכים יום שלם';
-  assert.equal(parseBranchFromBreadcrumb(crumbs, '600'), '16');
-  assert.equal(parseBranchFromBreadcrumb(crumbs, '300'), null);
-  assert.equal(parseBranchFromBreadcrumb('בית > פרטי מוסד', '600'), null);
-  assert.equal(parseBranchFromBreadcrumb(crumbs.replace(/\s*>\s*/g, '\n>\n'), '600'), '16', 'רווחים/שורות בין הפירורים');
-  assert.equal(parseBranchFromBreadcrumb('עטרת שלמה > 5 > (600)כולל', '600'), '05');
+  assert.equal(parseStudyTypeFromH1(''), null);
 });
 
 test('normalizeBranch: ריפוד; לא-תקין → null', () => {
   assert.equal(normalizeBranch('7'), '07');
   assert.equal(normalizeBranch(0), '00');
+  assert.equal(normalizeBranch(' 16 '), '16');
   assert.equal(normalizeBranch('123'), null);
   assert.equal(normalizeBranch(''), null);
 });
 
-test('institutePageUrl / studyTypePageUrl: כתובות; id לא-מספרי → null', () => {
-  assert.equal(institutePageUrl('491'), INST_00);
-  assert.equal(institutePageUrl(undefined), null);
-  assert.equal(studyTypePageUrl('10269', '4159'), ST_16_600);
-  assert.equal(studyTypePageUrl('10269', undefined), null);
-});
-
-test('mergeBranchIds / branchForInstituteId / studyTypeKey', () => {
-  const base = { '00': '491' };
-  const out = mergeBranchIds(base, '7', '4200');
-  assert.deepEqual(out, { '00': '491', '07': '4200' });
-  assert.deepEqual(base, { '00': '491' });
-  assert.deepEqual(mergeBranchIds(base, 'x', '1'), base);
-  assert.equal(branchForInstituteId(out, '4200'), '07');
-  assert.equal(branchForInstituteId(out, '9'), null);
-  assert.equal(studyTypeKey('7', '600'), '07|600');
-  assert.equal(studyTypeKey('7', 'x'), null);
+test('institutesPageUrl: דף המוסדות בלי query (ה-session קובע מה יוצג)', () => {
+  assert.equal(institutesPageUrl(), HUB);
 });
 
 // ─── גריד סוגי-לימוד (טהור) ─────────────────────────────────────────────────
@@ -126,180 +110,117 @@ const hrefs = [
   "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\00')",
   "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\00\\(720)כולל')",
   "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\07')",
+  "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\16')",
   "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\26')",
 ];
 test('findBranchHref / branchesFromTreeHrefs / parsePostbackHref', () => {
   assert.equal(findBranchHref(hrefs, '00'), 0);
   assert.equal(findBranchHref(hrefs, '7'), 2);
-  assert.equal(findBranchHref(hrefs, '26'), 3);
+  assert.equal(findBranchHref(hrefs, '26'), 4);
   assert.equal(findBranchHref(hrefs, '99'), -1);
-  assert.deepEqual(branchesFromTreeHrefs(hrefs), ['00', '07', '26']);
+  assert.deepEqual(branchesFromTreeHrefs(hrefs), ['00', '07', '16', '26']);
   assert.deepEqual(parsePostbackHref(hrefs[2]), { target: 'ctl00$ucTalmudSideBar$tvTalmud', arg: 'sעטרת שלמה\\07' });
   assert.equal(parsePostbackHref('javascript:void(0)'), null);
 });
 
-// ─── סביבה מדומה: sessionStorage / localStorage / location / document ────────
-function fakeStorage(initial = {}) {
-  const store = { ...initial };
-  return {
-    getItem: (k) => (Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null),
-    setItem: (k, v) => { store[k] = String(v); },
-    removeItem: (k) => { delete store[k]; },
-  };
-}
-
-// ‏crumbsAll: כמה אלמנטי פירורי-לחם בדף (כמו באתר: SiteMapPath רגיל ועוד אלמנט עם הסניף).
-// ‏bodyText: טקסט ה-body (ברירת-מחדל: הפירורים). ‏st = מצב משתנה (st.h1) לדמות רינדור-במקום.
-async function withPage({ url, h1, crumbs, crumbsAll, bodyText, nav, local, tree, hid }, fn) {
-  const prev = { document: globalThis.document, location: globalThis.location, sessionStorage: globalThis.sessionStorage, localStorage: globalThis.localStorage, window: globalThis.window };
-  globalThis.sessionStorage = fakeStorage(nav ? { 'talmud.nav': JSON.stringify(nav) } : {});
-  globalThis.localStorage = fakeStorage(local || {});
+// ─── סביבה מדומה: location / document / window ──────────────────────────────
+// ‏h1: טקסט ה-h1 (null = אין h1, '' = h1 ריק כמו ב-GET ישיר באתר). ‏insLabel: span lblInsBranchNumber (דף מוסד).
+// ‏stLabel: span lblInstituteBranchNumber (דף סוג-לימוד). ‏crumbs: טקסט פירורי-הלחם (מטעה: חייב להתעלם).
+// ‏tree: hrefs של עץ-הצד (אין = אין עץ בדף). ‏st = מצב משתנה (st.h1) לבדיקות שמשנות את הדף.
+async function withPage({ url, h1, insLabel, stLabel, crumbs, tree, hid, tabs }, fn) {
+  const prev = { document: globalThis.document, location: globalThis.location, window: globalThis.window };
   globalThis.location = { href: url, protocol: 'https:', host: 'talmud.edu.gov.il', origin: 'https://talmud.edu.gov.il' };
   const treeAnchors = (tree || []).map((h) => ({ getAttribute: (n) => (n === 'href' ? h : null) }));
-  const crumbList = (crumbsAll || (crumbs == null ? [] : [crumbs])).map((t) => ({ innerText: t, textContent: t }));
-  const st = { h1 };
+  const crumbEl = crumbs == null ? null : { innerText: crumbs, textContent: crumbs };
+  const st = { h1, insLabel, stLabel };
+  const span = (v) => (v == null ? null : { textContent: v, innerText: v });
   globalThis.document = {
     querySelector: (sel) => {
       if (sel === 'h1') return st.h1 == null ? null : { textContent: st.h1 };
-      if (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel)) return crumbList[0] || null;
+      if (sel === '[id$="lblInsBranchNumber"]') return span(st.insLabel);
+      if (sel === '[id$="lblInstituteBranchNumber"]') return span(st.stLabel);
+      if (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel)) return crumbEl;
       if (sel === '[id$="tvTalmud"]') return tree ? { querySelectorAll: () => treeAnchors } : null;
       return null;
     },
-    querySelectorAll: (sel) => (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) ? crumbList.slice() : []),
+    querySelectorAll: (sel) => (/BreadCrumb|breadcrumb|SiteMapPath/.test(sel) && crumbEl ? [crumbEl] : []),
     getElementById: (id) => (hid && id in hid ? { value: hid[id] } : null),
-    body: { innerText: bodyText == null ? (crumbs || '') : bodyText },
+    body: { innerText: crumbs || '' },
   };
-  globalThis.window = { __doPostBack: () => {} };
+  globalThis.window = { __doPostBack: () => {}, $find: (id) => (tabs && tabs[id]) || null };
   try { return await fn(st); } finally {
     for (const [k, v] of Object.entries(prev)) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v; }
   }
 }
 
-test('getPage: דף מוסד → סניף מה-h1, InstituteID מהכתובת, המפה לומדת (לא-מחייב), lastInstituteUrl נשמר', async () => {
-  await withPage({ url: INST_16, h1: 'עטרת שלמה סניף 16' }, () => {
+// ─── זיהוי דף: דף מוסד ──────────────────────────────────────────────────────
+test('getPage (F1): דף מוסד → הסניף מה-h1 (branchSource h1), לא מהכתובת ולא מפירורי-הלחם', async () => {
+  // הכתובת אומרת 4159 (סניף 16) ופירורי-הלחם "16", אך ה-session הציג את 00: ה-h1 קובע
+  await withPage({ url: INST_16, h1: 'עטרת שלמה סניף 00', insLabel: '00', crumbs: 'בית > עטרת שלמה > 16' }, () => {
     const p = getPage();
     assert.equal(p.kind, 'institute');
-    assert.equal(p.branch, '16');
+    assert.equal(p.branch, '00');
     assert.equal(p.branchSource, 'h1');
-    assert.equal(p.instituteId, '4159');
-    assert.equal(loadNavState().lastInstituteUrl, INST_16);
-    assert.equal(loadBranchIds()['16'], '4159');
+    assert.equal(p.instituteId, '4159', 'ה-InstituteID מהכתובת נשמר למידע בלבד');
+    assert.equal(p.studyType, null);
   });
 });
 
-test('getPage: דף מוסד שמציג סניף 16 בכתובת של 00 (רינדור-במקום) → לא לומדים 16→491', async () => {
-  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 16' }, () => {
+test('getPage (F1): דף מוסד עם h1 ריק → הסניף מהתווית "מספר סניף" (branchSource label)', async () => {
+  await withPage({ url: INST_16, h1: '', insLabel: '16' }, () => {
     const p = getPage();
     assert.equal(p.branch, '16');
-    assert.equal(loadBranchIds()['16'], '4159', 'ה-seed נשאר');
-    assert.equal(loadBranchIds()['00'], '491');
+    assert.equal(p.branchSource, 'label');
+  });
+  await withPage({ url: HUB, h1: '', stLabel: '05' }, () => {
+    const p = getPage();
+    assert.equal(p.branch, '05', 'גם lblInstituteBranchNumber מתקבל בדף המוסד');
+    assert.equal(p.branchSource, 'label');
   });
 });
 
-test('getPage: דף מוסד בלי h1 קריא → branch null (לא ממציאים סניף מזיכרון)', async () => {
-  await withPage({ url: INST_00, h1: 'פרטי מוסד', nav: { lastInstituteBranch: '26' } }, () => {
+test('getPage (F1): דף מוסד בלי h1 ובלי תווית (GET ישיר בלי session) → branch null; פירורי-הלחם לא עוזרים', async () => {
+  await withPage({ url: INST_16, h1: '', insLabel: '', crumbs: 'בית > עטרת שלמה > 16' }, () => {
     const p = getPage();
+    assert.equal(p.kind, 'institute');
     assert.equal(p.branch, null);
     assert.equal(p.branchSource, null);
   });
+  await withPage({ url: INST_00, h1: 'פרטי מוסד' }, () => {
+    assert.equal(getPage().branch, null);
+  });
 });
 
-test('getPage: דף סוג-לימוד → סניף מפירורי-הלחם (מחייב), סוג מה-h1, המזהים מהכתובת, שתי המפות לומדות', async () => {
-  const crumbs = 'בית > איתור מוסד > עטרת שלמה > 07 > (600)כולל אברכים';
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10301&InstituteID=4200';
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל אברכים', crumbs, nav: { intent: { branch: '07', studyType: '600' } } }, () => {
+// ─── זיהוי דף: דף סוג-לימוד ─────────────────────────────────────────────────
+test('getPage (F3): דף סוג-לימוד דרך הגריד (בלי query) → סוג מה-h1, סניף רק מהתווית lblInstituteBranchNumber', async () => {
+  await withPage({ url: ST_NO_QUERY, h1: 'סוג לימוד 600 - כולל אברכים יום שלם', stLabel: '00', crumbs: 'בית > איתור מוסד > פרטי מוסד > פרטי סוג לימוד' }, () => {
     const p = getPage();
     assert.equal(p.kind, 'studyType');
-    assert.equal(p.branch, '07');
-    assert.equal(p.branchSource, 'breadcrumb');
     assert.equal(p.studyType, '600');
-    assert.equal(p.instituteId, '4200');
-    assert.equal(p.instituteStudyTypeId, '10301');
-    assert.equal(loadBranchIds()['07'], '4200');
-    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '07', '600'), { id: '10301', instituteId: '4200' }, 'ממצא ב-1: הרשומה שומרת גם את ה-InstituteID שנצפה בכתובת');
-    assert.equal(loadNavState().intent, null, 'הכוונה נצרכה');
-    assert.equal(loadNavState().lastStudyTypeUrl, url);
+    assert.equal(p.branch, '00');
+    assert.equal(p.branchSource, 'label');
+    assert.equal(p.instituteId, null);
+    assert.equal(p.instituteStudyTypeId, null);
   });
 });
 
-test('getPage: דף סוג-לימוד בלי פירורי-לחם → סניף מהמפה ההפוכה (InstituteID→סניף); ממצא ב-1: לא לומדים סוג-לימוד ממקור map', async () => {
-  await withPage({ url: ST_16_600, h1: 'סוג לימוד 600 - כולל', crumbs: 'בית > פרטי מוסד' }, () => {
+test('getPage (F3): GET ישיר לדף סוג-לימוד עם query → h1 ריק ⇒ studyType null; הסניף מהתווית (session), לא מפירורי-הלחם (כתובת)', async () => {
+  await withPage({ url: ST_16_600, h1: '', stLabel: '00', crumbs: 'בית > איתור מוסד > עטרת שלמה > 16 > (600)כולל אברכים' }, () => {
     const p = getPage();
-    assert.equal(p.branch, '16');
-    assert.equal(p.branchSource, 'map');
-    assert.equal(studyTypeRecord(loadStudyTypeIds(), '16', '600'), null, 'סניף מהמפה אינו מאומת: רשומת סוג-לימוד ממנו עלולה להרעיל');
+    assert.equal(p.kind, 'studyType');
+    assert.equal(p.studyType, null, 'h1 ריק: הדף לא מזוהה, חובה לנווט');
+    assert.equal(p.branch, '00', 'התווית (session) ולא "16" מפירורי-הלחם');
+    assert.equal(p.branchSource, 'label');
+    assert.equal(p.instituteId, '4159');
+    assert.equal(p.instituteStudyTypeId, '10269');
   });
 });
 
-// ממצא 1ג + 7: כוונה היא רמז בלבד: לא לומדים ממנה מפות, ומתעלמים מכוונה ישנה (מעל 2 דקות).
-test('getPage: דף סוג-לימוד בלי פירורים ובלי מפה → כוונת-הניווט, רק כשהסוג ב-h1 תואם; לא לומדים ממנה', async () => {
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=555&InstituteID=7777';
-  await withPage({ url, h1: 'סוג לימוד 300 - ישיבה', crumbs: '', nav: { intent: { branch: '09', studyType: '300', at: Date.now() } } }, () => {
+test('getPage: דף סוג-לימוד בלי תווית → branch null גם כשפירורי-הלחם מראים סניף; lblInsBranchNumber אינו מקור כאן', async () => {
+  await withPage({ url: ST_NO_QUERY, h1: 'סוג לימוד 600 - כולל', insLabel: '16', crumbs: 'עטרת שלמה > 16 > (600)כולל' }, () => {
     const p = getPage();
-    assert.equal(p.branch, '09');
-    assert.equal(p.branchSource, 'intent');
-    assert.equal(loadBranchIds()['09'], undefined, 'ממצא 1ג: לא לומדים סניף→מוסד מכוונה');
-    assert.equal(loadStudyTypeIds()['09|300'], undefined, 'ממצא 1ג: לא לומדים סוג-לימוד מכוונה');
-  });
-  await withPage({ url, h1: 'סוג לימוד 300 - ישיבה', crumbs: '', nav: { intent: { branch: '09', studyType: '600', at: Date.now() } } }, () => {
-    const p = getPage();
-    assert.equal(p.branch, null, 'כוונה לסוג אחר אינה ראיה');
-    assert.equal(p.branchSource, null);
-  });
-});
-
-test('getPage (ממצא 7): כוונה בת יותר מ-2 דקות אינה ראיה', async () => {
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=555&InstituteID=7777';
-  const old = Date.now() - 3 * 60 * 1000;
-  await withPage({ url, h1: 'סוג לימוד 300 - ישיבה', crumbs: '', nav: { intent: { branch: '09', studyType: '300', at: old } } }, () => {
-    const p = getPage();
+    assert.equal(p.studyType, '600');
     assert.equal(p.branch, null);
-    assert.equal(p.branchSource, null);
-  });
-  await withPage({ url, h1: 'סוג לימוד 300 - ישיבה', crumbs: '', nav: { intent: { branch: '09', studyType: '300' } } }, () => {
-    assert.equal(getPage().branch, null, 'כוונה בלי חותמת-זמן (פורמט ישן) אינה ראיה');
-  });
-});
-
-test('clearNavIntent (ממצא 7): מוחק רק את הכוונה, שאר מצב-הניווט נשאר', async () => {
-  await withPage({ url: INST_00, nav: { intent: { branch: '09', studyType: '300', at: Date.now() }, lastInstituteUrl: INST_16 } }, () => {
-    clearNavIntent();
-    assert.equal(loadNavState().intent, null);
-    assert.equal(loadNavState().lastInstituteUrl, INST_16);
-  });
-});
-
-// ממצא 1א: באתר יש SiteMapPath רגיל (בלי סניף) לפני האלמנט שמכיל את הסניף. אוספים את כולם + תחילת ה-body.
-test('getPage (ממצא 1א): כמה אלמנטי פירורי-לחם, הראשון בלי סניף → הסניף נקרא מהשני (breadcrumb)', async () => {
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10301&InstituteID=4200';
-  const plain = 'בית > איתור מוסד > פרטי מוסד';
-  const withBranch = 'בית > איתור מוסד > עטרת שלמה > 07 > (600)כולל אברכים';
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל אברכים', crumbsAll: [plain, withBranch], bodyText: '' }, () => {
-    const p = getPage();
-    assert.equal(p.branch, '07');
-    assert.equal(p.branchSource, 'breadcrumb');
-  });
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל אברכים', crumbsAll: [plain], bodyText: `${plain}\n${withBranch}\nתוכן הדף` }, () => {
-    const p = getPage();
-    assert.equal(p.branch, '07', 'גם כשהסניף רק בטקסט ה-body (3000 התווים הראשונים)');
-    assert.equal(p.branchSource, 'breadcrumb');
-  });
-});
-
-// ממצא 1ב: מקור 'institute' = דף המוסד האחרון בלשונית (h1 מאומת) עם אותו InstituteID בכתובת.
-test('getPage: דף סוג-לימוד בלי פירורים, אחרי דף מוסד עם אותו InstituteID → מקור institute, והמפות לומדות', async () => {
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10301&InstituteID=4200';
-  const instUrl = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל', crumbs: 'בית > פרטי מוסד', nav: { lastInstituteUrl: instUrl, lastInstituteBranch: '05' } }, () => {
-    const p = getPage();
-    assert.equal(p.branch, '05');
-    assert.equal(p.branchSource, 'institute');
-    assert.equal(loadBranchIds()['05'], '4200');
-    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '05', '600'), { id: '10301', instituteId: '4200' });
-  });
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל', crumbs: 'בית > פרטי מוסד', nav: { lastInstituteUrl: INST_00, lastInstituteBranch: '00' } }, () => {
-    const p = getPage();
-    assert.equal(p.branch, null, 'דף המוסד האחרון היה של מוסד אחר: אין ראיה');
     assert.equal(p.branchSource, null);
   });
 });
@@ -317,237 +238,184 @@ test('getPage: דף תלמיד-חדש → רק עם hidStudentState=-1, עם ה�
   });
 });
 
-test('learnBranchId: מדף מוסד לא דורס id שממופה לסניף אחר; מדף סוג-לימוד (מחייב) דורס', async () => {
-  await withPage({ url: INST_00 }, () => {
-    assert.equal(learnBranchId('16', '491', { authoritative: false }), false, '491 שייך ל-00');
-    assert.equal(loadBranchIds()['16'], '4159');
-    assert.equal(learnBranchId('16', '9999', { authoritative: true }), true);
-    assert.equal(loadBranchIds()['16'], '9999');
-    assert.equal(learnBranchId('16', '9999', { authoritative: true }), false, 'אין שינוי — לא נכתב');
+test('readBranchesFromTree: מהעץ שבדף; בלי עץ → []', async () => {
+  await withPage({ url: ST_NO_QUERY, tree: hrefs }, () => {
+    assert.deepEqual(readBranchesFromTree(), ['00', '07', '16', '26']);
+  });
+  await withPage({ url: ST_NO_QUERY }, () => {
+    assert.deepEqual(readBranchesFromTree(), []);
   });
 });
 
-// ממצא 2: הרעלת המפה. בדף מוסד של סניף X (לא במפה) קליק-עץ על "00" מרנדר במקום באותה כתובת;
-// בלי התיקון, סניף-seed נלמד מחדש ל-id של X וכל ניווט ל-00 נוחת ב-X.
-test('learnBranchId (ממצא 2): סניף-seed לא נדרס מדף מוסד (לא-מחייב), רק מפירורי-לחם', async () => {
-  await withPage({ url: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200' }, () => {
-    assert.equal(learnBranchId('00', '4200', { authoritative: false }), false, 'seed 00→491 לא נדרס מדף מוסד');
-    assert.equal(loadBranchIds()['00'], '491');
-    assert.equal(learnBranchId('00', '4200', { authoritative: true }), true, 'פירורי-לחם מחייבים: דורסים גם seed');
-    assert.equal(loadBranchIds()['00'], '4200');
-  });
-});
-
-test('getPage (ממצא 2): דף מוסד שה-h1 שלו סותר את המפה → הרשומה הסותרת נמחקת והסניף הנכון נלמד', async () => {
-  const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
-  await withPage({ url, h1: 'עטרת שלמה סניף 05', local: { 'talmud.nav.branchIds': JSON.stringify({ '00': '4200' }) } }, () => {
-    const p = getPage({ init: true });
-    assert.equal(p.branch, '05');
-    assert.equal(loadBranchIds()['00'], '491', 'הרשומה המורעלת 00→4200 נמחקה; ה-seed חוזר');
-    assert.equal(loadBranchIds()['05'], '4200', 'הסניף שה-h1 מציג נלמד');
-  });
-});
-
-test('forgetNavMaps (ממצא 2): מוחק את שתי המפות הנלמדות; ה-seed נשאר', async () => {
-  await withPage({ url: INST_00, local: { 'talmud.nav.branchIds': JSON.stringify({ '07': '4200' }), 'talmud.nav.studyTypeIds': JSON.stringify({ '07|600': '10301' }) } }, () => {
-    assert.deepEqual(loadBranchIds(), { '00': '491', '16': '4159', '07': '4200' });
-    forgetNavMaps();
-    assert.deepEqual(loadBranchIds(), NAV_BRANCH_IDS_SEED);
-    assert.deepEqual(loadStudyTypeIds(), {});
-    assert.equal(globalThis.localStorage.getItem('talmud.nav.branchIds'), null);
-    assert.equal(globalThis.localStorage.getItem('talmud.nav.studyTypeIds'), null);
-  });
-});
-
-test('loadBranchIds: בלי localStorage → seed; JSON פגום → seed; נלמד ממוזג מעל', async () => {
-  await withPage({ url: INST_00, local: { 'talmud.nav.branchIds': '{bad' } }, () => {
-    assert.deepEqual(loadBranchIds(), NAV_BRANCH_IDS_SEED);
-  });
-  await withPage({ url: INST_00, local: { 'talmud.nav.branchIds': JSON.stringify({ '07': '4200' }) } }, () => {
-    assert.deepEqual(loadBranchIds(), { '00': '491', '16': '4159', '07': '4200' });
-  });
-});
-
-test('saveNavState/loadNavState/clearNavState: round-trip; JSON פגום → {}; בלי sessionStorage → {}', async () => {
-  await withPage({ url: INST_00 }, () => {
-    saveNavState({ intent: { branch: '07', studyType: '600' } });
-    assert.deepEqual(loadNavState(), { intent: { branch: '07', studyType: '600' } });
-    clearNavState();
-    assert.deepEqual(loadNavState(), {});
-  });
-  await withPage({ url: INST_00, nav: null }, () => {
-    globalThis.sessionStorage.setItem('talmud.nav', '{bad');
-    assert.deepEqual(loadNavState(), {});
-  });
-  const prev = globalThis.sessionStorage;
-  delete globalThis.sessionStorage;
-  try { assert.deepEqual(loadNavState(), {}); } finally { if (prev !== undefined) globalThis.sessionStorage = prev; }
-});
-
-// ─── ניווט ──────────────────────────────────────────────────────────────────
-test('gotoStudyType: שתי המפות יודעות → קפיצה ישירה לפי כתובת, וכוונה נרשמת', async () => {
-  await withPage({ url: INST_00, local: { 'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': { id: '10269', instituteId: '4159' } }) } }, async () => {
-    const res = await gotoStudyType('16', '600');
-    assert.equal(res.ok, true);
-    assert.equal(res.method, 'url');
-    assert.equal(globalThis.location.href, ST_16_600);
-    const intent = loadNavState().intent;
-    assert.equal(intent.branch, '16');
-    assert.equal(intent.studyType, '600');
-    assert.equal(typeof intent.at, 'number', 'ממצא 7: לכוונה חותמת-זמן לתפוגה');
-  });
-});
-
-// ממצא 3: קליק-עץ שמרנדר את הסניף במקום (אותה כתובת, postback א-סינכרוני) אינו טעינת דף.
-// gotoInstitute מזהה זאת ומחזיר inPlace, ו-gotoStudyType ממשיך מיד לגריד בלי להמתין לטעינה.
-test('gotoInstitute (ממצא 3): עץ שמרנדר במקום → {ok:true, inPlace:true, method:"tree"}', async () => {
-  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async (st) => {
-    globalThis.window.__doPostBack = () => { st.h1 = 'עטרת שלמה סניף 07'; };
-    const res = await gotoInstitute('07');
-    assert.equal(res.ok, true);
-    assert.equal(res.method, 'tree');
-    assert.equal(res.inPlace, true);
-    assert.equal(res.branch, '07');
-  });
-  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
-    const res = await gotoInstitute('07');
-    assert.equal(res.method, 'tree');
-    assert.ok(!res.inPlace, 'הדף לא השתנה (טעינה מלאה בדרך): בלי inPlace');
-  });
-});
-
-test('gotoStudyType (ממצא 3): אחרי רינדור-במקום של הסניף ממשיכים מיד לגריד (לא מחזירים method tree)', async () => {
-  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async (st) => {
-    globalThis.window.__doPostBack = () => { st.h1 = 'עטרת שלמה סניף 07'; };
-    const res = await gotoStudyType('07', '600');
-    assert.notEqual(res.method, 'tree');
-    assert.equal(res.ok, false, 'בדף המדומה אין טאב "סוגי לימוד למוסד": הגריד נכשל, אך זה המסלול הנכון');
-    assert.match(res.reason, /טאב/);
-  });
-});
-
-test('gotoStudyType: הסוג לא ידוע אך הסניף ידוע ואנחנו בדף אחר → לדף המוסד של הסניף לפי כתובת', async () => {
-  await withPage({ url: 'https://talmud.edu.gov.il/Students/StudentsDetails.aspx?', h1: null }, async () => {
-    const res = await gotoStudyType('16', '600');
-    assert.equal(res.ok, true);
-    assert.equal(res.method, 'url');
-    assert.equal(globalThis.location.href, INST_16);
-  });
-});
-
-test('gotoInstitute: סניף לא במפה מדף שאינו מוסד → קפיצה לדף-המוסד האחרון הידוע (או seed 00)', async () => {
-  await withPage({ url: ST_16_600, h1: 'סוג לימוד 600', nav: { lastInstituteUrl: INST_16 } }, async () => {
-    const res = await gotoInstitute('07');
-    assert.equal(res.ok, true);
-    assert.equal(res.hop, true);
-    assert.equal(globalThis.location.href, INST_16);
-  });
-  await withPage({ url: ST_16_600, h1: 'סוג לימוד 600' }, async () => {
-    const res = await gotoInstitute('07');
-    assert.equal(res.hop, true);
-    assert.equal(globalThis.location.href, INST_00);
-  });
-});
-
-test('gotoInstitute: סניף לא במפה בדף מוסד → עץ-הצד (postback); סניף שאינו בעץ → notFound', async () => {
+// ─── ניווט: עץ-הצד ─────────────────────────────────────────────────────────
+test('gotoInstitute (F2): יש עץ בדף → postback של צומת הסניף, method tree, הכתובת לא משתנה', async () => {
   await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
     let fired = null;
     globalThis.window.__doPostBack = (t, a) => { fired = { t, a }; };
-    const p = gotoInstitute('07');
+    const p = gotoInstitute('16');
     await new Promise((r) => setTimeout(r, 30));
-    assert.deepEqual(fired, { t: 'ctl00$ucTalmudSideBar$tvTalmud', a: 'sעטרת שלמה\\07' });
+    assert.deepEqual(fired, { t: 'ctl00$ucTalmudSideBar$tvTalmud', a: 'sעטרת שלמה\\16' });
     const res = await p;
+    assert.equal(res.ok, true);
     assert.equal(res.method, 'tree');
+    assert.equal(res.branch, '16');
     assert.equal(globalThis.location.href, INST_00, 'לא נורה ניווט לפי כתובת');
-    const missing = await gotoInstitute('99');
-    assert.equal(missing.ok, false);
-    assert.equal(missing.notFound, true);
   });
 });
 
-test('gotoInstitute: סניף לא-תקין → {ok:false}', async () => {
-  await withPage({ url: INST_00 }, async () => {
+test('gotoInstitute (F2): העץ קיים גם בדף סוג-לימוד → postback משם, בלי כתובת ישירה', async () => {
+  await withPage({ url: ST_16_600, h1: '', stLabel: '00', tree: hrefs }, async () => {
+    let fired = null;
+    globalThis.window.__doPostBack = (t, a) => { fired = { t, a }; };
+    const res = await gotoInstitute('16');
+    assert.equal(res.method, 'tree');
+    assert.equal(fired && fired.a, 'sעטרת שלמה\\16');
+    assert.equal(globalThis.location.href, ST_16_600);
+  });
+});
+
+test('gotoInstitute: סניף שאינו בעץ → notFound; סניף לא-תקין → ok:false', async () => {
+  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
+    const missing = await gotoInstitute('99');
+    assert.equal(missing.ok, false);
+    assert.equal(missing.notFound, true);
     assert.equal((await gotoInstitute('abc')).ok, false);
   });
 });
 
-// ─── ממצא ב-1 (ביקורת שנייה): רשומת (סניף|סוג)→InstituteStudyTypeID מורעלת ────────────
-test('studyTypeRecord (ממצא ב-1): רשומה חדשה {id, instituteId}; רשומה ישנה (מחרוזת) נקראת עם instituteId null; פגום → null', () => {
-  const map = { '07|600': { id: '10301', instituteId: '4200' }, '16|600': '10269', '05|300': { id: 'x' }, '00|600': 7 };
-  assert.deepEqual(studyTypeRecord(map, '7', '600'), { id: '10301', instituteId: '4200' });
-  assert.deepEqual(studyTypeRecord(map, '16', '600'), { id: '10269', instituteId: null });
-  assert.equal(studyTypeRecord(map, '05', '300'), null);
-  assert.equal(studyTypeRecord(map, '00', '600'), null);
-  assert.equal(studyTypeRecord(map, '99', '600'), null);
-  assert.equal(studyTypeRecord(null, '07', '600'), null);
-});
-
-test('learnStudyTypeId (ממצא ב-1): כותב {id, instituteId}; אותה רשומה שוב → false', async () => {
-  await withPage({ url: INST_00 }, () => {
-    assert.equal(learnStudyTypeId('7', '600', '10301', '4200'), true);
-    assert.deepEqual(loadStudyTypeIds()['07|600'], { id: '10301', instituteId: '4200' });
-    assert.equal(learnStudyTypeId('7', '600', '10301', '4200'), false);
-    assert.equal(learnStudyTypeId('7', '600', '10301', '9999'), true, 'מוסד אחר לאותו סוג: נכתב מחדש');
-  });
-});
-
-test('gotoStudyType (ממצא ב-1): הכתובת נבנית מה-InstituteID שברשומה, לא ממפת הסניפים של עכשיו', async () => {
-  const local = {
-    'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': { id: '10269', instituteId: '4159' } }),
-    'talmud.nav.branchIds': JSON.stringify({ '16': '9999' }), // מפת-סניפים שנדרסה בינתיים
-  };
-  await withPage({ url: INST_00, local }, async () => {
-    const res = await gotoStudyType('16', '600');
+test('gotoInstitute: אין עץ בדף (תלמיד-חדש / אחר) → location.href לדף המוסדות בלי query (ה-session קובע), hop', async () => {
+  await withPage({ url: 'https://talmud.edu.gov.il/Students/StudentsDetails.aspx?', h1: null }, async () => {
+    const res = await gotoInstitute('16');
+    assert.equal(res.ok, true);
     assert.equal(res.method, 'url');
-    assert.equal(globalThis.location.href, ST_16_600, 'InstituteID=4159 מהרשומה, לא 9999 מהמפה');
+    assert.equal(res.hop, true);
+    assert.equal(globalThis.location.href, HUB);
   });
-  // רשומה ישנה (מחרוזת): נופלים למפת הסניפים כמו קודם
-  await withPage({ url: INST_00, local: { 'talmud.nav.studyTypeIds': JSON.stringify({ '16|600': '10269' }) } }, async () => {
+});
+
+// ─── ניווט: גריד ────────────────────────────────────────────────────────────
+test('gotoStudyType (F4): דף מוסד שה-h1 שלו הוא הסניף המבוקש → הגריד (לא העץ)', async () => {
+  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
+    let treeFired = false;
+    globalThis.window.__doPostBack = (t) => { if (/tvTalmud/.test(t)) treeFired = true; };
+    const res = await gotoStudyType('00', '600');
+    assert.equal(treeFired, false, 'לא לוחצים בעץ כשכבר בדף המוסד הנכון');
+    assert.equal(res.ok, false, 'בדף המדומה אין לשונית/גריד: הגריד נכשל, אך זה המסלול הנכון');
+    assert.match(res.reason, /לשונית|טאב|גריד/);
+  });
+});
+
+test('gotoStudyType (F1): דף מוסד של סניף אחר (הכתובת של 16, ה-h1 של 00) → העץ ל-16, לא הגריד', async () => {
+  await withPage({ url: INST_16, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
+    let fired = null;
+    globalThis.window.__doPostBack = (t, a) => { fired = { t, a }; };
     const res = await gotoStudyType('16', '600');
+    assert.equal(res.method, 'tree');
+    assert.equal(fired && fired.a, 'sעטרת שלמה\\16');
+    assert.equal(res.studyType, '600');
+  });
+});
+
+test('gotoStudyType: דף מוסד עם h1 ריק ותווית של הסניף המבוקש → בכל זאת העץ (רק h1 מאשר לגריד)', async () => {
+  await withPage({ url: INST_16, h1: '', insLabel: '16', tree: hrefs }, async () => {
+    const res = await gotoStudyType('16', '600');
+    assert.equal(res.method, 'tree');
+  });
+});
+
+test('gotoStudyType (מלכודת F1/F3): דף סוג-לימוד 600 שהתווית שלו 00 ומבקשים 16/600 → העץ ל-16; בלי כתובת ישירה', async () => {
+  await withPage({ url: ST_16_600, h1: 'סוג לימוד 600 - כולל', stLabel: '00', crumbs: 'עטרת שלמה > 16 > (600)כולל', tree: hrefs }, async () => {
+    let fired = null;
+    globalThis.window.__doPostBack = (t, a) => { fired = { t, a }; };
+    const res = await gotoStudyType('16', '600');
+    assert.equal(res.method, 'tree');
+    assert.equal(fired && fired.a, 'sעטרת שלמה\\16');
+    assert.equal(globalThis.location.href, ST_16_600, 'הכתובת לא השתנתה');
+  });
+});
+
+test('gotoStudyType: דף בלי עץ (תלמיד-חדש) → לדף המוסדות לפי כתובת (ומשם, אחרי הטעינה, העץ והגריד)', async () => {
+  await withPage({ url: 'https://talmud.edu.gov.il/Students/StudentsDetails.aspx?', h1: null }, async () => {
+    const res = await gotoStudyType('16', '600');
+    assert.equal(res.ok, true);
     assert.equal(res.method, 'url');
-    assert.equal(globalThis.location.href, ST_16_600);
+    assert.equal(globalThis.location.href, HUB);
   });
 });
 
-test('getPage (ממצא ב-1ג): דף סוג-לימוד שפירורי-הלחם מראים סניף 05, אך הרשומה של 07|600 מצביעה על אותו InstituteStudyTypeID → הרשומה השגויה נמחקת', async () => {
-  const url = 'https://talmud.edu.gov.il/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10301&InstituteID=4200';
-  const crumbs = 'בית > איתור מוסד > עטרת שלמה > 05 > (600)כולל אברכים';
-  const local = { 'talmud.nav.studyTypeIds': JSON.stringify({ '07|600': { id: '10301', instituteId: '4200' }, '07|300': { id: '555', instituteId: '4200' } }) };
-  await withPage({ url, h1: 'סוג לימוד 600 - כולל אברכים', crumbs, local }, () => {
-    const p = getPage();
-    assert.equal(p.branch, '05');
-    assert.equal(studyTypeRecord(loadStudyTypeIds(), '07', '600'), null, 'הרשומה המורעלת 07|600→10301 נמחקה');
-    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '05', '600'), { id: '10301', instituteId: '4200' }, 'הסניף שהדף מציג נלמד');
-    assert.deepEqual(studyTypeRecord(loadStudyTypeIds(), '07', '300'), { id: '555', instituteId: '4200' }, 'רשומה של סוג אחר לא נגעו בה');
+test('gotoStudyType: סניף/סוג לא-תקינים → ok:false בלי לגעת בדף', async () => {
+  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tree: hrefs }, async () => {
+    assert.equal((await gotoStudyType('abc', '600')).ok, false);
+    assert.equal((await gotoStudyType('00', 'x')).ok, false);
+    assert.equal(globalThis.location.href, INST_00);
   });
 });
 
-// ─── ממצא ב-5: רינדור-במקום של העץ אינו טעינת דף ולא מלמד/מוחק מיפויים ───────────────
-test('gotoInstitute (ממצא ב-5): קליק-עץ שמרנדר במקום קורא את ה-h1 בלי ללמוד: 05→4200 נשאר, 07→4200 לא נכתב', async () => {
-  const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
-  const local = { 'talmud.nav.branchIds': JSON.stringify({ '05': '4200' }) };
-  await withPage({ url, h1: 'עטרת שלמה סניף 05', tree: hrefs, local }, async (st) => {
-    globalThis.window.__doPostBack = () => { st.h1 = 'עטרת שלמה סניף 07'; };
-    const res = await gotoInstitute('07');
-    assert.equal(res.inPlace, true);
-    assert.equal(loadBranchIds()['05'], '4200', 'המיפוי הנכון לא נמחק');
-    assert.equal(loadBranchIds()['07'], undefined, 'לא נלמד מיפוי שגוי 07→4200');
-  });
+// ─── F4 (תיקון): הפעלת הלשונית היא postback א-סינכרוני; הגריד והכפתור נבנים מחדש אחריו ─────
+// ‏tabs: TabContainer מדומה; ‏set_activeTabIndex מריץ "postback" שמחליף את הגריד. הגריד נקרא רק אחרי
+// שההמתנה הסתיימה, ו-btnUpdateStudyType נורה רק אחרי selectedRowStudyType על הגריד המרוענן.
+function fakeGrid(rowsSpec) {
+  const trs = rowsSpec.map(([cells, onclick]) => ({
+    getAttribute: (n) => (n === 'onclick' ? onclick || null : null),
+    querySelectorAll: (sel) => (sel === 'td,th' ? cells.map((c) => ({ textContent: c })) : []),
+  }));
+  return { querySelectorAll: (sel) => (sel === 'tr' ? trs : (sel === 'tr:last-child a' ? [] : [])) };
+}
+
+test('gotoStudyTypeFromInstitute (F4 מתוקן): לשונית → המתנה ל-postback → גריד מרוענן → selectedRowStudyType → עריכה', async () => {
+  const TAB = 'ContentPlaceHolder1_tabInstituteDetails';
+  const events = [];
+  let gridEl = null; // לפני הפעלת הלשונית אין גריד בדף
+  let activeTab = 0;
+  const prm = (() => {
+    const h = { begin: [], end: [] };
+    const obj = {
+      _isInAsyncPostBack: false,
+      add_beginRequest: (f) => h.begin.push(f), add_endRequest: (f) => h.end.push(f),
+      remove_beginRequest: (f) => { h.begin = h.begin.filter((x) => x !== f); }, remove_endRequest: (f) => { h.end = h.end.filter((x) => x !== f); },
+      roundTrip(apply) {
+        obj._isInAsyncPostBack = true;
+        setTimeout(() => { for (const f of h.begin.slice()) f(obj, {}); }, 5);
+        setTimeout(() => { apply(); obj._isInAsyncPostBack = false; for (const f of h.end.slice()) f(obj, { get_error: () => null, set_errorHandled() {} }); }, 40);
+      },
+    };
+    return obj;
+  })();
+  const tabs = { [TAB]: {
+    get_activeTabIndex: () => activeTab,
+    set_activeTabIndex: (i) => {
+      events.push(`tab:${i}`);
+      // כמו באתר: postback א-סינכרוני; הגריד מופיע רק אחרי שהוא מסתיים
+      prm.roundTrip(() => { activeTab = Number(i); gridEl = fakeGrid([[['קוד', 'תיאור', 'שעות', 'מצב']], [['300', 'ישיבה', '45', 'זכאי'], "selectedRowStudyType('0')"], [['600', 'כולל', '40', 'זכאי'], "selectedRowStudyType('1')"]]); });
+    },
+  } };
+  const prevSys = globalThis.Sys;
+  globalThis.Sys = { WebForms: { PageRequestManager: { getInstance: () => prm } } };
+  try {
+    await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tabs }, async () => {
+      globalThis.document.querySelector = ((orig) => (sel) => (sel === 'table[id$="gvStudyType"]' ? gridEl : orig(sel)))(globalThis.document.querySelector);
+      globalThis.window.selectedRowStudyType = (n) => { events.push(`select:${n}`); };
+      globalThis.window.__doPostBack = (t) => { events.push(`postback:${t}`); prm.roundTrip(() => {}); };
+      const res = await gotoStudyTypeFromInstitute('600');
+      assert.equal(res.ok, true, JSON.stringify(res));
+      assert.equal(res.method, 'grid');
+      assert.equal(res.status, 'זכאי');
+      assert.deepEqual(events, ['tab:1', 'select:1', 'postback:ctl00$ContentPlaceHolder1$btnUpdateStudyType'], 'הסדר: לשונית, המתנה, בחירה בגריד המרוענן, עריכה');
+    });
+  } finally { if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys; }
 });
 
-test('readPage (ממצא ב-5): קריאה-בלבד של דף מוסד: לא לומדת ולא מוחקת; getPage לומדת, ומוחקת רשומה סותרת רק עם init', async () => {
-  const url = 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx?InstituteID=4200';
-  await withPage({ url, h1: 'עטרת שלמה סניף 05', local: { 'talmud.nav.branchIds': JSON.stringify({ '00': '4200' }) } }, () => {
-    const r = readPage();
-    assert.equal(r.kind, 'institute');
-    assert.equal(r.branch, '05');
-    assert.equal(loadBranchIds()['00'], '4200', 'readPage לא מוחקת');
-    assert.equal(loadBranchIds()['05'], undefined, 'readPage לא לומדת');
-    getPage();
-    assert.equal(loadBranchIds()['00'], '4200', 'getPage בלי init: הרשומה הסותרת נשארת (רק טעינת-דף מלאה מוחקת)');
-    getPage({ init: true });
-    assert.equal(loadBranchIds()['00'], '491', 'init: הרשומה הסותרת נמחקה');
-    assert.equal(loadBranchIds()['05'], '4200');
+test('gotoStudyTypeFromInstitute: סוג שאינו בגריד → notFound עם הקוד בהודעה', async () => {
+  const TAB = 'ContentPlaceHolder1_tabInstituteDetails';
+  const gridEl = fakeGrid([[['קוד', 'תיאור', 'שעות', 'מצב']], [['300', 'ישיבה', '45', 'זכאי'], "selectedRowStudyType('0')"]]);
+  const tabs = { [TAB]: { get_activeTabIndex: () => 1, set_activeTabIndex() {} } };
+  await withPage({ url: INST_00, h1: 'עטרת שלמה סניף 00', tabs }, async () => {
+    globalThis.document.querySelector = ((orig) => (sel) => (sel === 'table[id$="gvStudyType"]' ? gridEl : orig(sel)))(globalThis.document.querySelector);
+    globalThis.window.selectedRowStudyType = () => {};
+    const res = await gotoStudyTypeFromInstitute('900');
+    assert.equal(res.ok, false);
+    assert.equal(res.notFound, true);
+    assert.match(res.reason, /900/);
   });
 });
 

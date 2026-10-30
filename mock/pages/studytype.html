@@ -14,15 +14,26 @@
 <script>
 (function () {
   'use strict';
+  // דף סוג-הלימוד (F3): הפקדים (חיפוש, רשימה, "קליטה") הולכים אחרי db.session.studyTypeId, והתווית
+  // lblInstituteBranchNumber אחרי db.session.instituteId. דרך הגריד (בלי query): h1 "סוג לימוד NNN - <תיאור>",
+  // פירורי-לחם גנריים בלי סניף. GET ישיר עם query: h1 ריק, פירורי-לחם עם הסניף *מהכתובת* (מטעה), התווית
+  // עם סניף ה-session. לחיצה בעץ (F2): session.instituteId = הסניף, טעינה מלאה לדף המוסד.
   const D = window.__mockDb, C = window.__mockCommon;
   const db = D.load();
-  const stId = D.query('InstituteStudyTypeID');
-  const st = db.studyTypes[String(stId)] || null;
-  const instituteId = st ? st.instituteId : D.query('InstituteID');
-  const inst = D.instituteOf(db, instituteId);
+  const hasQuery = /[?&]InstituteStudyTypeID=/i.test(location.search);
+  const urlStId = D.query('InstituteStudyTypeID');
+  const urlInstituteId = D.query('InstituteID');
+  const urlSt = urlStId ? (db.studyTypes[String(urlStId)] || null) : null;
+  const urlInst = D.instituteOf(db, urlInstituteId);
+  const stId = D.session(db).studyTypeId; // סוג-הלימוד הנוכחי של ה-session: זה מה שהפקדים עובדים עליו
+  const st = stId ? (db.studyTypes[String(stId)] || null) : null;
+  const sessionInstituteId = D.session(db).instituteId || (st ? st.instituteId : null);
+  const inst = D.instituteOf(db, sessionInstituteId);
   const TAB_ID = 'ContentPlaceHolder1_tabStudyTypeDetails';
+  const TAB_TARGET = 'ctl00$ContentPlaceHolder1$tabStudyTypeDetails';
   const BASE = 'ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails';
   const T = 'ctl00$ContentPlaceHolder1$tabStudyTypeDetails$StudentList$ucStudentsSearchDetails';
+  const LBL_BRANCH = `${BASE}_ucStudentFromExcel_lblInstituteBranchNumber`; // F3: המזהה המלא באתר
   const today = (() => { const d = new Date(); return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/'); })();
 
   window.__mockLog = (m) => console.log('[mock-site] ' + m);
@@ -37,7 +48,7 @@
     const extraTh = shifted ? '<th>סניף</th>' : '';
     let html = `<table class="grid" id="${BASE}_gvIStudents"><tr><th></th><th>סדר קליטה</th><th>סוג מזהה</th>${extraTh}<th>ת.ז. / דרכון</th><th>שם</th><th>שם משפחה</th><th>תאריך לידה</th><th>סוג לימוד</th><th>תאריך קליטה</th><th>תאריך עזיבה</th><th>מצב אישור מעבר בין מ...</th></tr>`;
     students.forEach((s, i) => {
-      const extraTd = shifted ? `<td>${C.esc(inst.branch)}</td>` : '';
+      const extraTd = shifted ? `<td>${C.esc(inst ? inst.branch : '')}</td>` : '';
       html += `<tr><td><input type="checkbox"></td><td>${i + 1}</td><td>${s.idType === '2' ? 'דרכון' : 'תעודת זהות'}</td>${extraTd}<td>${C.esc(s.id)}</td><td>${C.esc(s.first)}</td><td>${C.esc(s.last)}</td><td>${C.esc(s.birth || '')}</td><td>${C.esc(st.code)}</td><td>${C.esc(s.accepted || today)}</td><td></td><td></td></tr>`;
     });
     return html + '</table>';
@@ -47,28 +58,10 @@
     return `<span id="${BASE}_lblCountSearch">נמצאו ${students.length} רשומות בהתאם לקריטריון החיפוש</span>${gridHtml(students)}`;
   }
 
-  function render() {
-    const root = document.getElementById('mock-root');
-    if (!st || !inst) {
-      root.innerHTML = C.treeHtml(db) + `<div class="page">${C.headerHtml('שגיאה', ['בית'])}<p>סוג לימוד לא נמצא.</p></div>` + C.messagePopupHtml();
-      C.wireMessageButtons();
-      return;
-    }
-    const crumbs = db.breadcrumbShowsBranch === false
-      ? ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', 'פרטי מוסד']
-      : ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', inst.name, inst.branch, `(${st.code})${st.desc}`];
-    root.innerHTML = C.treeHtml(db) + `
-<div class="page">
-  ${C.headerHtml(`סוג לימוד ${st.code} - ${st.desc}`, crumbs)}
-  <div id="${TAB_ID}">
-    <div class="ajax__tab_header">
-      <span class="ajax__tab_tab" data-tab-header="0">פרטי סוג לימוד</span>
-      <span class="ajax__tab_tab" data-tab-header="1">מצב זכאות סוג לימוד</span>
-      <span class="ajax__tab_tab" data-tab-header="2">רשימת תלמידים</span>
-    </div>
-    <div data-tab-index="0"><p>קוד ${C.esc(st.code)} · ${C.esc(st.desc)} · מצב זכאות: ${C.esc(st.status)}</p></div>
-    <div data-tab-index="1" style="display:none"><p>מצב זכאות: ${C.esc(st.status)}</p></div>
-    <div data-tab-index="2" style="display:none">
+  // תוכן הלשונית "רשימת תלמידים": נבנה מחדש אחרי ה-postback של שינוי הלשונית (F4), כמו UpdatePanel.
+  function studentsPanelHtml() {
+    if (!st) return `<p>אין סוג לימוד נוכחי.</p><span id="${LBL_BRANCH}">${C.esc(inst ? inst.branch : '')}</span>`;
+    return `
       <div style="margin:6px 0">
         חיפוש ת.ז./דרכון: <input type="text" id="${BASE}_txtStudenPassport">
         <input type="submit" class="btn" id="${BASE}_btnSearch" value="חפש" onclick="ShowLoaderPopUp();__doPostBack('${T}$btnSearch','');return false;">
@@ -76,9 +69,10 @@
       </div>
       <div id="${BASE}_upResults">${resultsHtml(D.enrolledOf(db, stId))}</div>
       <div style="margin-top:8px">
-        <input type="button" class="btn" id="ContentPlaceHolder1_btnStudentAcceptence3" value="קליטה" onclick="__doPostBack('ctl00$ContentPlaceHolder1$btnStudentAcceptence3','')">
+        <a id="${BASE}_btnStudentAcceptence3" class="btn" href="javascript:__doPostBack('${T}$btnStudentAcceptence3','')">קליטה</a>
         <input type="button" class="btn" id="ContentPlaceHolder1_btnStudentDeparture3" value="עזיבה">
       </div>
+      <div style="font-size:12px;color:#666;margin-top:6px">קליטה מאקסל לסניף: <span id="${LBL_BRANCH}">${C.esc(inst ? inst.branch : '')}</span></div>
       <div id="${BASE}_pnlAcceptStudent" class="AjaxModalpopup" style="display:none;position:fixed;top:80px;left:50%;transform:translateX(-50%);background:#fff;border:2px solid #345;padding:16px 24px;z-index:900;min-width:360px">
         <div style="font-weight:bold;margin-bottom:8px">קליטת תלמיד</div>
         <div>סוג מזהה: <select id="${BASE}_ddlPopIdentityType"><option value="-1">בחירה</option><option value="1">תעודת זהות</option><option value="2">דרכון</option></select></div>
@@ -90,18 +84,13 @@
           <a id="${BASE}_LinkButton1" class="btn" href="javascript:WebForm_DoPostBackWithOptions(new WebForm_PostBackOptions(&quot;${T}$LinkButton1&quot;, &quot;&quot;, true, &quot;PopValidation&quot;, &quot;&quot;, false, true))">אישור</a>
           <a id="${BASE}_LinkButton2" class="btn" href="javascript:__doPostBack('${T}$LinkButton2','')">ביטול</a>
         </div>
-      </div>
-    </div>
-  </div>
-</div>` + C.messagePopupHtml();
-    C.wireMessageButtons();
-    document.querySelectorAll('[data-tab-header]').forEach((el) => {
-      el.addEventListener('click', () => window.__mock.components[TAB_ID].set_activeTabIndex(Number(el.getAttribute('data-tab-header'))));
-    });
-    window.__mock.components[TAB_ID] = window.__mockTabs(TAB_ID, 3, 0);
-    window.__mock.components[`${BASE}_pnlAcceptStudent_ModalPopupExtender`] = window.__mockModal(`${BASE}_pnlAcceptStudent`);
-    window.__mock.components['ucMessagePopUp_ModalPopupExtender1'] = window.__mockModal('ucMessagePopUp_pnlMessagePopup');
+      </div>`;
+  }
 
+  // חיווט הפקדים שבלשונית (אחרי כל בנייה מחדש): ולידטורים, סנכרון סוג-מזהה, מודאל.
+  function wireStudentsPanel() {
+    if (!st) return;
+    window.__mock.components[`${BASE}_pnlAcceptStudent_ModalPopupExtender`] = window.__mockModal(`${BASE}_pnlAcceptStudent`);
     const ddl = document.getElementById(`${BASE}_ddlPopIdentityType`);
     const syncIdType = () => {
       const passport = ddl.value === '2';
@@ -121,6 +110,37 @@
     ];
   }
 
+  function render() {
+    const root = document.getElementById('mock-root');
+    // F3: h1 רק כשהגענו דרך הגריד (בלי query); GET ישיר עם query: h1 ריק
+    const h1 = !hasQuery && st ? `סוג לימוד ${st.code} - ${st.desc}` : '';
+    // F3: דרך הגריד פירורי-הלחם גנריים בלי סניף; GET ישיר: הסניף *מהכתובת* (מטעה)
+    const crumbs = hasQuery && urlInst
+      ? ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', urlInst.name, urlInst.branch, urlSt ? `(${urlSt.code})${urlSt.desc}` : 'פרטי סוג לימוד']
+      : ['בית', 'איתור עמותות ומוסדות', 'פרטי עמותה', 'איתור מוסד', 'פרטי מוסד', 'פרטי סוג לימוד'];
+    root.innerHTML = C.treeHtml(db) + `
+<div class="page">
+  ${C.headerHtml(h1, crumbs, { h1: 'ContentPlaceHolder1_headerStudyTypeDetails', span: 'ContentPlaceHolder1_lblStudyTypeName' })}
+  <div id="${TAB_ID}">
+    <div class="ajax__tab_header">
+      <span class="ajax__tab_tab" data-tab-header="0">פרטי סוג לימוד</span>
+      <span class="ajax__tab_tab" data-tab-header="1">מצב זכאות סוג לימוד</span>
+      <span class="ajax__tab_tab" data-tab-header="2">רשימת תלמידים</span>
+    </div>
+    <div data-tab-index="0"><p>${st ? `קוד ${C.esc(st.code)} · ${C.esc(st.desc)} · מצב זכאות: ${C.esc(st.status)}` : ''}</p></div>
+    <div data-tab-index="1" style="display:none"><p>${st ? `מצב זכאות: ${C.esc(st.status)}` : ''}</p></div>
+    <div data-tab-index="2" id="${TAB_ID}_StudentList" style="display:none">${studentsPanelHtml()}</div>
+  </div>
+</div>` + C.messagePopupHtml();
+    C.wireMessageButtons();
+    document.querySelectorAll('[data-tab-header]').forEach((el) => {
+      el.addEventListener('click', () => { const t = window.__mock.components[TAB_ID]; if (t) t.set_activeTabIndex(Number(el.getAttribute('data-tab-header'))); });
+    });
+    window.__mock.components[TAB_ID] = window.__mockTabs(TAB_ID, 3, 0, { postbackTarget: TAB_TARGET });
+    window.__mock.components['ucMessagePopUp_ModalPopupExtender1'] = window.__mockModal('ucMessagePopUp_pnlMessagePopup');
+    wireStudentsPanel();
+  }
+
   function openModal() {
     document.getElementById(`${BASE}_ddlPopIdentityType`).value = '-1';
     document.getElementById(`${BASE}_txtIdentifier`).value = '';
@@ -138,6 +158,28 @@
     postback(target, arg) {
       const m = C.handleMessagePostback(target);
       if (m) return m;
+
+      // F2: העץ קובע את ה-session ומנווט לדף המוסד. הנחה (לא נמדדה בדף הזה): הכתובת של דף המוסד, עם
+      // ה-InstituteID שבכתובת הנוכחית אם יש (באתר הכתובת שומרת את הפרמטרים הישנים).
+      const t = C.handleTreePostback(db, target, arg, () => '/Institutes/InstitutesDetails.aspx' + (urlInstituteId ? `?InstituteID=${urlInstituteId}` : ''));
+      if (t) return t;
+
+      // F4: שינוי לשונית = postback א-סינכרוני; הפקדים שבלשונית "רשימת תלמידים" נבנים מחדש בסיום
+      if (target === TAB_TARGET) {
+        const tm = /^activeTabChanged:(\d+)$/.exec(arg || '');
+        if (!tm) return { kind: 'none' };
+        const tabs = window.__mock.components[TAB_ID];
+        window.__mock.components[TAB_ID] = null;
+        const panel = document.getElementById(`${TAB_ID}_StudentList`);
+        panel.innerHTML = '';
+        return { kind: 'async', apply: () => {
+          panel.innerHTML = studentsPanelHtml();
+          wireStudentsPanel();
+          window.__mock.components[TAB_ID] = tabs;
+          tabs._commit(tm[1]);
+        } };
+      }
+
       if (!st) return { kind: 'none' };
 
       if (target === `${T}$btnSearch`) {
@@ -149,7 +191,7 @@
         } };
       }
 
-      if (target === 'ctl00$ContentPlaceHolder1$btnStudentAcceptence3') {
+      if (target === `${T}$btnStudentAcceptence3`) {
         return { kind: 'async', apply: () => {
           if (st.status === 'סגור') { C.showMessage('לא ניתן לקלוט תלמידים לסוג לימוד סגור', ['ok']); return; }
           openModal();
@@ -187,13 +229,13 @@
           return { kind: 'async', apply: () => {
             D.enroll(db, stId, { id, idType, first: known.first, last: known.last, birth: known.birth || birth, accepted, country: idType === '2' ? country : undefined });
             closeModal();
-            D.log(db, `confirm ${id} → enrolled`);
+            D.log(db, `confirm ${id} → enrolled to ${stId}`);
             // כמו באתר: הודעת-הצלחה עם כפתור "המשך" גלוי
             C.showMessage('הצלחה קליטת תלמיד הצליחה', ['continue']);
           } };
         }
         // תלמיד שאינו מוכר למערכת → ניווט מלא לדף תלמיד-חדש
-        db.pendingNewStudent = { id, idType, studyTypeInstId: String(stId), instituteId: String(instituteId), birth: idType === '2' ? birth : '', country: idType === '2' ? country : '', accepted };
+        db.pendingNewStudent = { id, idType, studyTypeInstId: String(stId), instituteId: String(st.instituteId), birth: idType === '2' ? birth : '', country: idType === '2' ? country : '', accepted };
         D.save(db);
         D.log(db, `confirm ${id} → new student page`);
         return { kind: 'navigate', url: '/Students/StudentsDetails.aspx?' };

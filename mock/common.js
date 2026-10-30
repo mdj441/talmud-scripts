@@ -1,5 +1,5 @@
-// חלקים משותפים לכל דפי-הדמה: ucMessagePopUp (חלונית ההודעה הכללית של האתר), עץ-הצד,
-// כותרת עם h1 ופירורי-לחם, ורישום רכיבים ל-$find.
+// חלקים משותפים לכל דפי-הדמה: ucMessagePopUp (חלונית ההודעה הכללית של האתר), עץ-הצד (עם ה-postback
+// שקובע את ה-session, F2), כותרת עם h1 ופירורי-לחם, ורישום רכיבים ל-$find.
 
 (function () {
   'use strict';
@@ -36,7 +36,7 @@
     if (panel) panel.style.display = 'none';
   }
 
-  // עץ-הצד: קישור לכל סניף בפורמט __doPostBack של TreeView.
+  // עץ-הצד (F2): קישור לכל סניף בפורמט __doPostBack של TreeView; קיים בדף המוסד ובדף סוג-הלימוד.
   function treeHtml(db) {
     const name = 'עטרת שלמה';
     const items = Object.entries(db.institutes)
@@ -47,16 +47,31 @@
       <div style="font-weight:bold">${esc(name)}</div>${items}</div>`;
   }
 
-  // כמו באתר (ממצא 1א): לפני פירורי-הלחם האמיתיים יש SiteMapPath "רגיל" (בית > ...) בלי סניף.
-  // סלקטור שלוקח את האלמנט הראשון בלבד ייכשל כאן כמו שם.
-  function headerHtml(h1, crumbs) {
-    const crumbHtml = (crumbs || []).map((c) => `<span class="crumb">${esc(c)}</span>`).join(' <span class="sep">&gt;</span> ');
-    return `<span id="ctl00_SiteMapPath1" style="font-size:11px;color:#888">בית &gt; איתור מוסד &gt; פרטי מוסד</span>
-      <div id="ucBreadCrumbs" class="breadcrumbs" style="font-size:12px;color:#555;margin-bottom:6px">${crumbHtml}</div>
-      <h1 style="font-size:20px;margin:0 0 10px">${esc(h1)}</h1>`;
+  // ה-postback של העץ (F2): קובע את המוסד הנוכחי ב-session (ומאפס את סוג-הלימוד הנוכחי), ואז טעינת-דף
+  // מלאה לכתובת שהדף מבקש (דף המוסד: אותה כתובת, הכתובת לא משתנה). מחזיר null כשהיעד אינו העץ.
+  function handleTreePostback(db, target, arg, urlAfter) {
+    if (target !== 'ctl00$ucTalmudSideBar$tvTalmud') return null;
+    const mm = /\\(\d{2})$/.exec(arg || '');
+    if (!mm) return { kind: 'none' };
+    const id = window.__mockDb.branchToInstituteId(db, mm[1]);
+    if (!id) return { kind: 'async', apply: () => showMessage('סניף לא נמצא', ['ok']) };
+    window.__mockDb.setSession(db, { instituteId: id, studyTypeId: null });
+    return { kind: 'navigate', url: typeof urlAfter === 'function' ? urlAfter(id) : (urlAfter || (location.pathname + location.search)) };
   }
 
-  // כפתורי חלונית ההודעה: "אישור"/"לא" סוגרים (postback קל). "המשך" — הדף מחליט (window.__mock.onContinue).
+  // כמו באתר (ממצא 1א): לפני פירורי-הלחם האמיתיים יש SiteMapPath "רגיל" (בית > ...) בלי סניף.
+  // ‏ids: {h1, span}: מזהי ה-h1 וה-span הפנימי (באתר: ContentPlaceHolder1_headerInstitutesDetails / lblInsName).
+  // h1 ריק (F1/F3: GET ישיר בלי session) מרונדר כ-<h1><span></span></h1>, בדיוק כמו באתר.
+  function headerHtml(h1, crumbs, ids) {
+    const crumbHtml = (crumbs || []).map((c) => `<span class="crumb">${esc(c)}</span>`).join(' <span class="sep">&gt;</span> ');
+    const h1Id = ids && ids.h1 ? ` id="${esc(ids.h1)}"` : '';
+    const spanId = ids && ids.span ? ` id="${esc(ids.span)}"` : '';
+    return `<span id="ctl00_SiteMapPath1" style="font-size:11px;color:#888">בית &gt; איתור מוסד &gt; פרטי מוסד</span>
+      <div id="ucBreadCrumbs" class="breadcrumbs" style="font-size:12px;color:#555;margin-bottom:6px">${crumbHtml}</div>
+      <h1${h1Id} style="font-size:20px;margin:0 0 10px"><span${spanId}>${esc(h1)}</span></h1>`;
+  }
+
+  // כפתורי חלונית ההודעה: "אישור"/"לא" סוגרים (postback קל). "המשך": הדף מחליט (window.__mock.onContinue).
   function wireMessageButtons() {
     document.getElementById('ucMessagePopUp_btnMCancel').addEventListener('click', () => {
       window.__doPostBack('ctl00$ucMessagePopUp$btnMCancel', '');
@@ -97,5 +112,5 @@
     </style>`;
   }
 
-  window.__mockCommon = { esc, messagePopupHtml, showMessage, hideMessage, treeHtml, headerHtml, wireMessageButtons, handleMessagePostback, baseStyle };
+  window.__mockCommon = { esc, messagePopupHtml, showMessage, hideMessage, treeHtml, handleTreePostback, headerHtml, wireMessageButtons, handleMessagePostback, baseStyle };
 })();

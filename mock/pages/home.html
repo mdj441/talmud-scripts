@@ -14,12 +14,17 @@
   const D = window.__mockDb, C = window.__mockCommon;
   const db = D.load();
   document.head.insertAdjacentHTML('beforeend', C.baseStyle());
-  const links = Object.entries(db.institutes).map(([id, i]) => `<li><a href="/Institutes/InstitutesDetails.aspx?InstituteID=${id}">סניף ${C.esc(i.branch)} (InstituteID=${id})</a></li>`).join('');
+  // כמו לחיצה בעץ-הצד (F2): הקישור קובע את המוסד הנוכחי ב-session ואז פותח את דף המוסד. GET ישיר בלי
+  // session מציג דף מוסד עם h1 ריק, כמו באתר (F1).
+  const links = Object.entries(db.institutes).map(([id, i]) => `<li><a href="/Institutes/InstitutesDetails.aspx?InstituteID=${id}" data-inst="${id}">סניף ${C.esc(i.branch)} (InstituteID=${id})</a></li>`).join('');
   document.getElementById('mock-root').innerHTML = `<div class="page" style="margin:0">
     <h1>סביבת-דמה של תלמו"ד</h1>
-    <p>דפים: <ul>${links}<li><a href="/Association/Default.aspx">הודעות</a></li></ul></p>
+    <p>דפים: <ul>${links}<li><a href="/Institutes/InstitutesDetails.aspx">דף מוסד בלי session (h1 ריק)</a></li><li><a href="/Association/Default.aspx">הודעות</a></li></ul></p>
     <p><button onclick="localStorage.removeItem('mock.talmud.db');location.reload()">אפס את מסד-הדמה</button></p>
   </div>`;
+  document.querySelectorAll('a[data-inst]').forEach((a) => {
+    a.addEventListener('click', () => { D.setSession(db, { instituteId: a.getAttribute('data-inst'), studyTypeId: null }); });
+  });
 })();
 </script>
 </body>

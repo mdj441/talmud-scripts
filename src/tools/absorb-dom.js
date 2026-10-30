@@ -17,7 +17,7 @@ export const ABSORB_IDS = {
   searchBtn: `${BASE}_btnSearch`,
   countLabel: `${BASE}_lblCountSearch`,
   grid: `${BASE}_gvIStudents`, // עמודה 3 = ת.ז./דרכון
-  absorbBtn: 'ContentPlaceHolder1_btnStudentAcceptence3',
+  absorbBtnSuffix: 'btnStudentAcceptence3', // F5: המזהה המלא הוא ${BASE}_btnStudentAcceptence3; מחפשים לפי סיומת
   modal: `${BASE}_pnlAcceptStudent`,
   idTypeDdl: `${BASE}_ddlPopIdentityType`, // 1=ת.ז. 2=דרכון
   modalId: `${BASE}_txtIdentifier`,
@@ -42,6 +42,16 @@ export const ABSORB_NEW_IDS = {
 
 export const ABSORB_GENDER_LABELS = { '1': 'זכר', '2': 'נקבה' };
 export const ABSORB_FAMILY_STATUS_LABELS = { '10': 'רווק', '20': 'נשוי', '30': 'גרוש', '40': 'אלמן' };
+
+// F5 (30.10.2026): כפתור "קליטה" הוא a#ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails_btnStudentAcceptence3,
+// לא ContentPlaceHolder1_btnStudentAcceptence3 כפי שהיה בקוד (באג). הסיומת יציבה: מחפשים לפיה.
+export function absorbButtonEl() {
+  try {
+    return typeof document !== 'undefined' ? document.querySelector(`[id$="${ABSORB_IDS.absorbBtnSuffix}"]`) : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 const FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
 const SELECT_WAIT = { startTimeoutMs: 1000, totalTimeoutMs: 10000 };
@@ -123,8 +133,9 @@ export function absorbCollectValidationMessages(group) {
   return out.slice(0, 3);
 }
 
-// טאב 2 "רשימת תלמידים" בדף סוג-הלימוד. ממצא 9: החלפת טאב עלולה להפעיל postback (AutoPostBack
-// של ה-TabContainer), ולכן כמו כל נגיעה בדף: רושמים waitPRM, קוראים מ-setTimeout(0), וממתינים.
+// לשונית 2 "רשימת תלמידים" בדף סוג-הלימוד. ממצא 9 + F4 (מתוקן): החלפת לשונית היא postback א-סינכרוני
+// (UpdatePanel) שבמהלכו הפקדים נבנים מחדש, ולכן כמו כל נגיעה בדף: רושמים waitPRM, קוראים מ-setTimeout(0),
+// וממתינים לסיום; הקורא קורא את הפקדים (שדה החיפוש, הכפתור, הגריד) מחדש רק אחרי שההמתנה הסתיימה.
 // מחזיר תמיד {ok, started}; לא זורק.
 export function absorbActivateStudentsTab() {
   let tabs = null;

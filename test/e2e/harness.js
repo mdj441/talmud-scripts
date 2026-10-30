@@ -13,7 +13,9 @@ const MOCK = join(ROOT, 'mock');
 export const SITE = 'https://talmud.edu.gov.il';
 export const URLS = {
   institute: (id) => `${SITE}/Institutes/InstitutesDetails.aspx?InstituteID=${id}`,
-  studyType: (stId, instId) => `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=${stId}&InstituteID=${instId}`,
+  institutes: () => `${SITE}/Institutes/InstitutesDetails.aspx`, // בלי query: ה-session קובע (F1)
+  studyType: (stId, instId) => `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=${stId}&InstituteID=${instId}`, // GET ישיר (F3: h1 ריק)
+  studyTypeCurrent: () => `${SITE}/StudyType/StudyTypeDetails.aspx`, // דרך הגריד: בלי query (F3)
   newStudent: () => `${SITE}/Students/StudentsDetails.aspx?`,
   messages: () => `${SITE}/Association/Default.aspx`,
 };
@@ -58,7 +60,11 @@ export function readUserscript(name = 'talmud-tools.user.js') {
 
 // פותח הקשר חדש (localStorage/sessionStorage נקיים → מסד-הדמה נזרע מחדש מהתרחיש).
 // ‏scenario: דריסות לתרחיש-ברירת-המחדל של mock/db.js. ‏script: מקור ה-userscript להזרקה.
+// ברירת-המחדל של ה-session כאן: המשתמש כבר לחץ בעץ על סניף 00 (491), כמו ברוב הכניסות לאתר; תרחיש
+// שרוצה "בלי session" (h1 ריק, F1) מעביר session: { instituteId: null, studyTypeId: null }.
+export const DEFAULT_SESSION = { instituteId: '491', studyTypeId: null };
 export async function openSession(browser, { scenario = {}, script = null, delayMs = 80 } = {}) {
+  scenario = Object.assign({ session: Object.assign({}, DEFAULT_SESSION) }, scenario);
   const context = await browser.newContext({ locale: 'he-IL', viewport: { width: 1400, height: 900 } });
   await context.route(`${SITE}/**`, async (route) => {
     const url = new URL(route.request().url());

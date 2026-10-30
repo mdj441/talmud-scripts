@@ -383,8 +383,10 @@ function departSetAndWait(el, value, opts) {
   return wait;
 }
 
-// שלב 1 (ישן 416-427): לשונית 3 "תלמידים למוסד" דרך ה-TabContainer של האתר.
-function departActivateStudentsTab() {
+// שלב 1 (ישן 416-427): לשונית 3 "תלמידים למוסד" דרך ה-TabContainer של האתר. F4 (30.10.2026): שינוי לשונית
+// ב-tabInstituteDetails הוא postback א-סינכרוני שבמהלכו הפקדים נבנים מחדש, ולכן רושמים waitPRM, מפעילים
+// מ-setTimeout(0), וממתינים לסיום לפני שנוגעים בשדות. מחזיר Promise<boolean> (האם הופעל מעבר).
+async function departActivateStudentsTab() {
   try {
     if (typeof window === 'undefined' || typeof window.$find !== 'function') return false;
     const tabs = window.$find(DEPART_IDS.tabContainer);
@@ -393,7 +395,10 @@ function departActivateStudentsTab() {
     try { active = tabs.get_activeTabIndex(); } catch (e) { /* ignore */ }
     if (active !== DEPART_TAB_INDEX) {
       log('[לשונית] מעבר ללשונית "תלמידים למוסד"');
-      tabs.set_activeTabIndex(DEPART_TAB_INDEX);
+      const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 25000 });
+      setTimeout(() => { try { tabs.set_activeTabIndex(DEPART_TAB_INDEX); } catch (e) { log('[לשונית] שגיאה במעבר לשונית: ' + (e && e.message)); } }, 0);
+      const res = await wait;
+      if (res && res.ok === false) log(`[לשונית] ה-postback של הלשונית נכשל: ${res.reason}`);
       return true;
     }
   } catch (e) { log('[לשונית] שגיאה במעבר לשונית: ' + (e && e.message)); }
@@ -551,7 +556,7 @@ async function departProcessStudent(task) {
   departCheckStop('start');
 
   // שלב 1: לשונית 3
-  departActivateStudentsTab();
+  await departActivateStudentsTab();
   if (!(await departWaitTabReady())) {
     return mk(DEPART_STATUS.ERROR, 'שדה החיפוש בלשונית "תלמידים למוסד" לא נמצא', DEPART_ACTIONS.searchFailed);
   }
@@ -699,7 +704,7 @@ async function departEnsureBranch(task) {
     if (res && res.notFound) return { ok: false, status: DEPART_STATUS.BRANCH_NOT_FOUND, detail: res.reason, action: 'בדוק את מספר הסניף. אם הוא קיים, פתח את דף המוסד שלו ידנית והרץ שוב את השורה' };
     return { ok: false, status: DEPART_STATUS.ERROR, detail: (res && res.reason) || 'הניווט לסניף נכשל', action: departManualBranchAction(branch) };
   }
-  const how = res.method === 'url' ? `כתובת ידועה${res.hop ? ' (קפיצה לדף מוסד ידוע, ומשם העץ)' : ''}` : res.method === 'tree' ? 'עץ הסניפים' : (res.method || '?');
+  const how = res.method === 'url' ? 'מעבר לדף המוסדות (אין עץ בדף הזה; משם העץ)' : res.method === 'tree' ? 'עץ הסניפים (טעינת דף)' : (res.method || '?');
   log(`[ניווט] → סניף ${branch} · ${how}`);
   // ממתינים לטעינת-דף (הדף נפרק) או לרינדור-במקום של הסניף הנכון; לא קופאים על "ממתין".
   const t0 = Date.now();
