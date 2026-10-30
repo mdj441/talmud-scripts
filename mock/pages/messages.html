@@ -46,6 +46,11 @@
       { id: 'm10', header: 'הודעה כללית', body: 'עדכון גרסה למערכת.', status: 'טופלה', date: '20/08/2026', from: 'מערכת', handledBy: 'handled' },
       { id: 'm11', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 089012345.', status: 'טופלה', date: '21/08/2026', from: 'מערכת', handledBy: 'handled' },
       { id: 'm12', header: TRANSFER, body: transferBody('090123456'), status: 'טופלה', date: '22/08/2026', from: 'סניף 05', handledBy: 'decline' },
+      // כפילויות: m13 זהה ל-m01 (אותו גוף → אותו UID בסקריפט); m14 אותה בקשה כמו m03 בנוסח "תזכורת" (UID שונה, אותה ת.ז.).
+      { id: 'm13', header: TRANSFER, body: transferBody('012345678'), status: 'נשלחה', date: '05/09/2026', from: 'סניף 16' },
+      { id: 'm14', header: TRANSFER, body: transferBody('034567890') + ' (תזכורת)', status: 'נשלחה', date: '06/09/2026', from: 'סניף 05' },
+      // בקשת מעבר על תלמיד שכבר נמצא בסניף-היעד (16) לפי המצבת שהבדיקה מדביקה: m09 כבר אושרה, והמערכת שלחה שוב.
+      { id: 'm15', header: TRANSFER, body: `בקשת מעבר עבור התלמיד ת.ז. 078901234 מסניף 05 לסניף 16. נא לאשר או לדחות.`, status: 'נשלחה', date: '06/09/2026', from: 'סניף 16' },
     ];
   }
   db.messages = db.messages || defaultMessages();

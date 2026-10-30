@@ -1,5 +1,7 @@
 // תרחישי כלי ההודעות על סביבת-הדמה. הסקריפט האמיתי (dist/) רץ בכרום אמיתי. כל התעודות בדויות.
 // הרצה: npm run build && node --test "test/e2e/messages.e2e.js"   (HEADED=1 להצגת הדפדפן)
+// הדמה: 11 הודעות "נשלחה" ב-3 עמודים (5 בעמוד): m01-m08, m13 (זהה ל-m01: אותו UID), m14 (כמו m03 בנוסח
+// "תזכורת": UID שונה, אותה ת.ז.), m15 (בקשת מעבר על 078901234 לסניף 16). אחרי מיזוג: 9 שורות.
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { launch, openSession, readMockDb, readUserscript, evalRetry, sleep, URLS, SITE } from './harness.js';
@@ -10,11 +12,23 @@ const SEL = {
   tab: '#tt-tab-messages',
   root: '#tt-messages-root',
   modeTable: '#tt-messages-mode-table',
+  modeBulk: '#tt-messages-mode-bulk',
   bulkRun: '#tt-messages-bulk-run',
   stop: '#tt-messages-stop',
   scan: '#tt-messages-scan',
   scanStatus: '#tt-messages-scan-status',
   scanned: '#tt-messages-scanned',
+  summary: '#tt-messages-summary',
+  filter: '#tt-messages-filter',
+  allTransfers: '#tt-messages-all-transfers',
+  allOthers: '#tt-messages-all-others',
+  allSkip: '#tt-messages-all-skip',
+  runReview: '#tt-messages-run-review',
+  rosterSummary: '#tt-messages-roster-summary',
+  rosterInput: '#tt-messages-roster-input',
+  rosterLoad: '#tt-messages-roster-load',
+  rosterStatus: '#tt-messages-roster-status',
+  excelSummary: '#tt-messages-excel-summary',
   input: '#tt-messages-input',
   load: '#tt-messages-load',
   loadStatus: '#tt-messages-load-status',
@@ -25,6 +39,9 @@ const SEL = {
   log: '#tt-log',
 };
 
+const APPROVE = 'אישור מעבר', DECLINE = 'דחיית מעבר', HANDLED = 'שנה מצב הודעה לטופל', SKIP = 'דלג';
+const SENT_IDS = ['m01', 'm02', 'm03', 'm04', 'm05', 'm06', 'm07', 'm08', 'm13', 'm14', 'm15'];
+
 let browser;
 let script;
 
@@ -32,7 +49,13 @@ async function openMessages(page) {
   await page.goto(URLS.messages());
   await page.waitForSelector(SEL.panel, { timeout: 10000 });
   await page.click(SEL.tab);
-  await page.waitForSelector(SEL.bulkRun, { timeout: 5000 });
+  await page.waitForSelector(SEL.scan, { timeout: 5000 });
+}
+
+async function openBulk(page) {
+  await openMessages(page);
+  await page.click(SEL.modeBulk);
+  await page.waitForSelector(`${SEL.bulkRun}:visible`, { timeout: 5000 });
 }
 
 // ממתין לדוח "מה נשאר" (מוצג רק בסיום ריצה). קורא בלולאה עם try/catch.
@@ -64,14 +87,39 @@ async function waitForScan(page, timeoutMs = 30000) {
   throw new Error('waitForScan: timeout');
 }
 
+async function scanAndWait(page) {
+  await page.click(SEL.scan);
+  return waitForScan(page);
+}
+
 // שורות טבלה → מערך של מערכי-תאים (טקסט).
 async function readTable(page, sel) {
   return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s} table tbody tr`))
     .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim())), sel);
 }
 
-async function readLog(page) {
-  return evalRetry(page, (s) => { const el = document.querySelector(s.log); return el ? el.textContent : ''; }, SEL);
+// טבלת הסקירה: [{uid, uids, id, header, body, date, count, roster, done, decision, hidden}]
+async function readReview(page) {
+  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.scanned} table tbody tr`)).map((tr) => {
+    const td = Array.from(tr.querySelectorAll('td'));
+    const sel = tr.querySelector('select');
+    return {
+      uid: tr.getAttribute('data-uid'), uids: (tr.getAttribute('data-uids') || '').split(',').filter(Boolean),
+      id: td[0].textContent.trim(), header: td[1].textContent.trim(), body: td[2].textContent.trim(), bodyFull: td[2].getAttribute('title') || '',
+      date: td[3].textContent.trim(), count: td[4].textContent.trim(), roster: td[5].textContent.trim(),
+      done: !!tr.querySelector('.tt-tag-done'), decision: sel ? sel.value : '', hidden: tr.hidden,
+    };
+  }), SEL);
+}
+
+async function readText(page, sel) {
+  return evalRetry(page, (s) => { const el = document.querySelector(s); return el ? el.textContent : ''; }, sel);
+}
+
+async function readLog(page) { return readText(page, SEL.log); }
+
+async function setDecision(page, uid, action) {
+  await page.selectOption(`${SEL.scanned} tr[data-uid="${uid}"] select`, action);
 }
 
 const byId = (db, id) => db.messages.find((m) => m.id === id);
@@ -81,28 +129,28 @@ describe('טיפול בהודעות: סביבת דמה', () => {
   before(async () => { browser = await launch(); script = readUserscript(); });
   after(async () => { if (browser) await browser.close(); });
 
-  test('1 מצב גורף: 8 "נשלחה" בשני עמודים (מתחיל בסינון "טופלה") → כולן "טופלה"; מעברים approve, אחרות handled', async () => {
+  test('1 מצב גורף: 11 "נשלחה" בשלושה עמודים (מתחיל בסינון "טופלה") → כולן "טופלה"; מעברים approve, אחרות handled', async () => {
     const { context, page, consoleLines } = await openSession(browser, { scenario: { messagesInitialFilter: '2' }, script });
     try {
-      await openMessages(page);
+      await openBulk(page);
       await page.click(SEL.bulkRun);
       const rep = await waitForReport(page);
       const log = await readLog(page);
-      assert.match(rep.text, /בוצעו=8/, rep.text + '\n' + log);
+      assert.match(rep.text, /בוצעו=11/, rep.text + '\n' + log);
       assert.match(rep.text, /נכשלו=0/, rep.text);
       assert.doesNotMatch(rep.text, /נעצר/);
       assert.match(log, /משנה סינון ל"נשלחה"/, 'הסקריפט היה צריך להחליף את הסינון מ"טופלה" ל"נשלחה"');
 
       const db = await readMockDb(page);
       assert.equal(db.messages.filter((m) => m.status === 'נשלחה').length, 0, 'נשארו הודעות במצב נשלחה');
-      for (const id of ['m01', 'm03', 'm05', 'm07']) assert.equal(byId(db, id).handledBy, 'approve', id);
+      for (const id of ['m01', 'm03', 'm05', 'm07', 'm13', 'm14', 'm15']) assert.equal(byId(db, id).handledBy, 'approve', id);
       for (const id of ['m02', 'm04', 'm06', 'm08']) assert.equal(byId(db, id).handledBy, 'handled', id);
       // ההודעות שכבר היו "טופלה" לא נגעו בהן
       assert.equal(byId(db, 'm12').handledBy, 'decline');
       assert.equal(byId(db, 'm09').handledBy, 'approve');
 
       const rows = await readTable(page, SEL.results);
-      assert.equal(rows.length, 8, 'טבלת התוצאות');
+      assert.equal(rows.length, 11, 'טבלת התוצאות');
       assert.ok(rows.every((r) => r[4] === 'בוצע'), JSON.stringify(rows));
       assert.ok(rows.some((r) => r[2] === '012345678'), 'ת.ז. מלאה בטבלת התוצאות');
       assert.doesNotMatch(log, /012345678/, 'ת.ז. מלאה דלפה ליומן');
@@ -110,57 +158,54 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('2 לפי טבלה: סריקה → 8 שורות עם ת.ז.; הדבקה (דחייה, דלג, טופל, דחייה-לא-חוקית) → ביצוע ודוח', async () => {
+  test('2 דרך אקסל: סריקה → הדבקה (דחייה, דלג, טופל, דחייה-לא-חוקית) → ביצוע; דחייה על UID כפול מטפלת בשני המופעים', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script });
     try {
       await openMessages(page);
-      await page.click(SEL.modeTable);
-      await page.click(SEL.scan);
-      const scanTxt = await waitForScan(page);
-      assert.match(scanTxt, /נסרקו 8 הודעות מ-2 עמודים/, scanTxt);
+      const scanTxt = await scanAndWait(page);
+      assert.match(scanTxt, /נסרקו 11 הודעות מ-3 עמודים \(9 שורות אחרי מיזוג כפילויות\)/, scanTxt);
 
-      const scanned = await readTable(page, SEL.scanned); // [uid, נושא, ת.ז., תאריך, פעולה מוצעת]
-      assert.equal(scanned.length, 8);
-      const transfers = scanned.filter((r) => r[1] === 'בקשת מעבר תלמיד');
-      assert.equal(transfers.length, 4);
-      assert.ok(transfers.every((r) => r[4] === 'אישור מעבר'));
-      assert.ok(scanned.filter((r) => r[1] !== 'בקשת מעבר תלמיד').every((r) => r[4] === 'שנה מצב הודעה לטופל'));
-      const m01 = scanned.find((r) => r[2] === '012345678');
-      const m02 = scanned.find((r) => r[2] === '023456789');
-      const m04 = scanned.find((r) => r[1] === 'הודעה כללית');
-      const m06 = scanned.find((r) => r[2] === 'AB1234567');
-      assert.ok(m01 && m02 && m04 && m06, JSON.stringify(scanned));
+      const review = await readReview(page);
+      assert.equal(review.length, 9);
+      const m01 = review.find((r) => r.id === '012345678');
+      const m02 = review.find((r) => r.id === '023456789');
+      const m04 = review.find((r) => r.header === 'הודעה כללית');
+      const m06 = review.find((r) => r.id === 'AB1234567');
+      assert.ok(m01 && m02 && m04 && m06, JSON.stringify(review));
 
+      await page.click(SEL.excelSummary);
       const header = ['UID', 'נושא', 'ת.ז./דרכון', 'תאריך', 'גוף ההודעה', 'פעולה'].join(T);
-      const line = (r, action) => [r[0], r[1], r[2], r[3], 'גוף', action].join(T);
+      const line = (r, action) => [r.uid, r.header, r.id, r.date, 'גוף', action].join(T);
       const pasted = [header, line(m01, 'דחיית מעבר'), line(m02, 'דלג'), line(m04, 'טופל'), line(m06, 'דחה')].join('\n');
       await page.fill(SEL.input, pasted);
       await page.click(SEL.load);
-      const loadTxt = await evalRetry(page, (s) => document.querySelector(s.loadStatus).textContent, SEL);
+      const loadTxt = await readText(page, SEL.loadStatus);
       assert.match(loadTxt, /נטענו 4: אישור=0, דחיה=2, טופל=1, דילוג=1/, loadTxt);
 
       await page.click(SEL.runTable);
       const rep = await waitForReport(page);
-      assert.match(rep.text, /בוצעו=2/, rep.text);
+      assert.match(rep.text, /בוצעו=3/, rep.text); // m01 + m13 (אותו UID) + m04
       assert.match(rep.text, /נכשלו=1/, rep.text);
       assert.match(rep.text, /דולגו=1/, rep.text);
-      assert.match(rep.text, new RegExp(m06[0]), 'שורת "מה נשאר" להודעה שנכשלה');
+      assert.match(rep.text, new RegExp(m06.uid), 'שורת "מה נשאר" להודעה שנכשלה');
 
       const db = await readMockDb(page);
-      assert.equal(byId(db, 'm01').status, 'טופלה');
       assert.equal(byId(db, 'm01').handledBy, 'decline');
+      assert.equal(byId(db, 'm13').handledBy, 'decline', 'המופע השני של אותו UID');
       assert.equal(byId(db, 'm02').status, 'נשלחה', 'המדולגת צריכה להישאר נשלחה');
       assert.equal(byId(db, 'm02').handledBy, undefined);
       assert.equal(byId(db, 'm04').handledBy, 'handled');
       assert.equal(byId(db, 'm06').status, 'נשלחה', 'דחייה על הודעה שאינה בקשת-מעבר לא אמורה לשנות כלום');
       assert.equal(byId(db, 'm03').status, 'נשלחה', 'הודעה שלא בטבלה לא נוגעים בה');
+      assert.equal(byId(db, 'm14').status, 'נשלחה');
 
       const rows = await readTable(page, SEL.results);
-      const st = Object.fromEntries(rows.map((r) => [r[0], r[4]]));
-      assert.equal(st[m01[0]], 'בוצע');
-      assert.equal(st[m02[0]], 'דילוג');
-      assert.equal(st[m04[0]], 'בוצע');
-      assert.match(st[m06[0]], /^נכשל/);
+      const st = {};
+      for (const r of rows) st[r[0]] = (st[r[0]] || []).concat(r[4]);
+      assert.deepEqual(st[m01.uid], ['בוצע', 'בוצע']);
+      assert.deepEqual(st[m02.uid], ['דילוג']);
+      assert.deepEqual(st[m04.uid], ['בוצע']);
+      assert.match(st[m06.uid][0], /^נכשל/);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -168,7 +213,7 @@ describe('טיפול בהודעות: סביבת דמה', () => {
   test('3 עצור באמצע ריצה גורפת → הריצה נעצרת, הדוח מציג "נעצר", נשארו "נשלחה"', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script, delayMs: 500 });
     try {
-      await openMessages(page);
+      await openBulk(page);
       await page.click(SEL.bulkRun);
       await sleep(900);
       await page.click(SEL.stop);
@@ -180,7 +225,7 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       const done = db.messages.filter((m) => m.handledAt).length;
       assert.ok(remaining > 0, 'העצירה לא עצרה: כל ההודעות טופלו');
       assert.ok(done >= 1, 'לא בוצעה אף פעולה לפני העצירה');
-      assert.ok(remaining + done === 8, `remaining=${remaining} done=${done}`);
+      assert.ok(remaining + done === SENT_IDS.length, `remaining=${remaining} done=${done}`);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -193,8 +238,150 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       await page.click(SEL.tab);
       const txt = await evalRetry(page, (s) => document.querySelector(s.root).innerText, SEL);
       assert.match(txt, /בדף ההודעות בלבד/);
-      const hasButtons = await page.$(SEL.bulkRun);
+      const hasButtons = await page.$(SEL.scan);
       assert.equal(hasButtons, null, 'לא אמורים להיות כפתורי-פעולה בדף אחר');
+    } finally { await context.close(); }
+  });
+
+  test('5 סקירה: מיזוג כפילויות (UID זהה פעמיים = 2; שני UID-ים עם אותה ת.ז. = 2) → שינוי החלטה בשורה ממוזגת → בצע → שתי ההודעות טופלו', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      const review = await readReview(page);
+      assert.equal(review.length, 9, JSON.stringify(review));
+      const r01 = review.find((r) => r.id === '012345678');
+      const r03 = review.find((r) => r.id === '034567890');
+      assert.equal(r01.count, '2', 'm01 + m13 (אותו UID)');
+      assert.equal(r01.uids.length, 1);
+      assert.equal(r03.count, '2', 'm03 + m14 (UID שונה, אותה ת.ז.)');
+      assert.equal(r03.uids.length, 2);
+      assert.ok(review.filter((r) => r.count !== '1').length === 2, 'רק שתי שורות ממוזגות');
+      assert.ok(review.every((r) => r.roster === ''), 'בלי מצבת: עמודת "במצבת" ריקה');
+      assert.ok(review.filter((r) => r.header === 'בקשת מעבר תלמיד').every((r) => r.decision === APPROVE));
+      assert.ok(review.filter((r) => r.header !== 'בקשת מעבר תלמיד').every((r) => r.decision === HANDLED));
+      assert.ok(r01.bodyFull.includes('012345678'), 'הגוף המלא ב-title');
+      const summary0 = await readText(page, SEL.summary);
+      assert.match(summary0, /9 שורות · אישור מעבר=5 · דחיית מעבר=0 · טופל=4 · דלג=0/, summary0);
+
+      await setDecision(page, r03.uid, DECLINE);
+      const summary1 = await readText(page, SEL.summary);
+      assert.match(summary1, /אישור מעבר=4 · דחיית מעבר=1/, summary1);
+
+      await page.click(SEL.runReview);
+      const rep = await waitForReport(page);
+      assert.match(rep.text, /בוצעו=11 · נכשלו=0 · דולגו=0/, rep.text + '\n' + (await readLog(page)));
+
+      const db = await readMockDb(page);
+      assert.equal(byId(db, 'm03').handledBy, 'decline');
+      assert.equal(byId(db, 'm14').handledBy, 'decline', 'ההחלטה חלה על כל ה-UID-ים של השורה הממוזגת');
+      assert.equal(byId(db, 'm01').handledBy, 'approve');
+      assert.equal(byId(db, 'm13').handledBy, 'approve');
+      assert.equal(byId(db, 'm15').handledBy, 'approve', 'בלי מצבת אין "כבר בוצע"');
+      for (const id of ['m02', 'm04', 'm06', 'm08']) assert.equal(byId(db, id).handledBy, 'handled', id);
+      assert.equal(db.messages.filter((m) => m.status === 'נשלחה').length, 0);
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  test('6 מצבת: הדבקה → "במצבת" / "לא במצבת" / ריק; בקשת-מעבר שכבר בוצעה → "כבר בוצע" + טופל; הביצוע לא מאשר אותה', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      await page.click(SEL.rosterSummary);
+      // כמו הדבקה מאקסל: כותרת, טאבים, אפסים מובילים שנמחקו
+      await page.fill(SEL.rosterInput, ['סניף' + T + 'ת.ז./דרכון', '16' + T + '78901234', '05' + T + '12345678', '16' + T + 'AB1234567'].join('\n'));
+      await page.click(SEL.rosterLoad);
+      const rosterTxt = await readText(page, SEL.rosterStatus);
+      assert.match(rosterTxt, /נטענה מצבת: 3 שורות/, rosterTxt);
+
+      const review = await readReview(page);
+      const r15 = review.find((r) => r.id === '078901234');
+      const r01 = review.find((r) => r.id === '012345678');
+      const r02 = review.find((r) => r.id === '023456789');
+      const r04 = review.find((r) => r.header === 'הודעה כללית');
+      const r06 = review.find((r) => r.id === 'AB1234567');
+      assert.match(r15.roster, /סניף 16/, JSON.stringify(r15));
+      assert.equal(r15.done, true, 'תלמיד שכבר בסניף-היעד → כבר בוצע');
+      assert.equal(r15.decision, HANDLED);
+      assert.match(r01.roster, /סניף 05/);
+      assert.equal(r01.done, false, 'במצבת בסניף 05, מבקש ל-16 → עדיין לא בוצע');
+      assert.equal(r01.decision, APPROVE);
+      assert.equal(r02.roster, 'לא במצבת');
+      assert.equal(r04.roster, '', 'בלי ת.ז.: עמודה ריקה');
+      assert.match(r06.roster, /סניף 16/);
+      assert.equal(r06.done, false, 'לא בקשת מעבר');
+      const summary = await readText(page, SEL.summary);
+      assert.match(summary, /אישור מעבר=4 .* טופל=5 .* כבר בוצע=1/, summary);
+
+      await page.click(SEL.runReview);
+      const rep = await waitForReport(page);
+      assert.match(rep.text, /בוצעו=11 · נכשלו=0/, rep.text);
+      const db = await readMockDb(page);
+      assert.equal(byId(db, 'm15').handledBy, 'handled', 'המעבר שכבר בוצע סומן כטופל, לא אושר שוב');
+      assert.equal(byId(db, 'm01').handledBy, 'approve');
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  test('7 פעולות-צובר וסינון: הכל דלג → כל בקשות המעבר אישור → סינון + כל השאר טופל על המוצגות → בצע', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      await page.click(SEL.allSkip);
+      let summary = await readText(page, SEL.summary);
+      assert.match(summary, /דלג=9/, summary);
+      let review = await readReview(page);
+      assert.ok(review.every((r) => r.decision === SKIP));
+
+      await page.click(SEL.allTransfers);
+      summary = await readText(page, SEL.summary);
+      assert.match(summary, /אישור מעבר=5 .* דלג=4/, summary);
+
+      await page.fill(SEL.filter, '023456789');
+      review = await readReview(page);
+      assert.deepEqual(review.filter((r) => !r.hidden).map((r) => r.id), ['023456789']);
+      summary = await readText(page, SEL.summary);
+      assert.match(summary, /\(1 מוצגות\)/, summary);
+      await page.click(SEL.allOthers); // רק על השורה המוצגת
+      await page.fill(SEL.filter, '');
+      review = await readReview(page);
+      assert.ok(review.every((r) => !r.hidden));
+      summary = await readText(page, SEL.summary);
+      assert.match(summary, /אישור מעבר=5 · דחיית מעבר=0 · טופל=1 · דלג=3/, summary);
+
+      await page.click(SEL.runReview);
+      const rep = await waitForReport(page);
+      assert.match(rep.text, /בוצעו=8 · נכשלו=0 · דולגו=3/, rep.text);
+      const db = await readMockDb(page);
+      for (const id of ['m01', 'm03', 'm05', 'm07', 'm13', 'm14', 'm15']) assert.equal(byId(db, id).handledBy, 'approve', id);
+      assert.equal(byId(db, 'm02').handledBy, 'handled');
+      for (const id of ['m04', 'm06', 'm08']) assert.equal(byId(db, id).status, 'נשלחה', `${id} דולגה`);
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  test('8 Escape באמצע "בצע לפי הטבלה" → נעצר, נשארו "נשלחה", הטבלה נשארת לסבב הבא', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script, delayMs: 500 });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      await page.click(SEL.runReview);
+      await sleep(900);
+      await page.keyboard.press('Escape');
+      const rep = await waitForReport(page, 30000);
+      assert.match(rep.text, /נעצר/, rep.text);
+      const db = await readMockDb(page);
+      const remaining = db.messages.filter((m) => m.status === 'נשלחה').length;
+      const done = db.messages.filter((m) => m.handledAt).length;
+      assert.ok(remaining > 0 && done >= 1 && remaining + done === SENT_IDS.length, `remaining=${remaining} done=${done}`);
+      const review = await readReview(page);
+      assert.equal(review.length, 9, 'טבלת הסקירה נשארת אחרי עצירה');
+      const runEnabled = await evalRetry(page, (s) => !document.querySelector(s.runReview).disabled, SEL);
+      assert.equal(runEnabled, true, '"בצע לפי הטבלה" חוזר להיות זמין');
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
 });
