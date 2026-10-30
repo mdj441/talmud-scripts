@@ -14,53 +14,65 @@
 <script>
 (function () {
   'use strict';
-  // דף ההודעות של הדמה (/Association/Default.aspx). מזהי-DOM כמו באתר (לפי הסקריפט הישן v5.0):
-  // גריד GVMessages עם שורות selectedRowSearch('N') + שדות נסתרים hdID/hidMessageHeader, פייג'ר GPager
-  // (« ‹ › » + span של העמוד), סינון מצב (1 נשלחה / 2 טופלה), HidMessageRowID, ושלושה postbacks של פעולה.
+  // דף ההודעות של הדמה (/Association/Default.aspx). מזהי-DOM כמו באתר (לפי הסקריפט הישן v5.0 ועובדות
+  // מהאתר החי, 30.10.2026): גריד GVMessages עם שורות selectedRowSearch('N') + שדות נסתרים hdID (גוף מלא) /
+  // hidMessageHeader (נושא); עמודות: נושא, נמען, יחידה ארגונית, מצב הודעה, תאריך שליחה, גוף מקוצר, 2 ריקות;
+  // 10 שורות לעמוד; פייג'ר GPager (« ‹ › » + span של העמוד); סינון מצב ddlMessageStatus עם "הכל" (-1,
+  // ברירת-המחדל בטעינה) / נשלחה (1) / טופלה (2); HidMessageRowID; ושלושה postbacks של פעולה.
+  // נוסחי ההודעות כמו באתר: "בקשת מעבר תלמיד" = מוסד אחר מבקש להעביר אליו תלמיד שלנו ("מסוג לימוד NNN בסניף NN"
+  // = הסניף וסוג-הלימוד הנוכחיים שלו אצלנו); "מעבר תלמיד" = אינפורמטיבי (ממוסדך / אל מוסדך אושר).
   // הנחות הדמה (לא מאומתות מול האתר): הגריד מרונדר מחדש אחרי פעולה ונשאר באותו עמוד; פעולת "אישור/דחיית
-  // מעבר" על הודעה שאינה בקשת-מעבר מציגה הודעת-שגיאה ולא משנה כלום. כל התעודות בדויות.
+  // מעבר" על הודעה שאינה בקשת-מעבר מציגה הודעת-שגיאה ולא משנה כלום. כל השמות והתעודות בדויים.
   const D = window.__mockDb, C = window.__mockCommon;
   const db = D.load();
   const GRID = 'ContentPlaceHolder1_GVMessages';
   const PAGER = 'ContentPlaceHolder1_GPager_pager';
   const DDL = 'ContentPlaceHolder1_ddlMessageStatus';
   const HID = 'ContentPlaceHolder1_HidMessageRowID';
-  const PAGE_SIZE = 5;
+  const PAGE_SIZE = 10;
   const TRANSFER = 'בקשת מעבר תלמיד';
+  const TRANSFER_DONE = 'מעבר תלמיד';
 
   window.__mockLog = (m) => console.log('[mock-site] ' + m);
   document.head.insertAdjacentHTML('beforeend', C.baseStyle());
 
   function defaultMessages() {
-    const transferBody = (n) => `בקשת מעבר עבור התלמיד ת.ז. ${n} מסניף 00 לסניף 16. נא לאשר או לדחות.`;
+    const request = (name, id, studyType, branch) => `מוסד אחר ביקש להעביר אליו את התלמיד ${name}, בעל ת.ז. ${id} מסוג לימוד ${studyType} בסניף ${branch}. אנא אשר או דחה את המעבר.`;
+    const outDone = (name, idPhrase) => `מעבר התלמיד ${name}, ${idPhrase} ממוסדך אושר על ידי תהליך אישור אוטומטי.`;
+    const inDone = (name, id) => `מעבר התלמיד ${name}, בעל ת.ז. ${id} אל מוסדך אושר על ידי המוסד בו הוא לומד.`;
+    const sys = { to: 'מנהל מוסד', unit: 'מוסד הדמה' };
     return [
-      { id: 'm01', header: TRANSFER, body: transferBody('012345678'), status: 'נשלחה', date: '01/09/2026', from: 'סניף 16' },
-      { id: 'm02', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 023456789: כתובת חדשה.', status: 'נשלחה', date: '01/09/2026', from: 'מערכת' },
-      { id: 'm03', header: TRANSFER, body: transferBody('034567890'), status: 'נשלחה', date: '02/09/2026', from: 'סניף 05' },
-      { id: 'm04', header: 'הודעה כללית', body: 'תזכורת: יש להשלים את הדיווח החודשי עד סוף החודש.', status: 'נשלחה', date: '02/09/2026', from: 'מערכת' },
-      { id: 'm05', header: TRANSFER, body: transferBody('045678901'), status: 'נשלחה', date: '03/09/2026', from: 'סניף 16' },
-      { id: 'm06', header: 'אישור קליטה', body: 'התלמיד בעל דרכון AB1234567 נקלט בהצלחה.', status: 'נשלחה', date: '03/09/2026', from: 'מערכת' },
-      { id: 'm07', header: TRANSFER, body: transferBody('056789012'), status: 'נשלחה', date: '04/09/2026', from: 'סניף 05' },
-      { id: 'm08', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 067890123: שם משפחה.', status: 'נשלחה', date: '04/09/2026', from: 'מערכת' },
-      { id: 'm09', header: TRANSFER, body: transferBody('078901234'), status: 'טופלה', date: '20/08/2026', from: 'סניף 16', handledBy: 'approve' },
-      { id: 'm10', header: 'הודעה כללית', body: 'עדכון גרסה למערכת.', status: 'טופלה', date: '20/08/2026', from: 'מערכת', handledBy: 'handled' },
-      { id: 'm11', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 089012345.', status: 'טופלה', date: '21/08/2026', from: 'מערכת', handledBy: 'handled' },
-      { id: 'm12', header: TRANSFER, body: transferBody('090123456'), status: 'טופלה', date: '22/08/2026', from: 'סניף 05', handledBy: 'decline' },
+      { id: 'm01', header: TRANSFER, body: request('ראובן דמה', '012345678', '600', '09'), status: 'נשלחה', date: '01/09/2026', to: sys.to, unit: 'סניף 09' },
+      { id: 'm02', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 023456789: כתובת חדשה.', status: 'נשלחה', date: '01/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm03', header: TRANSFER, body: request('שמעון דמה', '034567890', '600', '16'), status: 'נשלחה', date: '02/09/2026', to: sys.to, unit: 'סניף 16' },
+      { id: 'm04', header: 'הודעה כללית', body: 'תזכורת: יש להשלים את הדיווח החודשי עד סוף החודש.', status: 'נשלחה', date: '02/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm05', header: TRANSFER, body: request('לוי דמה', '045678901', '1200', '09'), status: 'נשלחה', date: '03/09/2026', to: sys.to, unit: 'סניף 09' },
+      { id: 'm06', header: 'אישור קליטה', body: 'התלמיד בעל דרכון AB1234567 נקלט בהצלחה.', status: 'נשלחה', date: '03/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm07', header: TRANSFER, body: request('יהודה דמה', '056789012', '600', '05'), status: 'נשלחה', date: '04/09/2026', to: sys.to, unit: 'סניף 05' },
+      { id: 'm08', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 067890123: שם משפחה.', status: 'נשלחה', date: '04/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm09', header: TRANSFER, body: request('דן דמה', '078901234', '600', '16'), status: 'טופלה', date: '20/08/2026', to: sys.to, unit: 'סניף 16', handledBy: 'approve' },
+      { id: 'm10', header: 'הודעה כללית', body: 'עדכון גרסה למערכת.', status: 'טופלה', date: '20/08/2026', to: sys.to, unit: sys.unit, handledBy: 'handled' },
+      { id: 'm11', header: 'עדכון פרטי תלמיד', body: 'עודכנו פרטי התלמיד ת.ז. 089012345.', status: 'טופלה', date: '21/08/2026', to: sys.to, unit: sys.unit, handledBy: 'handled' },
+      { id: 'm12', header: TRANSFER, body: request('נפתלי דמה', '090123456', '600', '05'), status: 'טופלה', date: '22/08/2026', to: sys.to, unit: 'סניף 05', handledBy: 'decline' },
       // כפילויות: m13 זהה ל-m01 (אותו גוף → אותו UID בסקריפט); m14 אותה בקשה כמו m03 בנוסח "תזכורת" (UID שונה, אותה ת.ז.).
-      { id: 'm13', header: TRANSFER, body: transferBody('012345678'), status: 'נשלחה', date: '05/09/2026', from: 'סניף 16' },
-      { id: 'm14', header: TRANSFER, body: transferBody('034567890') + ' (תזכורת)', status: 'נשלחה', date: '06/09/2026', from: 'סניף 05' },
-      // בקשת מעבר על תלמיד שכבר נמצא בסניף-היעד (16) לפי המצבת שהבדיקה מדביקה: m09 כבר אושרה, והמערכת שלחה שוב.
-      { id: 'm15', header: TRANSFER, body: `בקשת מעבר עבור התלמיד ת.ז. 078901234 מסניף 05 לסניף 16. נא לאשר או לדחות.`, status: 'נשלחה', date: '06/09/2026', from: 'סניף 16' },
+      { id: 'm13', header: TRANSFER, body: request('ראובן דמה', '012345678', '600', '09'), status: 'נשלחה', date: '05/09/2026', to: sys.to, unit: 'סניף 09' },
+      { id: 'm14', header: TRANSFER, body: request('שמעון דמה', '034567890', '600', '16') + ' (תזכורת)', status: 'נשלחה', date: '06/09/2026', to: sys.to, unit: 'סניף 16' },
+      // בקשה חוזרת על תלמיד של m09 (כבר אושרה פעם): m15 פותחת את עמוד 2.
+      { id: 'm15', header: TRANSFER, body: request('דן דמה', '078901234', '600', '16'), status: 'נשלחה', date: '06/09/2026', to: sys.to, unit: 'סניף 16' },
+      // "מעבר תלמיד" אינפורמטיבי, שלושת הנוסחים מהאתר: ממוסדך עם ת.ז., ממוסדך עם דרכון, אל מוסדך.
+      { id: 'm16', header: TRANSFER_DONE, body: outDone('גד דמה', 'בעל ת.ז. 100200300'), status: 'נשלחה', date: '07/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm17', header: TRANSFER_DONE, body: outDone('אשר דמה', 'בעל דרכון CD7654321'), status: 'נשלחה', date: '07/09/2026', to: sys.to, unit: sys.unit },
+      { id: 'm18', header: TRANSFER_DONE, body: inDone('יששכר דמה', '200300400'), status: 'נשלחה', date: '08/09/2026', to: sys.to, unit: sys.unit },
     ];
   }
   db.messages = db.messages || defaultMessages();
   D.save(db);
 
-  // מצב-הדף (ViewState באתר): הסינון והעמוד הנוכחי. מתאפס בטעינה מלאה.
-  const state = { filter: String(db.messagesInitialFilter || '1'), page: 1 };
+  // מצב-הדף (ViewState באתר): הסינון והעמוד הנוכחי. מתאפס בטעינה מלאה. בטעינה הסינון "הכל" (-1), כמו באתר.
+  const state = { filter: String(db.messagesInitialFilter || '-1'), page: 1 };
   const STATUS_OF = { '1': 'נשלחה', '2': 'טופלה' };
 
-  function filtered() { return db.messages.filter((m) => m.status === STATUS_OF[state.filter]); }
+  function filtered() { return state.filter === '-1' ? db.messages.slice() : db.messages.filter((m) => m.status === STATUS_OF[state.filter]); }
   function pageCount(list) { return Math.max(1, Math.ceil(list.length / PAGE_SIZE)); }
   function clampPage(list) { state.page = Math.min(Math.max(1, state.page), pageCount(list)); }
   function pageRows(list) { const s = (state.page - 1) * PAGE_SIZE; return list.slice(s, s + PAGE_SIZE); }
@@ -75,10 +87,12 @@
 
   function gridHtml(rows) {
     if (!rows.length) return '<div style="padding:8px;color:#666">אין הודעות</div>'; // GridView ריק אינו מרונדר
-    let html = `<table class="grid" id="${GRID}"><tr><th>#</th><th>נושא</th><th>מאת</th><th>מצב</th><th>תאריך</th></tr>`;
+    // עמודות כמו באתר: 0 נושא, 1 נמען, 2 יחידה ארגונית, 3 מצב הודעה, 4 תאריך שליחה, 5 גוף מקוצר, 6-7 ריקות.
+    let html = `<table class="grid" id="${GRID}"><tr><th>נושא ההודעה</th><th>נמען</th><th>יחידה ארגונית</th><th>מצב הודעה</th><th>תאריך שליחת הודעה</th><th>גוף ההודעה</th><th></th><th></th></tr>`;
     rows.forEach((m, i) => {
-      html += `<tr onclick="selectedRowSearch('${i}')"><td>${i + 1}<input type="hidden" id="${GRID}_hdID_${i}" value="${C.esc(m.body)}"><input type="hidden" id="${GRID}_hidMessageHeader_${i}" value="${C.esc(m.header)}"></td>`
-        + `<td>${C.esc(m.header)}</td><td>${C.esc(m.from || '')}</td><td>${C.esc(m.status)}</td><td>${C.esc(m.date)}</td></tr>`;
+      const short = m.body.length > 40 ? m.body.slice(0, 40) + '...' : m.body;
+      html += `<tr onclick="selectedRowSearch('${i}')"><td>${C.esc(m.header)}<input type="hidden" id="${GRID}_hdID_${i}" value="${C.esc(m.body)}"><input type="hidden" id="${GRID}_hidMessageHeader_${i}" value="${C.esc(m.header)}"></td>`
+        + `<td>${C.esc(m.to || '')}</td><td>${C.esc(m.unit || '')}</td><td>${C.esc(m.status)}</td><td>${C.esc(m.date)}</td><td>${C.esc(short)}</td><td></td><td></td></tr>`;
     });
     return html + '</table>';
   }
@@ -96,6 +110,7 @@
   ${C.headerHtml('הודעות', ['בית', 'הודעות'])}
   <div style="margin:6px 0">מצב הודעה:
     <select id="${DDL}" onchange="__doPostBack('ctl00$ContentPlaceHolder1$ddlMessageStatus','')">
+      <option value="-1"${state.filter === '-1' ? ' selected' : ''}>הכל</option>
       <option value="1"${state.filter === '1' ? ' selected' : ''}>נשלחה</option>
       <option value="2"${state.filter === '2' ? ' selected' : ''}>טופלה</option>
     </select>

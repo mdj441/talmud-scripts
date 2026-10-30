@@ -10,7 +10,7 @@ import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import {
-  MESSAGES_ACTION, MESSAGES_ALL_ACTIONS, MESSAGES_RESULT, MESSAGES_TRANSFER_HEADER,
+  MESSAGES_ACTION, MESSAGES_ALL_ACTIONS, MESSAGES_RESULT, MESSAGES_TRANSFER_HEADER, MESSAGES_TRANSFER_DONE_HEADER,
   messagesIsMessagesUrl, messagesParseTable, messagesLoadSummary, messagesBuildTsv,
   messagesBuildReportTsv, messagesDownloadXlsx, messagesSetHooks, messagesIsRunning, messagesRequestStop, messagesRunBulk,
   messagesScan, messagesRunTable, messagesGetScanned, messagesGetReportRows,
@@ -61,16 +61,24 @@ function messagesRenderSummary() {
   if (!msgRows.length) { el.textContent = ''; return; }
   const c = messagesDecisionCounts(msgRows, msgDecisions);
   const visible = messagesVisibleRows().length;
-  const done = msgRows.filter((r) => r.alreadyDone).length;
-  el.textContent = `${msgRows.length} שורות${visible !== msgRows.length ? ` (${visible} מוצגות)` : ''} · אישור מעבר=${c.approve} · דחיית מעבר=${c.decline} · טופל=${c.handled} · דלג=${c.skip}${done ? ` · כבר בוצע=${done}` : ''}`;
+  const pending = msgRows.filter((r) => r.pending).length;
+  const done = msgRows.filter((r) => r.probablyDone).length;
+  el.textContent = `${msgRows.length} שורות${visible !== msgRows.length ? ` (${visible} מוצגות)` : ''} · אישור מעבר=${c.approve} · דחיית מעבר=${c.decline} · טופל=${c.handled} · דלג=${c.skip}${pending ? ` · ממתין=${pending}` : ''}${done ? ` · כנראה בוצע=${done}` : ''}`;
+}
+
+// תגי המצבת לבקשת-מעבר: "ממתין" (התלמיד עדיין במצבת: לאשר או לדחות) / "כנראה בוצע" (אינו במצבת).
+function messagesRosterTagHtml(r) {
+  if (r.pending) return ' <span class="tt-tag tt-tag-count tt-tag-pending" title="התלמיד עדיין במצבת: הבקשה ממתינה לאישור או לדחייה">ממתין</span>';
+  if (r.probablyDone) return ' <span class="tt-tag tt-tag-done" title="התלמיד אינו במצבת: כנראה המעבר כבר בוצע">כנראה בוצע</span>';
+  return '';
 }
 
 function messagesRowHtml(r, i) {
   const decision = messagesRowDecision(r, msgDecisions);
   const dates = r.dates && r.dates.length > 1 ? r.dates.join(', ') : '';
-  const roster = r.rosterLabel ? `${esc(r.rosterLabel)}${r.alreadyDone ? ' <span class="tt-tag tt-tag-done">כבר בוצע</span>' : ''}` : '';
+  const roster = r.rosterLabel ? `${esc(r.rosterLabel)}${messagesRosterTagHtml(r)}` : '';
   const uidsTitle = `UID: ${r.uids.join(', ')}`;
-  return `<tr class="tt-review-row${r.alreadyDone ? ' tt-r-done' : ''}" data-key="${esc(r.key)}" data-uid="${esc(r.uid)}" data-uids="${esc(r.uids.join(','))}" title="${esc(uidsTitle)}">
+  return `<tr class="tt-review-row${r.probablyDone ? ' tt-r-done' : ''}" data-key="${esc(r.key)}" data-uid="${esc(r.uid)}" data-uids="${esc(r.uids.join(','))}" title="${esc(uidsTitle)}">
     <td class="tt-mono">${esc(r.personId)}</td>
     <td>${esc(r.header)}</td>
     <td class="tt-body-cell" title="${esc(r.body)}">${esc(messagesShorten(r.body, MESSAGES_BODY_MAX))}</td>
@@ -134,14 +142,14 @@ function messagesBulkDecide(pick, what) {
 function messagesRebuildRows() {
   const merged = messagesMergeDuplicates(messagesGetScanned());
   msgRows = messagesCrossCheck(merged, msgRoster);
-  // ממצא ב-10: "כבר בוצע" הוא רמז לבדיקה; ההחלטה שנבחרה נשמרת, ורק הכפתור "כל 'כבר בוצע': סמן כטופל" מחיל
+  // ממצא ב-10: "כנראה בוצע" הוא רמז לבדיקה; ההחלטה שנבחרה נשמרת, ורק הכפתור "כל 'כנראה בוצע': סמן כטופל" מחיל
   const keep = new Map();
   for (const r of msgRows) if (msgDecisions.has(r.key)) keep.set(r.key, msgDecisions.get(r.key));
   msgDecisions = keep;
   messagesRenderReview();
 }
 
-const MESSAGES_DONE_HINT = (n) => `${n} בקשות-מעבר מסומנות "כבר בוצע" (רמז לבדיקה; "כל 'כבר בוצע': סמן כטופל" מחיל)`;
+const MESSAGES_DONE_HINT = (n) => `${n} בקשות-מעבר על תלמידים שאינם במצבת מסומנות "כנראה בוצע" (רמז לבדיקה; "כל 'כנראה בוצע': סמן כטופל" מחיל)`;
 
 function messagesLoadRoster() {
   const text = (($el(`${MP}-roster-input`) || {}).value || '');
@@ -159,8 +167,9 @@ function messagesLoadRoster() {
   setText(`${MP}-roster-status`, txt);
   log(`[הודעות] ${txt}`);
   messagesRebuildRows();
-  const done = msgRows.filter((r) => r.alreadyDone).length;
-  msgUi.status(msgRows.length ? `${txt}. ${done ? MESSAGES_DONE_HINT(done) : 'אין בקשות-מעבר שנראות כבר בוצעו'}` : `${txt}. לחץ "סרוק" כדי להצליב`);
+  const done = msgRows.filter((r) => r.probablyDone).length;
+  const pending = msgRows.filter((r) => r.pending).length;
+  msgUi.status(msgRows.length ? `${txt}. ${done ? MESSAGES_DONE_HINT(done) : 'אין בקשות-מעבר על תלמידים שאינם במצבת'}${pending ? `; ${pending} ממתינות לאישור או לדחייה` : ''}` : `${txt}. לחץ "סרוק" כדי להצליב`);
 }
 
 function messagesClearRoster() {
@@ -296,8 +305,8 @@ function messagesMount(container, panelUi, page) {
       <div class="tt-box tt-box-warn">
         עובר על <b>כל ההודעות</b> במצב "נשלחה", בכל העמודים, בלי סקירה:
         <ul>
-          <li>"${esc(MESSAGES_TRANSFER_HEADER)}": <b>אישור מעבר</b></li>
-          <li>כל הודעה אחרת: <b>שנה מצב הודעה לטופל</b></li>
+          <li>"${esc(MESSAGES_TRANSFER_HEADER)}" (מוסד אחר מבקש תלמיד שלנו): <b>אישור מעבר</b></li>
+          <li>כל הודעה אחרת (כולל "${esc(MESSAGES_TRANSFER_DONE_HEADER)}" האינפורמטיבית): <b>שנה מצב הודעה לטופל</b></li>
         </ul>
         "דחיית מעבר" לא נלחץ אוטומטית. לדחייה או להצלבה מול המצבת השתמש ב"סקירה".
       </div>
@@ -307,8 +316,9 @@ function messagesMount(container, panelUi, page) {
       <div class="tt-box tt-box-info">
         "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
         (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
-        הדבקת מצבת מאקסל מסמנת "כבר בוצע" על בקשת-מעבר של תלמיד שכבר בסניף-היעד: זה רמז לבדיקה, ההחלטה
-        לא משתנה מעצמה; "כל 'כבר בוצע': סמן כטופל" מחיל אותה.
+        בקשת מעבר = מוסד אחר מבקש תלמיד שלנו. הדבקת מצבת מאקסל מסמנת על כל בקשה: "ממתין" כשהתלמיד עדיין
+        במצבת (לאשר או לדחות), "כנראה בוצע" כשאינו במצבת. זה רמז לבדיקה, ההחלטה לא משתנה מעצמה;
+        "כל 'כנראה בוצע': סמן כטופל" מחיל אותה.
       </div>
       ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
@@ -325,7 +335,7 @@ function messagesMount(container, panelUi, page) {
         <input id="${MP}-filter" class="tt-input tt-filter" type="search" placeholder="סינון מהיר: ת.ז. / נושא / גוף">
         ${buttonHtml({ id: `${MP}-all-transfers`, label: 'כל בקשות המעבר: אישור', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
         ${buttonHtml({ id: `${MP}-all-others`, label: 'כל השאר: טופל', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
-        ${buttonHtml({ id: `${MP}-all-done`, label: "כל 'כבר בוצע': סמן כטופל", kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות שמסומנות "כבר בוצע" לפי המצבת' })}
+        ${buttonHtml({ id: `${MP}-all-done`, label: "כל 'כנראה בוצע': סמן כטופל", kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות שמסומנות "כנראה בוצע" לפי המצבת (בקשת-מעבר על תלמיד שאינו במצבת)' })}
         ${buttonHtml({ id: `${MP}-all-skip`, label: 'הכל: דלג', kind: 'ghost', size: 'small', disabled: true, title: 'על השורות המוצגות' })}
       </div>
       <div id="${MP}-scanned" class="tt-scroll tt-scroll-tall"></div>
@@ -362,7 +372,7 @@ function messagesMount(container, panelUi, page) {
   $el(`${MP}-filter`).addEventListener('input', messagesApplyFilter);
   $el(`${MP}-all-transfers`).addEventListener('click', () => messagesBulkDecide((r) => (r.header === MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.APPROVE : null), 'כל בקשות המעבר: אישור'));
   $el(`${MP}-all-others`).addEventListener('click', () => messagesBulkDecide((r) => (r.header !== MESSAGES_TRANSFER_HEADER ? MESSAGES_ACTION.HANDLED : null), 'כל השאר: טופל'));
-  $el(`${MP}-all-done`).addEventListener('click', () => messagesBulkDecide((r) => (r.alreadyDone ? MESSAGES_ACTION.HANDLED : null), "כל 'כבר בוצע': סמן כטופל"));
+  $el(`${MP}-all-done`).addEventListener('click', () => messagesBulkDecide((r) => (r.probablyDone ? MESSAGES_ACTION.HANDLED : null), "כל 'כנראה בוצע': סמן כטופל"));
   $el(`${MP}-all-skip`).addEventListener('click', () => messagesBulkDecide(() => MESSAGES_ACTION.SKIP, 'הכל: דלג'));
   $el(`${MP}-run-review`).addEventListener('click', messagesRunReview);
   $el(`${MP}-copy-tsv`).addEventListener('click', messagesCopyTsv);
@@ -389,7 +399,7 @@ function messagesMount(container, panelUi, page) {
       const merged = msgRows.length;
       setText(`${MP}-scan-status`, `✓ נסרקו ${info.total} הודעות מ-${info.pages} עמודים${merged < info.total ? ` (${merged} שורות אחרי מיזוג כפילויות)` : ''}${info.stopped ? ' (נעצר)' : ''}.`);
       messagesSetRunning(false);
-      const done = msgRows.filter((r) => r.alreadyDone).length;
+      const done = msgRows.filter((r) => r.probablyDone).length;
       msgUi.status(merged
         ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${MESSAGES_DONE_HINT(done)})` : ''}`
         : 'לא נמצאו הודעות במצב "נשלחה"');
