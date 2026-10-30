@@ -7,6 +7,7 @@ import { log } from '../core/log.js';
 const QUEUE_KEY = 'talmud.absorb.queue';
 const STOP_KEY = 'talmud.absorb.stop';
 const LANDINGS_KEY = 'talmud.absorb.landings';
+const LAST_RESULTS_KEY = 'talmud.absorb.lastResults';
 const STOP_PREFIX = '__STOPPED__@';
 const CANCEL_PREFIX = '__CANCELLED__@';
 
@@ -24,6 +25,9 @@ export const S = {
   hooks: {},
   lastRecordedIdx: -1, // השורה האחרונה שנרשמה לה תוצאה (מונע רישום כפול)
   justSaved: null, // מזהה של תלמיד-חדש שנשמר זה עתה (לאימות אחרי הטעינה)
+  // ממצא 4: {idx, identity} של שמירה בדף תלמיד-חדש. נשמר עם המצב בכל שמירה (לא רק ברגע השמירה),
+  // כדי ש-justSaved ישרוד גם נחיתה שנייה; נמחק ברישום התוצאה של אותה שורה.
+  pendingSave: null,
   generation: 0,
 };
 
@@ -76,6 +80,7 @@ export function saveAbsorbState(extra) {
   const state = {
     queue: S.queue, results: S.results, curIdx: S.curIdx,
     startedAt: S.startedAt || new Date().toISOString(),
+    pendingSave: S.pendingSave || null,
   };
   if (extra) Object.assign(state, extra);
   try { sessionStorage.setItem(QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[מצב] שמירה נכשלה: ' + (e && e.message)); }
@@ -95,6 +100,23 @@ export function clearAbsorbState() {
     sessionStorage.removeItem(QUEUE_KEY);
     sessionStorage.removeItem(LANDINGS_KEY);
   } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+// ממצא 6: תמונת-התוצאות של הריצה האחרונה (sessionStorage, שורדת טעינת-דף): הלשונית מציגה אותה
+// באתחול כשאין ריצה/תור, כך ש"עצור" בזמן טעינה לא מעלים את הטבלה והדוח.
+export function saveAbsorbLastResults(results, report) {
+  try {
+    sessionStorage.setItem(LAST_RESULTS_KEY, JSON.stringify({ results: Array.isArray(results) ? results : [], report: report || null, at: new Date().toISOString() }));
+  } catch (e) { /* אצווה לא נתקעת */ }
+}
+
+export function loadAbsorbLastResults() {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(LAST_RESULTS_KEY) || 'null');
+    return parsed && typeof parsed === 'object' && Array.isArray(parsed.results) ? parsed : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 // מונה טעינות-דף (נחיתות) לתלמיד הנוכחי. מחזיר את המספר אחרי ההגדלה.
@@ -121,4 +143,5 @@ export function absorbResetRun() {
   S.startedAt = null;
   S.lastRecordedIdx = -1;
   S.justSaved = null;
+  S.pendingSave = null;
 }

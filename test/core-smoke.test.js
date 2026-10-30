@@ -241,6 +241,40 @@ test('waitPRM: endRequest בלי שגיאה אחרי begin → {ok:true, started
   });
 });
 
+// ─── ממצא 8: ירי בקשה כשאחרת בטיסה. MS AJAX מריץ abortPostBack שמרים endRequest (בלי שגיאה)
+// של הבקשה הקודמת *לפני* ה-beginRequest של החדשה. ה-handler כבר רשום, ובלי ההגנה הוא היה
+// מסיים מיד עם {ok:true, started:false} על בקשה שאינה שלנו.
+test('waitPRM (ממצא 8): endRequest של בקשה שהייתה בטיסה ברגע הרישום לא מסיים את ההמתנה', async () => {
+  const fake = makeFakePrm();
+  fake.prm._isInAsyncPostBack = true;
+  await withFakePrm(fake, async () => {
+    let settled = null;
+    const p = waitPRM({ startTimeoutMs: 300, totalTimeoutMs: 2000 }).then((r) => { settled = r; return r; });
+    fake.handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} }); // סיום הבקשה הקודמת
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(settled, null, 'endRequest של הבקשה הקודמת אינו שלנו');
+    assert.equal(fake.handlers.end.length, 1, 'ה-handler עדיין רשום');
+    fake.prm._isInAsyncPostBack = false;
+    fake.handlers.begin[0]({}, {});
+    fake.handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
+    const res = await p;
+    assert.deepEqual(res, { started: true, ok: true });
+  });
+});
+
+test('waitPRM (ממצא 8): הבקשה הקודמת הסתיימה ושלנו לא התחילה עד startTimeout → {ok:true, started:false}', async () => {
+  const fake = makeFakePrm();
+  fake.prm._isInAsyncPostBack = true;
+  await withFakePrm(fake, async () => {
+    const p = waitPRM({ startTimeoutMs: 30, totalTimeoutMs: 2000 });
+    fake.prm._isInAsyncPostBack = false;
+    fake.handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
+    const res = await p;
+    assert.deepEqual(res, { started: false, ok: true });
+    assert.equal(fake.handlers.end.length, 0, 'ה-handlers הוסרו');
+  });
+});
+
 // ─── W3: הודעת-הצלחה היא אינפורמטיבית, לא בקשת-אישור (בדיקה רטובה 10.9.2026, F4) ──
 // האתר הציג אחרי אישור-קליטה מוצלח את ucMessagePopUp עם "הצלחה קליטת תלמיד הצליחה" ועם
 // כפתור "המשך" גלוי; hasContinue=true סיווג אותה "נחסם" ודילג על אימות-הגריד.

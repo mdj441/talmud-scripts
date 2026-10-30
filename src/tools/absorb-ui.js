@@ -8,14 +8,14 @@ import { log } from '../core/log.js';
 import { downloadCsv, copyTextToClipboard } from '../core/csv.js';
 import { COUNTRIES } from '../data/countries.js';
 import { detectIdType } from '../core/identity.js';
-import { loadBranchIds, loadStudyTypeIds, readBranchesFromTree, gridToRows, gridStudyTypes } from '../core/navigate.js';
+import { loadBranchIds, loadStudyTypeIds, readBranchesFromTree, gridToRows, gridStudyTypes, forgetNavMaps } from '../core/navigate.js';
 import { parseAbsorbInput, absorbTextToFieldRows, absorbFieldRowsToText, ABSORB_FIELD_ORDER } from './absorb-parse.js';
 import { loadXlsxFile } from './absorb-xlsx.js';
 import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './absorb-report.js';
 import { clearAbsorbStop } from './absorb-state.js';
 import {
   absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults,
-  absorbIsRunning, absorbIsBusy, absorbSavedQueueInfo, absorbDiscardSavedQueue,
+  absorbIsRunning, absorbIsBusy, absorbSavedQueueInfo, absorbDiscardSavedQueue, absorbLastResults,
 } from './absorb-flow.js';
 import { esc, buttonHtml, buttonsRowHtml, fieldHtml, resultsTableHtml, reportBoxHtml, flash, setHtml, setText, show, setDisabled, bindDateMask, todayDMY } from '../ui/widgets.js';
 
@@ -213,12 +213,16 @@ function renderReport(report) {
   show(`${P}-report`, true);
 }
 
+// תיבת "תור פתוח": ישן (ממצא ישן) או דף זר (ממצא 11). "המשך" מכריח המשך; "נקה" מוחק.
 function renderStaleQueue(info) {
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
   const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
   const startedMs = Date.parse(info.startedAt);
   const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
-  setHtml(`${P}-stale`, `<b>נמצא תור שמור${ageMin === null ? '' : ` מלפני ${esc(ageMin)} דקות`}</b>: ${esc(left)} שורות טרם עובדו (${esc(info.curIdx || 0)} מתוך ${esc(info.total || 0)} הושלמו). התור ישן מדי להמשך אוטומטי.
+  const why = info.reason === 'foreign-page'
+    ? 'הדף הזה אינו חלק מהקליטה, ולכן לא ממשיכים לבד. "המשך" ינווט לדף סוג-הלימוד של השורה הבאה.'
+    : 'התור ישן מדי להמשך אוטומטי.';
+  setHtml(`${P}-stale`, `<b>יש תור פתוח (${esc(left)} שורות)${ageMin === null ? '' : `, מלפני ${esc(ageMin)} דקות`}</b>: ${esc(info.curIdx || 0)} מתוך ${esc(info.total || 0)} הושלמו. ${why}
     ${buttonsRowHtml([
       { id: `${P}-stale-go`, label: 'המשך את התור', kind: 'primary', size: 'small' },
       { id: `${P}-stale-clear`, label: 'נקה את התור', kind: 'danger', size: 'small' },
@@ -228,7 +232,8 @@ function renderStaleQueue(info) {
     renderStaleQueue(null);
     ui.status('ממשיך את התור השמור…');
     setRunning(true);
-    Promise.resolve().then(() => absorbResumeIfPending({ allowStale: true })).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
+    Promise.resolve().then(() => absorbResumeIfPending({ force: true })).then((ran) => { if (ran === false && !absorbIsBusy()) setRunning(false); })
+      .catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
   });
   $el(`${P}-stale-clear`).addEventListener('click', () => {
     absorbDiscardSavedQueue();
@@ -276,7 +281,13 @@ async function start() {
   ui.progress(0, v.tasks.length);
   ui.status(`מריץ ${v.tasks.length} תלמידים…`);
   log(`[התחלה] ${v.tasks.length} תלמידים · תאריך תחילת לימודים "${startDate() || '(ברירת המחדל של האתר)'}"`);
-  await absorbStartRun(v.tasks);
+  const started = await absorbStartRun(v.tasks);
+  if (started === false) setRunning(false); // ממצא 5: לשונית אחרת רצה; ההודעה הוצגה דרך onLocked
+}
+
+function forgetMaps() {
+  forgetNavMaps();
+  ui.status('המיפויים הנלמדים נמחקו. הניווט הבא ילמד אותם מחדש מהאתר');
 }
 
 function stop() {
@@ -357,6 +368,9 @@ function mount(container, panelUi, page) {
       { id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' },
       { id: `${P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
     ])}
+    <div class="tt-row tt-row-tight" style="justify-content:flex-end">
+      ${buttonHtml({ id: `${P}-forget-maps`, label: 'שכח מיפויים', kind: 'subtle', size: 'small', title: 'מוחק את הכתובות שנלמדו (סניף→מוסד, סוג-לימוד→כתובת). לשימוש כשהניווט נוחת בסניף הלא-נכון' })}
+    </div>
     <div id="${P}-results-wrap" hidden>
       <div class="tt-row" style="justify-content:space-between"><b>תוצאות</b>
         <span>${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
@@ -385,6 +399,7 @@ function mount(container, panelUi, page) {
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
   $el(`${P}-xlsx-file`).addEventListener('change', handleXlsx);
+  $el(`${P}-forget-maps`).addEventListener('click', forgetMaps);
 
   absorbSetHooks({
     getStartDate: startDate,
@@ -403,7 +418,13 @@ function mount(container, panelUi, page) {
     onProgress: (idx, tot, task) => { total = tot; ui.progress(idx, tot); ui.status(`מעבד ${idx + 1}/${tot}: סניף ${task.branch} · סוג ${task.studyType} · ${task.identity}`); },
     onResult: (result, all) => { results = all.slice(); renderResults(); ui.progress(all.length, Math.max(total, all.length)); },
     onNavigating: () => { ui.status('ממתין לטעינת דף…'); },
-    onStaleQueue: (info) => { setRunning(false); ui.status('יש תור שמור ישן. בחר "המשך" או "נקה"'); renderStaleQueue(info); ui.open(); },
+    onStaleQueue: (info) => {
+      setRunning(false);
+      ui.status(info && info.reason === 'foreign-page' ? 'יש תור פתוח, אך הדף הזה אינו חלק מהקליטה. בחר "המשך" או "נקה"' : 'יש תור שמור ישן. בחר "המשך" או "נקה"');
+      renderStaleQueue(info);
+      ui.open();
+    },
+    onLocked: (msg) => { setRunning(false); ui.status(msg); ui.open(); },
     onDone: (all, report) => {
       results = all.slice(); renderResults(); renderReport(report); setRunning(false); ui.progress(all.length, all.length);
       ui.status(report.lines.length ? `הסתיים. ${report.lines.length} שורות דורשות טיפול (ראה "מה נשאר")` : 'הסתיים. הכול טופל');
@@ -416,6 +437,16 @@ function mount(container, panelUi, page) {
   renderResults();
   const saved = absorbSavedQueueInfo();
   if (absorbHasSavedQueue()) ui.status(saved && saved.stale ? 'נמצא תור שמור ישן. בודק…' : 'נמצא תור פתוח. ממשיך…');
+  else if (!results.length) {
+    // ממצא 6: הריצה האחרונה הסתיימה בזמן טעינת-דף (למשל "עצור"): מציגים את התוצאות והדוח שלה
+    const last = absorbLastResults();
+    if (last && last.results.length) {
+      results = last.results.slice();
+      renderResults();
+      renderReport(last.report);
+      ui.status(`תוצאות הריצה האחרונה (${results.length} שורות)`);
+    }
+  }
   Promise.resolve().then(() => absorbResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
 }
 

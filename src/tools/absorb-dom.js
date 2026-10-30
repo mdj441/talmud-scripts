@@ -123,17 +123,26 @@ export function absorbCollectValidationMessages(group) {
   return out.slice(0, 3);
 }
 
-// טאב 2 "רשימת תלמידים" בדף סוג-הלימוד.
+// טאב 2 "רשימת תלמידים" בדף סוג-הלימוד. ממצא 9: החלפת טאב עלולה להפעיל postback (AutoPostBack
+// של ה-TabContainer), ולכן כמו כל נגיעה בדף: רושמים waitPRM, קוראים מ-setTimeout(0), וממתינים.
+// מחזיר תמיד {ok, started}; לא זורק.
 export function absorbActivateStudentsTab() {
+  let tabs = null;
   try {
-    if (typeof window === 'undefined' || typeof window.$find !== 'function') return false;
-    const tabs = window.$find(ABSORB_IDS.tabContainer);
-    if (tabs && typeof tabs.set_activeTabIndex === 'function' && tabs.get_activeTabIndex() !== 2) {
-      tabs.set_activeTabIndex(2);
-      return true;
+    if (typeof window !== 'undefined' && typeof window.$find === 'function') tabs = window.$find(ABSORB_IDS.tabContainer);
+  } catch (e) { tabs = null; }
+  try {
+    if (!tabs || typeof tabs.set_activeTabIndex !== 'function' || tabs.get_activeTabIndex() === 2) {
+      return Promise.resolve({ ok: true, started: false }); // הפקדים בדרך כלל כבר ב-DOM
     }
-  } catch (e) { /* הפקדים בדרך כלל כבר ב-DOM */ }
-  return false;
+  } catch (e) {
+    return Promise.resolve({ ok: true, started: false });
+  }
+  const wait = waitPRM({ startTimeoutMs: 600, totalTimeoutMs: 8000 });
+  setTimeout(() => {
+    try { tabs.set_activeTabIndex(2); } catch (e) { log('[לשונית] הפעלת "רשימת תלמידים" נכשלה: ' + (e && e.message)); }
+  }, 0);
+  return wait;
 }
 
 // ─── חיפוש עם עדות-טריות: מסמנים את אזור-התוצאות "ישן" לפני, postback מחליף את האלמנטים ─

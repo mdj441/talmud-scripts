@@ -9,6 +9,7 @@ export const ABSORB_STATUS = {
   OK_NEW: 'נקלט (תלמיד חדש)',
   EXISTS: 'כבר קיים',
   SAVED_UNVERIFIED: 'נשמר — לאמת ידנית',
+  VERIFY: 'לאמת ידנית', // ממצא 10: ברשימה שורה יחידה עם מזהה אחר: לא הצלחה, המשתמש מאמת
   UNVERIFIED: 'לא אומת בגריד',
   NOT_COMPLETED: 'קליטה לא הושלמה',
   BLOCKED: 'נחסם',
@@ -49,6 +50,8 @@ const ABSORB_ID_CELL_RE = /^[0-9A-Za-z][0-9A-Za-z\s-]{3,}$/;
 
 // טהורה. `rows` = שורות-תאים; עמודה 3 = ת.ז./דרכון. `count` = תווית הספירה כשער:
 // 0 → "לא נמצא" תמיד; 1 → מותר fallback לשורת-נתונים יחידה; 2+ → רק התאמה מדויקת; null → בלי שער.
+// ממצא 10: ה-fallback מותר רק כשהתא מכיל את ספרות המזהה (אחרי נרמול). שורה יחידה עם מזהה *אחר*
+// אינה הצלחה: {found:false, singleOther:<התא>}, והזרימה מדווחת "לאמת ידנית".
 export function analyzeGrid(rows, identity, count) {
   const none = { found: false, matchType: null };
   if (count === 0) return none;
@@ -57,15 +60,20 @@ export function analyzeGrid(rows, identity, count) {
   if (!target) return none;
   let dataRows = 0;
   let exact = false;
+  let lastCell = '';
   for (const row of rows) {
     if (!Array.isArray(row) || row.length < 4) continue;
     const cell = String(row[3] == null ? '' : row[3]).trim();
     if (!ABSORB_ID_CELL_RE.test(cell)) continue;
     dataRows++;
+    lastCell = cell;
     if (absorbNormalizeId(cell) === target) exact = true;
   }
   if (exact) return { found: true, matchType: 'exact' };
-  if (dataRows === 1 && (count == null || count === 1)) return { found: true, matchType: 'single-row-fallback' };
+  if (dataRows === 1 && (count == null || count === 1)) {
+    if (absorbNormalizeId(lastCell).includes(target)) return { found: true, matchType: 'single-row-fallback' };
+    return { found: false, matchType: null, singleOther: lastCell };
+  }
   return none;
 }
 
@@ -161,6 +169,12 @@ export function absorbParsePostbackFromHref(href) {
   const m = /WebForm_PostBackOptions\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*(true|false)\s*,\s*"([^"]*)"/.exec(String(href || ''));
   if (m) return { target: m[1], arg: m[2], group: m[4], validate: m[3] === 'true' };
   return null;
+}
+
+// ממצא 1ב: אילו מקורות של "סניף הדף" מספיקים כדי לקלוט במקום. 'breadcrumb' = הדף עצמו;
+// 'institute' = דף המוסד שממנו הגענו (h1) עם אותו InstituteID בכתובת. מפה/כוונה: לא.
+export function absorbBranchSourceTrusted(source) {
+  return source === 'breadcrumb' || source === 'institute';
 }
 
 // הוראה אופרטיבית לניווט ידני לסוג-לימוד (משותפת לכמה סטטוסים).

@@ -6,15 +6,18 @@
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
 import { log, maskId } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoStudyType, normalizeBranch } from '../core/navigate.js';
+import { getPage, gotoStudyType, gotoInstitute, normalizeBranch, clearNavIntent } from '../core/navigate.js';
+import { acquireRunLock, refreshRunLock, releaseRunLock, RUN_LOCK_REFRESH_MS, RUN_LOCK_BUSY_MESSAGE } from '../core/lock.js';
 import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision,
   absorbShouldRecord, absorbQueueIsStale, buildRemainingReport, manualStudyTypeAction, absorbNormalizeId,
+  absorbBranchSourceTrusted,
 } from './absorb-report.js';
 import {
   S, ABSORB_MAX_LANDINGS, absorbIsStopped, requestAbsorbStop, clearAbsorbStop, absorbStopError, isAbsorbStopError,
   isAbsorbCancelError, absorbNextGeneration, absorbIsCancelled, checkStop, sleepCheckStop,
   saveAbsorbState, loadAbsorbState, clearAbsorbState, absorbBumpLandings, absorbResetLandings, absorbResetRun,
+  saveAbsorbLastResults, loadAbsorbLastResults,
 } from './absorb-state.js';
 import {
   ABSORB_IDS, ABSORB_NEW_IDS, ABSORB_GENDER_LABELS, ABSORB_FAMILY_STATUS_LABELS,
@@ -30,6 +33,20 @@ const SAVE_BUDGET_MS = 30000;
 const NAV_WATCHDOG_MS = 12000;
 const NAVIGATED = { __navigated: true }; // ניווט מלא נורה — ההמשך אחרי טעינת הדף
 const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — לתלמיד הבא
+
+// ─── טקסטי "מה לעשות" (ממצא 12): תמיד עם "איך", לא רק "מה" ───────────────────
+const SUPPORT_URL = 'https://github.com/mdj441/talmud-scripts/issues';
+const LOG_ACTION = `לחץ "העתק יומן" (ממוסך) וצרף אותו לדיווח בדף התמיכה של הכלי: ${SUPPORT_URL}`;
+const MANUAL_ABSORB_ACTION = 'לחץ "קליטה" בדף סוג-הלימוד, מלא את המזהה (ולדרכון גם תאריך לידה וארץ) ולחץ "אישור"';
+function verifyListAction(code, branch) {
+  return `ודא ברשימת התלמידים של סוג ${code} בסניף ${branch} שהתלמיד נקלט, ואם אינו שם, קלוט אותו ידנית`;
+}
+function searchListAction(code, branch) {
+  return `חפש את המזהה ברשימת התלמידים של סוג ${code} בסניף ${branch}; אם אינו שם, קלוט ידנית`;
+}
+function manualRowAction() {
+  return `בצע את השורה הזו ידנית באתר (${MANUAL_ABSORB_ACTION}). אם זה חוזר, ${LOG_ACTION}`;
+}
 
 // ─── hooks לפאנל ────────────────────────────────────────────────────────────
 export function absorbSetHooks(hooks) { S.hooks = hooks || {}; }
@@ -74,7 +91,10 @@ function armWatchdog(taskIdx) {
     if (unloadSeen || S.running) return;
     const task = S.queue[taskIdx];
     const page = getPage();
-    const fits = task && page.kind === 'studyType' && page.branch === normalizeBranch(task.branch) && page.studyType === String(task.studyType);
+    const b = task ? normalizeBranch(task.branch) : null;
+    // ממצא 3: גם דף מוסד של הסניף הנכון "מתאים" (העץ רינדר במקום): ממשיכים משם לגריד
+    const fits = !!task && ((page.kind === 'studyType' && page.branch === b && page.studyType === String(task.studyType) && absorbBranchSourceTrusted(page.branchSource))
+      || (page.kind === 'institute' && page.branch === b));
     if (fits) {
       log('[ניווט] הדף התעדכן בלי טעינה מלאה — ממשיכים במקום');
     } else {
@@ -90,19 +110,24 @@ function armWatchdog(taskIdx) {
 }
 
 // ─── שלב 1: הדף הנכון ───────────────────────────────────────────────────────
+// ממצא 1ב: המסלול המהיר ("כבר בדף הנכון") מותר רק כשהסניף נקרא מהדף עצמו (פירורי-לחם) או
+// אומת בדף המוסד שממנו הגענו (institute). סניף מהמפה/מהכוונה בלבד: מנווטים דרך דף המוסד של
+// הסניף (ה-h1 שם מאמת), ומשם לסוג-הלימוד.
 async function ensureStudyTypePage(task, gen) {
   const branch = normalizeBranch(task.branch);
   const code = String(task.studyType);
   const page = getPage();
+  let viaInstitute = false;
   if (page.kind === 'studyType' && page.studyType === code) {
-    if (page.branch === branch) return { ok: true, navigated: false };
-    if (!page.branch) log(`[ניווט] דף סוג-לימוד ${code}, אך הסניף לא ניתן לזיהוי מהדף — מנווטים כדי לוודא`);
-    else log(`[ניווט] דף סוג-לימוד ${code} של סניף ${page.branch}; צריך סניף ${branch}`);
+    if (page.branch === branch && absorbBranchSourceTrusted(page.branchSource)) return { ok: true, navigated: false };
+    if (!page.branch) log(`[ניווט] דף סוג-לימוד ${code}, אך הסניף לא ניתן לזיהוי מהדף: מנווטים דרך דף המוסד כדי לוודא`);
+    else if (page.branch !== branch) log(`[ניווט] דף סוג-לימוד ${code} של סניף ${page.branch}; צריך סניף ${branch}`);
+    else { log(`[ניווט] דף סוג-לימוד ${code}: הסניף ${branch} ידוע רק מ-${page.branchSource}, לא מהדף: מאמתים דרך דף המוסד`); viaInstitute = true; }
   }
   checkStop('before-nav', gen);
   saveAbsorbState();
   beginNavigation();
-  const res = await gotoStudyType(branch, code);
+  const res = viaInstitute ? await gotoInstitute(branch) : await gotoStudyType(branch, code);
   if (absorbIsCancelled(gen)) checkStop('nav-cancelled', gen);
   if (!res || res.ok === false) {
     if (res && res.notFound) {
@@ -113,7 +138,9 @@ async function ensureStudyTypePage(task, gen) {
     }
     return { ok: false, reason: (res && res.reason) || 'הניווט נכשל', action: manualStudyTypeAction(branch, code) };
   }
-  const how = res.method === 'url' ? `כתובת ישירה${res.hop ? ' (קפיצה לדף מוסד ידוע)' : ''}` : res.method === 'grid' ? 'גריד סוגי-הלימוד בדף המוסד' : res.method === 'tree' ? 'עץ הסניפים' : res.method || '?';
+  const how = res.method === 'url' ? `כתובת ישירה${res.hop ? ' (קפיצה לדף מוסד ידוע)' : ''}${viaInstitute ? ' (דף המוסד, לאימות הסניף)' : ''}`
+    : res.method === 'grid' ? `${res.treeInPlace ? 'עץ הסניפים (במקום) + ' : ''}גריד סוגי-הלימוד בדף המוסד`
+      : res.method === 'tree' ? 'עץ הסניפים' : res.method || '?';
   log(`[ניווט] → סניף ${branch} סוג ${code} · ${how}`);
   if (res.status && /סגור/.test(res.status)) log(`[ניווט] שים לב: סוג לימוד ${code} מסומן "${res.status}" בגריד`);
   return { ok: true, navigated: true };
@@ -136,8 +163,30 @@ async function leaveNewStudentPage(task, recorded, gen) {
   return CONTINUE;
 }
 
+// הערת חלונית-מידע שנראתה אחרי "שמירה" (ממצא 12: נכנסת ל-detail של התוצאה, לא רק ליומן).
+function pendingSaveNote() {
+  return (S.pendingSave && S.pendingSave.note) || '';
+}
+
 async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   log('[תלמיד חדש] נחתנו בדף תלמיד-חדש');
+
+  // ממצא 4: "שמירה" כטעינה מלאה שחזרה לאותו דף (למשל כשל ולידציה בשרת). לא שומרים שוב: אוספים
+  // את מה שהדף אומר, רושמים תוצאה, ויוצאים. בלי זה הדף היה מתמלא ונשמר שוב, עד תקרת הנחיתות.
+  if (S.justSaved && absorbNormalizeId(S.justSaved) === absorbNormalizeId(identity)) {
+    log('[תלמיד חדש] הדף נטען מחדש אחרי "שמירה": לא שומרים שוב');
+    const { pop, blocked } = await absorbReadAndHidePopup('אחרי שמירה (טעינה חוזרת)', gen);
+    const errs = absorbCollectValidationMessages();
+    const note = [pendingSaveNote(), pop ? pop.text : ''].filter(Boolean).join(' | ');
+    S.justSaved = null;
+    let res;
+    if (errs.length) res = mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
+    else if (blocked) res = mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
+    else res = mk(ABSORB_STATUS.SAVED_UNVERIFIED, note || 'דף תלמיד-חדש נטען מחדש אחרי השמירה; לא ידוע אם נשמר', verifyListAction(task.studyType, task.branch));
+    if (!recordResult(res, gen, myIdx)) return CONTINUE;
+    return leaveNewStudentPage(task, res, gen);
+  }
+
   const ns = task.newStudent || {};
   const birthDate = ns.birthDate || task.birthDate || '';
   const missing = [];
@@ -187,8 +236,10 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   }
 
   // "שמירה" עלולה לטעון דף אחר. מסמנים לפני, כדי שההמשך ידע לאמת "נקלט (תלמיד חדש)".
-  saveAbsorbState({ pendingSave: { idx: myIdx, identity } });
+  // ממצא 4: pendingSave חי ב-S ונשמר בכל saveAbsorbState עד רישום התוצאה של השורה הזו.
+  S.pendingSave = { idx: myIdx, identity, note: '' };
   S.justSaved = identity;
+  saveAbsorbState();
   beginNavigation();
   log('[תלמיד חדש] שמירה…');
   const wait = absorbFireElement(saveBtn, { startTimeoutMs: 3000, totalTimeoutMs: SAVE_BUDGET_MS });
@@ -197,8 +248,10 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   await sleepCheckStop(300, gen);
 
   const { pop, blocked } = await absorbReadAndHidePopup('אחרי שמירת תלמיד חדש', gen);
+  if (pop && pop.text && S.pendingSave) { S.pendingSave.note = pop.text; saveAbsorbState(); } // ממצא 12
   if (blocked) {
     S.justSaved = null;
+    S.pendingSave = null;
     saveAbsorbState();
     return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
   }
@@ -207,6 +260,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const errs = absorbCollectValidationMessages();
     if (errs.length) {
       S.justSaved = null;
+      S.pendingSave = null;
       saveAbsorbState();
       return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
     }
@@ -216,7 +270,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const res = await gotoStudyType(task.branch, task.studyType);
     if (res && res.ok !== false) return NAVIGATED;
     S.justSaved = null;
-    return mk(ABSORB_STATUS.SAVED_UNVERIFIED, 'השמירה בוצעה אך לא ניתן היה לחזור לרשימת התלמידים', `ודא ברשימת התלמידים של סוג ${task.studyType} בסניף ${task.branch} שהתלמיד נקלט`);
+    return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [pendingSaveNote(), 'השמירה בוצעה אך לא ניתן היה לחזור לרשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(task.studyType, task.branch));
   }
 
   // הדף התחלף בלי טעינה מלאה (נדיר): אם זה דף סוג-הלימוד — מאמתים כאן.
@@ -225,20 +279,28 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
 
 async function verifyAfterNewStudent(task, identity, mk, gen) {
   const page = getPage();
+  const note = pendingSaveNote();
   if (page.kind === 'studyType' && page.studyType === String(task.studyType)) {
-    absorbActivateStudentsTab();
+    await absorbActivateStudentsTab();
     const input = $el(ABSORB_IDS.searchInput);
     const btn = $el(ABSORB_IDS.searchBtn);
     if (input && btn) {
       const search = await absorbSearch(input, btn, identity, gen);
-      if (search.executed && analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(search)).found) {
-        S.justSaved = null;
-        return mk(ABSORB_STATUS.OK_NEW, '', '');
+      if (search.executed) {
+        const grid = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(search));
+        if (grid.found) {
+          S.justSaved = null;
+          return mk(ABSORB_STATUS.OK_NEW, note, '');
+        }
+        if (grid.singleOther) {
+          S.justSaved = null;
+          return mk(ABSORB_STATUS.VERIFY, [note, `ברשימה שורה אחת עם מזהה אחר: ${grid.singleOther}`].filter(Boolean).join(' | '), searchListAction(task.studyType, task.branch));
+        }
       }
     }
   }
   S.justSaved = null;
-  return mk(ABSORB_STATUS.SAVED_UNVERIFIED, 'התלמיד נשמר; הקליטה לא אומתה ברשימה', `ודא ברשימת התלמידים של סוג ${task.studyType} בסניף ${task.branch} שהתלמיד נקלט`);
+  return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [note, 'התלמיד נשמר; הקליטה לא אומתה ברשימה'].filter(Boolean).join(' | '), verifyListAction(task.studyType, task.branch));
 }
 
 // ─── תלמיד יחיד ─────────────────────────────────────────────────────────────
@@ -271,7 +333,7 @@ export async function processStudent(task, gen) {
   if (!nav.ok) return mk(ABSORB_STATUS.ERROR, nav.reason, nav.action);
   if (nav.navigated) return NAVIGATED;
   checkStop('after-nav', gen);
-  absorbActivateStudentsTab();
+  await absorbActivateStudentsTab(); // ממצא 9: ממתינים ל-postback של הלשונית לפני החיפוש
   await sleepCheckStop(250, gen);
 
   // ── שלב 2: חיפוש מקדים ──
@@ -290,23 +352,30 @@ export async function processStudent(task, gen) {
   if (decision !== 'analyze') return mk(ABSORB_STATUS.ERROR, absorbSearchFailReason(pre), ABSORB_SEARCH_FAILED_ACTION);
 
   const justSaved = S.justSaved && absorbNormalizeId(S.justSaved) === absorbNormalizeId(identity);
+  const savedNote = justSaved ? pendingSaveNote() : '';
   const preGrid = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(pre));
   if (preGrid.found) {
     const via = preGrid.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : '';
-    if (justSaved) { S.justSaved = null; log('[תלמיד חדש] נמצא ברשימה אחרי השמירה → נקלט'); return mk(ABSORB_STATUS.OK_NEW, via, ''); }
+    if (justSaved) { S.justSaved = null; log('[תלמיד חדש] נמצא ברשימה אחרי השמירה → נקלט'); return mk(ABSORB_STATUS.OK_NEW, [savedNote, via].filter(Boolean).join(' | '), ''); }
     log('[קליטה] כבר קיים בסוג הלימוד');
     return mk(ABSORB_STATUS.EXISTS, via, '');
+  }
+  if (preGrid.singleOther) {
+    // ממצא 10: החיפוש החזיר שורה אחת עם מזהה אחר. לא הצלחה ולא "לא נמצא": המשתמש מאמת.
+    S.justSaved = null;
+    log(`[קליטה] ברשימה שורה אחת עם מזהה אחר (${maskId(preGrid.singleOther)}): לאמת ידנית`);
+    return mk(ABSORB_STATUS.VERIFY, [savedNote, `ברשימה שורה אחת עם מזהה אחר: ${preGrid.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
   }
   if (justSaved) {
     // נשמר בדף תלמיד-חדש אך לא ברשימה — לא קולטים שוב, מדווחים לבדיקה ידנית.
     S.justSaved = null;
-    return mk(ABSORB_STATUS.SAVED_UNVERIFIED, 'התלמיד נשמר בדף תלמיד-חדש אך לא נמצא ברשימת התלמידים', `בדוק ברשימת התלמידים של סוג ${code} בסניף ${branch}; אם התלמיד לא שם, קלוט אותו ידנית`);
+    return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [savedNote, 'התלמיד נשמר בדף תלמיד-חדש אך לא נמצא ברשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(code, branch));
   }
   checkStop('after-precheck', gen);
 
   // ── שלב 3: "קליטה" ──
   const absorbBtn = $el(ABSORB_IDS.absorbBtn);
-  if (!absorbBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "קליטה" לא נמצא בדף', 'בדוק שיש לך הרשאת קליטה לסוג לימוד זה ושאינו "סגור"; אם יש, קלוט ידנית');
+  if (!absorbBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "קליטה" לא נמצא בדף', `בדוק שיש לך הרשאת קליטה לסוג לימוד זה ושאינו "סגור"; אם יש, ${MANUAL_ABSORB_ACTION}`);
   try {
     const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
     if (!click.ok) log(`[קליטה] postback לא תקין: ${click.reason}`);
@@ -337,17 +406,17 @@ export async function processStudent(task, gen) {
       await sleepCheckStop(150, gen);
     }
     const modalId = $el(ABSORB_IDS.modalId);
-    if (!modalId) return mk(ABSORB_STATUS.ERROR, 'שדה המזהה בחלון הקליטה לא נמצא', 'קלוט ידנית');
+    if (!modalId) return mk(ABSORB_STATUS.ERROR, 'שדה המזהה בחלון הקליטה לא נמצא', MANUAL_ABSORB_ACTION);
     await absorbSetAndWait(modalId, identity);
     await sleepCheckStop(120, gen);
 
     if (task.idType === 'passport') {
       const birthEl = $el(ABSORB_IDS.birthDate);
-      if (!birthEl) return mk(ABSORB_STATUS.ERROR, 'שדה תאריך לידה בחלון הקליטה לא נמצא', 'קלוט ידנית');
+      if (!birthEl) return mk(ABSORB_STATUS.ERROR, 'שדה תאריך לידה בחלון הקליטה לא נמצא', MANUAL_ABSORB_ACTION);
       await absorbSetAndWait(birthEl, task.birthDate);
       await sleepCheckStop(120, gen);
       const countryEl = $el(ABSORB_IDS.countryDdl);
-      if (!countryEl) return mk(ABSORB_STATUS.ERROR, 'שדה ארץ דרכון בחלון הקליטה לא נמצא', 'קלוט ידנית');
+      if (!countryEl) return mk(ABSORB_STATUS.ERROR, 'שדה ארץ דרכון בחלון הקליטה לא נמצא', MANUAL_ABSORB_ACTION);
       const country = await absorbSelectOption(countryEl, task.countryValue, 'ארץ', task.country);
       if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'תקן את עמודת "ארץ" לשם מהרשימה (כפתור "רשימת ארצות") והרץ שוב');
       await sleepCheckStop(150, gen);
@@ -362,7 +431,7 @@ export async function processStudent(task, gen) {
 
     // ── שלב 5: אישור ──
     const confirmBtn = $el(ABSORB_IDS.confirmBtn);
-    if (!confirmBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "אישור" לא נמצא בחלון הקליטה', 'קלוט ידנית');
+    if (!confirmBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "אישור" לא נמצא בחלון הקליטה', MANUAL_ABSORB_ACTION);
     const v = absorbRunClientValidation('PopValidation');
     if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המזהה, תאריך הלידה או הארץ לפי ההודעה, והרץ שוב');
 
@@ -375,7 +444,7 @@ export async function processStudent(task, gen) {
     // ── שלב 6: דף תלמיד-חדש באותו מסמך (נדיר; בדרך כלל זו טעינה מלאה שממשיכה ב-resume) ──
     if (getPage().kind === 'newStudent') {
       if (absorbNewStudentPageMatches(identity)) return handleNewStudentPage(task, identity, mk, gen, myIdx);
-      const res = mk(ABSORB_STATUS.ERROR, 'נפתח דף תלמיד-חדש של מזהה אחר', 'בדוק ידנית מה קרה בקליטה של שורה זו');
+      const res = mk(ABSORB_STATUS.ERROR, 'נפתח דף תלמיד-חדש של מזהה אחר', searchListAction(code, branch));
       if (!recordResult(res, gen, myIdx)) return CONTINUE;
       return leaveNewStudentPage(task, res, gen);
     }
@@ -395,13 +464,17 @@ export async function processStudent(task, gen) {
 
     const verifyInput = $el(ABSORB_IDS.searchInput);
     const verifyBtn = $el(ABSORB_IDS.searchBtn);
-    if (!verifyInput || !verifyBtn) return mk(ABSORB_STATUS.SAVED_UNVERIFIED, popupDetail || 'שדות החיפוש נעלמו אחרי הקליטה', `ודא ברשימת התלמידים של סוג ${code} שהתלמיד נקלט`);
+    if (!verifyInput || !verifyBtn) return mk(ABSORB_STATUS.SAVED_UNVERIFIED, popupDetail || 'שדות החיפוש נעלמו אחרי הקליטה', verifyListAction(code, branch));
     const verify = await absorbSearch(verifyInput, verifyBtn, identity, gen);
     if (!verify.executed) return mk(ABSORB_STATUS.SAVED_UNVERIFIED, absorbSearchFailReason(verify), ABSORB_SEARCH_FAILED_ACTION);
     const found = analyzeGrid(readAbsorbGridRows(), identity, absorbCountGate(verify));
     if (found.found) { log('◀ נקלט'); return mk(ABSORB_STATUS.OK, popupDetail || (found.matchType === 'single-row-fallback' ? 'התאמה לפי שורה יחידה ברשימה' : ''), ''); }
+    if (found.singleOther) {
+      log(`◀ ברשימה שורה אחת עם מזהה אחר (${maskId(found.singleOther)}): לאמת ידנית`);
+      return mk(ABSORB_STATUS.VERIFY, [popupDetail, `ברשימה שורה אחת עם מזהה אחר: ${found.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
+    }
     log('◀ לא אומת ברשימה');
-    return mk(ABSORB_STATUS.UNVERIFIED, popupDetail || 'לא נמצא ברשימה אחרי הקליטה', `חפש את המזהה ברשימת התלמידים של סוג ${code}; אם אינו שם, קלוט ידנית`);
+    return mk(ABSORB_STATUS.UNVERIFIED, popupDetail || 'לא נמצא ברשימה אחרי הקליטה', searchListAction(code, branch));
   } finally {
     try {
       if (absorbIsCancelled(gen)) log('[מודאל] ניסיון שבוטל — לא נוגעים בדף');
@@ -426,7 +499,7 @@ function withTimeout(promise, ms) {
 
 export async function processStudentSafe(task) {
   const myIdx = S.curIdx;
-  const errResult = (detail) => makeAbsorbResult(task, ABSORB_STATUS.ERROR, detail, 'בצע את השורה הזו ידנית באתר. אם זה חוזר, העתק את היומן (מזהים ממוסכים) ושלח');
+  const errResult = (detail) => makeAbsorbResult(task, ABSORB_STATUS.ERROR, detail, manualRowAction());
   try {
     return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
   } catch (err) {
@@ -458,10 +531,36 @@ function recordResult(result, gen, idx) {
   S.lastRecordedIdx = at;
   S.results.push(result);
   S.curIdx = Math.max(S.curIdx, at + 1);
+  if (S.pendingSave && S.pendingSave.idx === at) S.pendingSave = null; // ממצא 4: השמירה נסגרה עם השורה
   absorbResetLandings();
   saveAbsorbState();
   hook('onResult', result, S.results);
   return true;
+}
+
+// ─── נעילת-ריצה בין לשוניות (ממצא 5) ────────────────────────────────────────
+let lockTimer = null;
+
+function startLockRefresh() {
+  if (lockTimer !== null) return;
+  lockTimer = setInterval(() => { refreshRunLock(); }, RUN_LOCK_REFRESH_MS);
+}
+
+function stopLockRefresh() {
+  if (lockTimer !== null) { try { clearInterval(lockTimer); } catch (e) { /* noop */ } lockTimer = null; }
+}
+
+// false = לשונית אחרת של תלמו"ד רצה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
+function takeRunLock(where) {
+  if (acquireRunLock()) { startLockRefresh(); return true; }
+  log(`[נעילה] ${where}: ${RUN_LOCK_BUSY_MESSAGE}`);
+  hook('onLocked', RUN_LOCK_BUSY_MESSAGE);
+  return false;
+}
+
+function dropRunLock() {
+  stopLockRefresh();
+  releaseRunLock();
 }
 
 function fillRemaining(status, detail, action) {
@@ -477,7 +576,10 @@ function finishRun() {
   S.running = false;
   clearAbsorbState();
   clearAbsorbStop();
+  clearNavIntent(); // ממצא 7
+  dropRunLock(); // ממצא 5
   const report = buildRemainingReport(S.results);
+  saveAbsorbLastResults(S.results, report); // ממצא 6: תמונת-תוצאות אחרונה שורדת טעינת-דף
   log(`═══ סיום · ${report.summary}`);
   hook('onDone', S.results, report);
 }
@@ -486,6 +588,7 @@ export async function runQueue() {
   S.running = true;
   clearWatchdog();
   watchUnload();
+  startLockRefresh();
   log(`🚀 ריצה — ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
   hook('onStart', S.queue, S.curIdx);
 
@@ -517,7 +620,7 @@ export async function runQueue() {
     }
     if (result === CONTINUE || (result && result.__continue)) {
       if (S.curIdx <= taskIdx) {
-        recordResult(makeAbsorbResult(task, ABSORB_STATUS.ERROR, 'לא נרשמה תוצאה לשורה הזו', 'בצע את השורה הזו ידנית באתר וצרף את היומן'), null, taskIdx);
+        recordResult(makeAbsorbResult(task, ABSORB_STATUS.ERROR, 'לא נרשמה תוצאה לשורה הזו', manualRowAction()), null, taskIdx);
       }
       S.curIdx = Math.max(S.curIdx, taskIdx + 1);
       saveAbsorbState();
@@ -530,8 +633,11 @@ export async function runQueue() {
   finishRun();
 }
 
+// מחזיר false כשלשונית אחרת רצה (ממצא 5); אחרת את ה-Promise של הריצה.
 export async function absorbStartRun(tasks) {
+  if (!takeRunLock('התחלה')) return false;
   clearAbsorbStop();
+  clearNavIntent(); // ממצא 7: כוונה ישנה מריצה קודמת אינה ראיה
   absorbNextGeneration();
   clearWatchdog();
   absorbResetRun();
@@ -540,6 +646,11 @@ export async function absorbStartRun(tasks) {
   S.startedAt = new Date().toISOString();
   saveAbsorbState();
   return runQueue();
+}
+
+// ממצא 6: תמונת-התוצאות של הריצה האחרונה (לתצוגה באתחול הלשונית). null כשאין.
+export function absorbLastResults() {
+  return loadAbsorbLastResults();
 }
 
 export function absorbHasSavedQueue() {
@@ -559,36 +670,71 @@ export function absorbDiscardSavedQueue() {
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
+  clearNavIntent(); // ממצא 7
+  dropRunLock();
   log('[המשך] התור השמור נמחק לבקשת המשתמש');
   return true;
 }
 
-// בטעינת דף: אם יש תור שמור — ממשיכים. תור ישן (>30 דק') ממשיך רק אחרי "המשך" בפאנל.
+// ממצא 11: ההמשך האוטומטי שייך לדפי הקליטה בלבד. דף אחר (למשל ההודעות), או דף תלמיד-חדש של
+// מזהה אחר (המשתמש פתח ידנית), אינם מקום להשתלט עליו: הפאנל מציג "יש תור פתוח" ומחכה ללחיצה.
+function absorbForeignPage(page, task) {
+  if (!page || page.kind === 'other') return true;
+  if (page.kind === 'newStudent') {
+    const identity = task ? (task.idType === 'tz' ? padId9(task.identity) : String(task.identity || '').trim()) : '';
+    return !identity || !absorbNewStudentPageMatches(identity);
+  }
+  return false;
+}
+
+// בטעינת דף: אם יש תור שמור, ממשיכים. תור ישן (>30 דק') או דף זר ממשיכים רק אחרי "המשך" בפאנל
+// (opts.force; ‏allowStale נשמר כשם ישן). ‏false = לא התחילה ריצה כאן.
 export async function absorbResumeIfPending(opts) {
   if (S.running) return false;
-  const allowStale = !!(opts && opts.allowStale);
+  const force = !!(opts && (opts.force || opts.allowStale));
   const st = loadAbsorbState();
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
 
-  if (absorbIsStopped()) { log('[המשך] דגל עצירה — מנקים מצב'); clearAbsorbState(); clearAbsorbStop(); return false; }
-
-  if (!allowStale && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות — לא ממשיכים אוטומטית`);
-    hook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: true });
+  if (absorbIsStopped()) {
+    // ממצא 6: "עצור" נלחץ בזמן טעינת-דף. לא מנקים בשקט: השארית מסומנת "נעצר" והתוצאות מוצגות.
+    log('[המשך] דגל עצירה אחרי טעינת דף: מסיימים את הריצה עם "נעצר"');
+    S.queue = st.queue;
+    S.results = Array.isArray(st.results) ? st.results : [];
+    S.curIdx = st.curIdx || 0;
+    S.lastRecordedIdx = S.curIdx - 1;
+    S.startedAt = st.startedAt || null;
+    fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+    finishRun();
     return false;
   }
+
+  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: false, reason: '' };
+  if (!force && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות — לא ממשיכים אוטומטית`);
+    hook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
+    return false;
+  }
+  if (!force && absorbForeignPage(getPage(), st.queue[st.curIdx || 0])) {
+    log('[המשך] הדף הזה אינו חלק מהקליטה: לא ממשיכים אוטומטית; "המשך" בפאנל ינווט');
+    hook('onStaleQueue', Object.assign(info, { reason: 'foreign-page' }));
+    return false;
+  }
+  if (!takeRunLock('המשך')) return false; // ממצא 5: התור נשאר שמור; ינסה שוב בטעינה הבאה או ב"המשך"
 
   S.queue = st.queue;
   S.results = Array.isArray(st.results) ? st.results : [];
   S.curIdx = st.curIdx || 0;
   S.lastRecordedIdx = S.curIdx - 1;
   S.startedAt = st.startedAt || null;
+  S.pendingSave = st.pendingSave && typeof st.pendingSave === 'object' ? st.pendingSave : null;
   if (S.curIdx >= S.queue.length) { finishRun(); return false; }
 
-  if (st.pendingSave && st.pendingSave.idx === S.curIdx) {
-    S.justSaved = st.pendingSave.identity;
+  if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
+    S.justSaved = S.pendingSave.identity;
     log('[המשך] תלמיד חדש נשמר לפני הטעינה — נאמת ברשימה');
     saveAbsorbState();
+  } else {
+    S.pendingSave = null;
   }
 
   const landings = absorbBumpLandings(S.curIdx);
@@ -616,6 +762,7 @@ export function absorbStop() {
   requestAbsorbStop();
   absorbNextGeneration();
   clearWatchdog();
+  clearNavIntent(); // ממצא 7
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {
       fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
@@ -623,6 +770,7 @@ export function absorbStop() {
     } else {
       clearAbsorbState();
       clearAbsorbStop();
+      dropRunLock();
     }
   }
 }
