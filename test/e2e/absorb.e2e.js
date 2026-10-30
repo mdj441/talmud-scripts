@@ -2,11 +2,29 @@
 // כל התעודות בדויות. הרצה: npm run test:e2e   (HEADED=1 להצגת הדפדפן)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS } from './harness.js';
+import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, readResults, readReport, readLog, sleep, evalRetry } from './harness.js';
+import { ABSORB_STATUS } from '../../src/tools/absorb-report.js';
 
 const T = '\t';
 let browser;
 let script;
+
+// זורע אחסון-דפדפן (sessionStorage/localStorage) לפני הדף הנבדק: דף הבית ('other', בלי תור) לא מעלה כלום.
+async function seedStorage(page, { session = {}, local = {} } = {}) {
+  await page.goto(`${SITE}/`);
+  await page.evaluate(({ session: s, local: l }) => {
+    for (const [k, v] of Object.entries(s)) sessionStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+    for (const [k, v] of Object.entries(l)) localStorage.setItem(k, typeof v === 'string' ? v : JSON.stringify(v));
+  }, { session, local });
+}
+
+function trackNavigations(page) {
+  const urls = [];
+  page.on('framenavigated', (f) => { if (f === page.mainFrame()) urls.push(f.url()); });
+  return urls;
+}
+
+const queueTask = (branch, studyType, identity, extra = {}) => Object.assign({ line: 2, branch, studyType, idType: 'tz', identity }, extra);
 
 describe('קליטת תלמידים — סביבת דמה', () => {
   before(async () => { browser = await launch(); script = readUserscript(); });
@@ -106,6 +124,157 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       const run = await runAbsorb(page, input, { startUrl: URLS.studyType(10002, 491), timeoutMs: 150000 });
       assert.equal(run.results.length, 4, run.log);
       assert.deepEqual(run.results.map((r) => r.status), ['נקלט', 'נקלט', 'נקלט (תלמיד חדש)', 'נקלט'], run.log);
+    } finally { await context.close(); }
+  });
+});
+
+// ממצאי ביקורת-הקוד 10.9.2026 (1, 3, 4, 5, 6, 11): תרחישי-דמה שמוכיחים כל תיקון.
+describe('קליטת תלמידים: ממצאי הביקורת', () => {
+  let browser3, script3;
+  before(async () => { browser3 = await launch(); script3 = readUserscript(); });
+  after(async () => { if (browser3) await browser3.close(); });
+
+  async function session(scenario) {
+    return openSession(browser3, { scenario, script: script3 });
+  }
+
+  test('ממצא 1: בלי סניף בפירורי-הלחם, סניף מהמפה בלבד אינו מספיק: קליטה ל-00 מדף 16/600 עוברת דרך דף המוסד של 00', async () => {
+    const { context, page } = await session({ breadcrumbShowsBranch: false });
+    try {
+      // שתי המפות יודעות את 00/600: בלי התיקון, קפיצה ישירה וקליטה במקום על סמך המפה (מעגלי)
+      await seedStorage(page, { local: { 'talmud.nav.studyTypeIds': { '00|600': '10002' } } });
+      const urls = trackNavigations(page);
+      const run = await runAbsorb(page, `00${T}600${T}034567890`, { startUrl: URLS.studyType(10269, 4159) });
+      assert.equal(run.results[0].status, 'נקלט', run.log);
+      assert.ok(urls.some((u) => /InstitutesDetails\.aspx\?InstituteID=491/.test(u)), `חובה ביקור בדף המוסד של 00 לאימות הסניף. ביקורים: ${urls.join(' | ')}`);
+      assert.match(run.log, /\[institute\]|מאמתים דרך דף המוסד/, 'היומן מתעד את מקור הסניף');
+      const db = await readMockDb(page);
+      assert.ok(db.enrolled['10002'].some((s) => s.id === '034567890'));
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 3: קליק-עץ שמרנדר במקום (סניף 05 מדף מוסד 00) → "נקלט" בלי להמתין לכלב-השומר', async () => {
+    const { context, page } = await session({ treeNavigates: false });
+    try {
+      const t0 = Date.now();
+      const run = await runAbsorb(page, `05${T}600${T}034567890`, { startUrl: URLS.institute(491) });
+      const elapsed = Date.now() - t0;
+      assert.equal(run.results[0].status, 'נקלט', run.log);
+      assert.ok(!/לא הגיעה טעינת דף/.test(run.log), 'כלב-השומר לא היה אמור להתערב');
+      assert.ok(elapsed < 20000, `הריצה ארכה ${elapsed}ms (המתנת כלב-שומר של 12 שניות?)`);
+      const db = await readMockDb(page);
+      assert.ok((db.enrolled['10301'] || []).some((s) => s.id === '034567890'), 'התלמיד לא נקלט לסניף 05');
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 4: "שמירה" שטוענת מחדש את דף תלמיד-חדש → שמירה אחת בלבד, סטטוס סביר, בלי לולאה', async () => {
+    const { context, page } = await session({ afterSave: 'reload' });
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}067890123${T}משה${T}כהן${T}10/10/1990`, { startUrl: URLS.institute(491) });
+      assert.equal(run.results.length, 1, run.log);
+      assert.ok([ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.OK_NEW].includes(run.results[0].status), `סטטוס: ${run.results[0].status}\n${run.log}`);
+      const db = await readMockDb(page);
+      assert.equal(db.enrolled['10002'].filter((s) => s.id === '067890123').length, 1, 'שמירה כפולה במסד-הדמה');
+      assert.ok(!/לולאת ניווט/.test(run.log), 'הגענו לתקרת הנחיתות');
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 4 + 12: "שמירה" עם חלונית-הצלחה (נשארים בדף) → שמירה אחת, טקסט החלונית בפירוט התוצאה', async () => {
+    const { context, page } = await session({ afterSave: 'popup' });
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}067890123${T}משה${T}כהן${T}10/10/1990`, { startUrl: URLS.institute(491) });
+      assert.equal(run.results.length, 1, run.log);
+      assert.ok([ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.OK_NEW].includes(run.results[0].status), `סטטוס: ${run.results[0].status}\n${run.log}`);
+      assert.match(run.results[0].detail, /הפרטים נשמרו/, `הפירוט: "${run.results[0].detail}"`);
+      const db = await readMockDb(page);
+      assert.equal(db.enrolled['10002'].filter((s) => s.id === '067890123').length, 1, 'שמירה כפולה במסד-הדמה');
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 4: "שמירה" שנשארת בדף בלי הודעה → שמירה אחת', async () => {
+    const { context, page } = await session({ afterSave: 'stay' });
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}067890123${T}משה${T}כהן${T}10/10/1990`, { startUrl: URLS.institute(491) });
+      assert.equal(run.results.length, 1, run.log);
+      assert.ok([ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.OK_NEW].includes(run.results[0].status), `סטטוס: ${run.results[0].status}\n${run.log}`);
+      const db = await readMockDb(page);
+      assert.equal(db.enrolled['10002'].filter((s) => s.id === '067890123').length, 1, 'שמירה כפולה במסד-הדמה');
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 5: ריצה בלשונית א\' → "התחל" בלשונית ב\' מסורב עם הודעה, בלי ריצה', async () => {
+    const { context, page } = await session();
+    try {
+      await page.goto(URLS.institute(491));
+      await waitForPanel(page);
+      await page.fill(ABSORB_SEL.input, [`00${T}600${T}034567890`, `00${T}600${T}045678901`, `00${T}600${T}012345678`].join('\n'));
+      await page.click(ABSORB_SEL.start);
+      await sleep(800);
+      const pageB = await context.newPage();
+      await pageB.goto(URLS.institute(491));
+      await waitForPanel(pageB);
+      await pageB.fill(ABSORB_SEL.input, `00${T}600${T}023456789`);
+      await pageB.click(ABSORB_SEL.start);
+      await sleep(700);
+      const statusB = await pageB.textContent(ABSORB_SEL.status);
+      assert.match(statusB, /לשונית אחרת/, `סטטוס בלשונית ב': "${statusB}"`);
+      assert.equal((await readResults(pageB)).length, 0, 'לשונית ב\' לא הריצה כלום');
+      const { waitForRunDone } = await import('./harness.js');
+      await waitForRunDone(page, ABSORB_SEL, 120000);
+      const resA = await readResults(page);
+      assert.equal(resA.length, 3, await readLog(page));
+      await pageB.close();
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 6: דגל-עצירה + תור שמור בטעינת דף → השארית "נעצר", הטבלה והדוח מוצגים, ושורדים טעינה נוספת', async () => {
+    const { context, page } = await session();
+    try {
+      const done = { line: 2, branch: '00', studyType: '600', idType: 'tz', identity: '012345678', status: 'כבר קיים', detail: '', action: '' };
+      await seedStorage(page, { session: {
+        'talmud.absorb.queue': { queue: [queueTask('00', '600', '012345678'), queueTask('00', '600', '034567890', { line: 3 })], results: [done], curIdx: 1, startedAt: new Date().toISOString() },
+        'talmud.absorb.stop': '1',
+      } });
+      await page.goto(URLS.institute(491));
+      await waitForPanel(page);
+      await sleep(1200);
+      let res = await readResults(page);
+      assert.deepEqual(res.map((r) => r.status), ['כבר קיים', 'נעצר'], await readLog(page));
+      let report = await readReport(page);
+      assert.match(report, /נעצר/, 'דוח "מה נשאר" מוצג');
+      // טעינה נוספת: התוצאות של הריצה האחרונה עדיין מוצגות
+      await page.reload();
+      await waitForPanel(page);
+      await sleep(800);
+      res = await readResults(page);
+      assert.deepEqual(res.map((r) => r.status), ['כבר קיים', 'נעצר'], 'תמונת-התוצאות האחרונה מוצגת אחרי טעינה');
+      report = await readReport(page);
+      assert.match(report, /נעצר/);
+      const saved = await page.evaluate(() => sessionStorage.getItem('talmud.absorb.queue'));
+      assert.equal(saved, null, 'התור נוקה');
+    } finally { await context.close(); }
+  });
+
+  test('ממצא 11: תור פתוח + דף ההודעות → אין ניווט אוטומטי; תיבת "יש תור פתוח" עם המשך/נקה', async () => {
+    const { context, page } = await session();
+    try {
+      await seedStorage(page, { session: {
+        'talmud.absorb.queue': { queue: [queueTask('00', '600', '034567890'), queueTask('00', '600', '045678901', { line: 3 })], results: [], curIdx: 0, startedAt: new Date().toISOString() },
+      } });
+      const urls = trackNavigations(page);
+      await page.goto(URLS.messages());
+      await waitForPanel(page);
+      await sleep(3000);
+      assert.match(page.url(), /Association\/Default\.aspx/, 'הסקריפט ניווט מדף ההודעות');
+      assert.equal(urls.filter((u) => !/Association\/Default\.aspx/.test(u)).length, 0, `ניווטים: ${urls.join(' | ')}`);
+      const box = await evalRetry(page, () => { const el = document.querySelector('#tt-absorb-stale'); return el && !el.hidden ? el.innerText : ''; });
+      assert.match(box, /תור פתוח \(2 שורות\)/, `התיבה: "${box}"`);
+      assert.ok(await page.$('#tt-absorb-stale-go'), 'כפתור המשך');
+      assert.ok(await page.$('#tt-absorb-stale-clear'), 'כפתור נקה');
+      // "נקה" מוחק את התור
+      await page.click('#tt-absorb-stale-clear');
+      const saved = await page.evaluate(() => sessionStorage.getItem('talmud.absorb.queue'));
+      assert.equal(saved, null);
     } finally { await context.close(); }
   });
 });

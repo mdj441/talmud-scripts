@@ -126,6 +126,14 @@
         if (db.afterSave === 'popup') {
           return { kind: 'async', apply: () => { commit(); document.getElementById(`${SD}_hidStudentState`).value = '1'; C.showMessage('הצלחה הפרטים נשמרו והתלמיד נקלט', ['continue']); } };
         }
+        if (db.afterSave === 'reload') {
+          // ממצא 4: השמירה היא טעינה מלאה שחוזרת לאותו דף במצב תלמיד-חדש (כמו כשל ולידציה בשרת).
+          commit();
+          db.pendingNewStudent = pending;
+          D.save(db);
+          D.log(db, 'save → reload of the same new-student page');
+          return { kind: 'navigate', url: '/Students/StudentsDetails.aspx?' };
+        }
         commit();
         return { kind: 'navigate', url: stUrl };
       }

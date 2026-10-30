@@ -47,9 +47,12 @@
       <div style="font-weight:bold">${esc(name)}</div>${items}</div>`;
   }
 
+  // כמו באתר (ממצא 1א): לפני פירורי-הלחם האמיתיים יש SiteMapPath "רגיל" (בית > ...) בלי סניף.
+  // סלקטור שלוקח את האלמנט הראשון בלבד ייכשל כאן כמו שם.
   function headerHtml(h1, crumbs) {
     const crumbHtml = (crumbs || []).map((c) => `<span class="crumb">${esc(c)}</span>`).join(' <span class="sep">&gt;</span> ');
-    return `<div id="ucBreadCrumbs" class="breadcrumbs" style="font-size:12px;color:#555;margin-bottom:6px">${crumbHtml}</div>
+    return `<span id="ctl00_SiteMapPath1" style="font-size:11px;color:#888">בית &gt; איתור מוסד &gt; פרטי מוסד</span>
+      <div id="ucBreadCrumbs" class="breadcrumbs" style="font-size:12px;color:#555;margin-bottom:6px">${crumbHtml}</div>
       <h1 style="font-size:20px;margin:0 0 10px">${esc(h1)}</h1>`;
   }
 

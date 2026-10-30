@@ -22,10 +22,15 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
     if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
 
     let started = false, done = false;
+    // ממצא 8: ירי בקשה כשאחרת בטיסה: MS AJAX מריץ abortPostBack שמרים endRequest (בלי שגיאה) של
+    // הבקשה הקודמת *לפני* ה-beginRequest של החדשה. ה-endRequest הראשון אחרי רישום-בזמן-טיסה
+    // שייך לקודמת, ולא מסיים את ההמתנה הזו.
+    let inFlight = !!prm._isInAsyncPostBack;
 
-    function onBegin() { started = true; clearTimeout(startTimer); }
+    function onBegin() { started = true; inFlight = false; clearTimeout(startTimer); }
 
     function onEnd(s, e) {
+      if (inFlight && !started) { inFlight = false; return; }
       const err = e && e.get_error && e.get_error();
       if (err && e.set_errorHandled) e.set_errorHandled(true);
       finish(err ? { ok: false, reason: 'PRM: ' + (err.message || 'postback error') } : { ok: true });

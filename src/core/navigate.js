@@ -131,9 +131,10 @@ export function branchForInstituteId(map, id) {
   return null;
 }
 
-// לומד סניף→InstituteID. ‏authoritative=false (דף מוסד): לא דורס מיפוי קיים של ה-id לסניף אחר —
-// קליק-עץ עשוי לרנדר סניף אחר באותה כתובת. ‏authoritative=true (דף סוג-לימוד עם פירורי-לחם):
-// הכתובת נוצרה בשרת ומחייבת — דורס. מחזיר true כשנכתב משהו חדש.
+// לומד סניף→InstituteID. ‏authoritative=false (דף מוסד): לא דורס מיפוי קיים (של ה-id לסניף אחר, או
+// של הסניף ל-id אחר, כולל seed): קליק-עץ עשוי לרנדר סניף אחר באותה כתובת (ממצא 2: בלי ההגנה
+// על ה-seed, "00" נלמד מחדש ל-id של הסניף המוצג וכל ניווט ל-00 נחת שם). ‏authoritative=true
+// (דף סוג-לימוד עם פירורי-לחם): הכתובת נוצרה בשרת ומחייבת: דורס. מחזיר true כשנכתב משהו חדש.
 export function learnBranchId(branch, id, opts) {
   const b = normalizeBranch(branch);
   const i = String(id == null ? '' : id).trim();
@@ -147,14 +148,29 @@ export function learnBranchId(branch, id, opts) {
       log(`[ניווט] InstituteID ${i} כבר ממופה לסניף ${owner}; לא לומדים ${b}→${i} מדף המוסד (אולי רינדור-במקום)`);
       return false;
     }
-    if (cur[b] && cur[b] !== i && b in NAV_BRANCH_IDS_SEED === false) {
-      // מיפוי קיים לסניף הזה עם id אחר — נלמד מדף מוסד; לא דורסים מדף מוסד, רק מדף סוג-לימוד
+    if (cur[b] && cur[b] !== i) {
+      log(`[ניווט] סניף ${b} כבר ממופה למוסד ${cur[b]}; לא דורסים מדף המוסד (רק מפירורי-לחם של דף סוג-לימוד)`);
       return false;
     }
   }
   const learned = readJson(BRANCH_IDS_KEY);
   learned[b] = i;
   if (writeJson(BRANCH_IDS_KEY, learned)) { log(`[ניווט] נלמד: סניף ${b} → מוסד ${i}`); return true; }
+  return false;
+}
+
+// ממצא 2: דף מוסד שה-h1 שלו סותר את המפה (ה-id בכתובת ממופה לסניף אחר): מוחקים את הרשומה
+// הנלמדת הסותרת, כדי שמיפוי מורעל לא יהיה דביק. רשומת seed אינה נמחקת (אין מה למחוק).
+function forgetContradictingBranch(instituteId, h1Branch) {
+  const mapped = branchForInstituteId(loadBranchIds(), instituteId);
+  if (!mapped || mapped === h1Branch) return false;
+  const learned = readJson(BRANCH_IDS_KEY);
+  if (!(mapped in learned)) return false;
+  delete learned[mapped];
+  if (writeJson(BRANCH_IDS_KEY, learned)) {
+    log(`[ניווט] המפה אמרה מוסד ${instituteId} = סניף ${mapped}, אך הדף מציג סניף ${h1Branch}; הרשומה ${mapped}→${instituteId} נמחקה`);
+    return true;
+  }
   return false;
 }
 
@@ -202,6 +218,26 @@ function updateNavState(patch) {
   saveNavState(Object.assign({}, loadNavState(), patch));
 }
 
+// ממצא 7: כוונת-ניווט היא רמז קצר-מועד. נמחקת בסיום/עצירה/התחלה/ניקוי-תור, ופגה אחרי 2 דקות.
+export const NAV_INTENT_MAX_AGE_MS = 2 * 60 * 1000;
+
+export function clearNavIntent() {
+  if (loadNavState().intent) updateNavState({ intent: null });
+}
+
+// ממצא 2: "שכח מיפויים": מוחק את שתי המפות הנלמדות (ה-seed בקוד נשאר).
+export function forgetNavMaps() {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.removeItem(BRANCH_IDS_KEY);
+    localStorage.removeItem(STUDY_TYPE_IDS_KEY);
+    log('[ניווט] המיפויים הנלמדים (סניף→מוסד, סוג-לימוד→כתובת) נמחקו לבקשת המשתמש');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 // ─── זיהוי דף ───────────────────────────────────────────────────────────────
 
 export function classifyUrl(url) {
@@ -221,20 +257,39 @@ function h1Text() {
   }
 }
 
+// ממצא 1א: באתר יש SiteMapPath רגיל ("בית > ...", בלי סניף) ועוד אלמנט שמכיל את הסניף. האלמנט
+// הראשון שתואם אינו בהכרח הנכון, ולכן אוספים את *כל* האלמנטים התואמים + 3000 התווים הראשונים
+// של ה-body, ומחברים. הפרסור (parseBranchFromBreadcrumb) דורש "NN > (קוד)" ולכן לא יתבלבל מהעודף.
 function breadcrumbText() {
   try {
     if (typeof document === 'undefined') return '';
-    const el = document.querySelector('[id*="BreadCrumb" i], [id*="SiteMapPath" i], .breadcrumbs, .breadcrumb, [class*="breadcrumb" i]');
-    if (el) return el.innerText || el.textContent || '';
-    // גיבוי: תחילת הדף (פירורי-הלחם למעלה)
+    const parts = [];
+    const els = document.querySelectorAll('[id*="BreadCrumb" i], [id*="SiteMapPath" i], .breadcrumbs, .breadcrumb, [class*="breadcrumb" i]');
+    for (const el of Array.from(els || [])) {
+      const t = (el && (el.innerText || el.textContent)) || '';
+      if (t) parts.push(t);
+    }
     const body = document.body ? (document.body.innerText || '') : '';
-    return body.slice(0, 3000);
+    if (body) parts.push(body.slice(0, 3000));
+    return parts.join('\n');
   } catch (e) {
     return '';
   }
 }
 
-// מחזיר תמיד אובייקט. ‏branchSource בדף סוג-לימוד: 'breadcrumb' | 'map' | 'intent' | null.
+// ממצא 7: כוונה תקפה רק עם חותמת-זמן טרייה (עד 2 דקות). כוונה בלי חותמת (פורמט ישן) אינה ראיה.
+function freshIntent(nav, now) {
+  const intent = nav && nav.intent;
+  if (!intent || typeof intent !== 'object') return null;
+  const at = typeof intent.at === 'number' ? intent.at : NaN;
+  if (Number.isNaN(at) || now - at > NAV_INTENT_MAX_AGE_MS || now < at) return null;
+  return intent;
+}
+
+// מחזיר תמיד אובייקט. ‏branchSource בדף סוג-לימוד, לפי סדר האמון:
+//   'breadcrumb' (הדף עצמו, מחייב) → 'institute' (דף המוסד האחרון בלשונית הזו, שה-h1 שלו נקרא,
+//   ושה-InstituteID שבכתובתו זהה לזה שבכתובת כאן) → 'map' (המפה הנלמדת, לא מאומת) → 'intent'
+//   (רמז בלבד; לא לומדים ממנו, ממצא 1ג) → null. הזרימה סומכת רק על breadcrumb/institute (ממצא 1ב).
 export function getPage() {
   const url = (typeof location !== 'undefined' && location.href) || '';
   const kind = classifyUrl(url);
@@ -242,7 +297,10 @@ export function getPage() {
   if (kind === 'institute') {
     const branch = parseBranchFromH1(h1Text());
     const instituteId = parseInstituteId(url);
-    if (branch && instituteId) learnBranchId(branch, instituteId, { authoritative: false });
+    if (branch && instituteId) {
+      forgetContradictingBranch(instituteId, branch); // ממצא 2
+      learnBranchId(branch, instituteId, { authoritative: false });
+    }
     if (branch) updateNavState({ lastInstituteUrl: url, lastInstituteBranch: branch });
     return { kind, branch, branchSource: branch ? 'h1' : null, instituteId, studyType: null, url };
   }
@@ -251,23 +309,28 @@ export function getPage() {
     const studyType = parseStudyTypeFromH1(h1Text());
     const instituteId = parseInstituteId(url);
     const instituteStudyTypeId = parseInstituteStudyTypeId(url);
+    const nav = loadNavState();
     let branch = parseBranchFromBreadcrumb(breadcrumbText(), studyType);
     let branchSource = branch ? 'breadcrumb' : null;
+    if (!branch && instituteId && nav.lastInstituteBranch && parseInstituteId(nav.lastInstituteUrl || '') === instituteId) {
+      branch = normalizeBranch(nav.lastInstituteBranch);
+      if (branch) branchSource = 'institute';
+    }
     if (!branch && instituteId) {
       branch = branchForInstituteId(loadBranchIds(), instituteId);
       if (branch) branchSource = 'map';
     }
     if (!branch) {
       // כוונת-ניווט: הגענו הנה מדף מוסד של סניף X בבקשה לסוג-לימוד Y, וה-h1 מאשר Y.
-      const nav = loadNavState();
-      const intent = nav.intent;
+      const intent = freshIntent(nav, Date.now());
       if (intent && intent.studyType && studyType && String(intent.studyType) === String(studyType) && normalizeBranch(intent.branch)) {
         branch = normalizeBranch(intent.branch);
         branchSource = 'intent';
       }
     }
-    if (branch && instituteId) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
-    if (branch && studyType && instituteStudyTypeId) learnStudyTypeId(branch, studyType, instituteStudyTypeId);
+    const trusted = branchSource === 'breadcrumb' || branchSource === 'institute' || branchSource === 'map';
+    if (branch && instituteId && trusted) learnBranchId(branch, instituteId, { authoritative: branchSource === 'breadcrumb' });
+    if (branch && studyType && instituteStudyTypeId && trusted) learnStudyTypeId(branch, studyType, instituteStudyTypeId);
     if (branch) updateNavState({ intent: null, lastStudyTypeUrl: url, lastStudyTypeBranch: branch, lastStudyTypeCode: studyType });
     return { kind, branch, branchSource, instituteId, instituteStudyTypeId, studyType, url };
   }
@@ -531,7 +594,14 @@ export async function gotoInstitute(branch) {
     const parsed = parsePostbackHref(hrefs[idx]);
     if (!parsed) return { ok: false, reason: 'קישור הסניף בעץ אינו בפורמט הצפוי' };
     const res = await firePostback(parsed.target, parsed.arg, { startTimeoutMs: 1500, totalTimeoutMs: 8000 });
-    return Object.assign({ method: 'tree', branch: b }, res, { ok: res.ok !== false });
+    const out = Object.assign({ method: 'tree', branch: b }, res, { ok: res.ok !== false });
+    // ממצא 3: ברטוב נצפה שקליק-עץ הוא postback א-סינכרוני שמרנדר את הסניף *במקום* (אותה כתובת).
+    // אם הדף כבר מציג את הסניף המבוקש, אין טעינת דף בדרך: הקורא ממשיך מיד (גריד), בלי כלב-שומר.
+    if (out.ok) {
+      const now = getPage();
+      if (now.kind === 'institute' && now.branch === b) out.inPlace = true;
+    }
+    return out;
   }
 
   const nav = loadNavState();
@@ -546,7 +616,7 @@ export async function gotoStudyType(branch, code) {
   const b = normalizeBranch(branch);
   const c = String(code == null ? '' : code).trim();
   if (!b || !/^\d+$/.test(c)) return { ok: false, reason: `סניף/סוג לימוד לא תקינים: ${branch}/${code}` };
-  updateNavState({ intent: { branch: b, studyType: c } });
+  updateNavState({ intent: { branch: b, studyType: c, at: Date.now() } });
 
   const direct = studyTypePageUrl(loadStudyTypeIds()[studyTypeKey(b, c)], loadBranchIds()[b]);
   if (direct) return navGoToUrl(direct, { branch: b, studyType: c });
@@ -557,5 +627,10 @@ export async function gotoStudyType(branch, code) {
     return Object.assign({ branch: b, studyType: c }, res);
   }
   const res = await gotoInstitute(b);
+  if (res && res.ok && res.inPlace) {
+    // ממצא 3: העץ רינדר את הסניף במקום: ממשיכים מיד לגריד (זו הטעינה המלאה האמיתית)
+    const grid = await gotoStudyTypeFromInstitute(c);
+    return Object.assign({ branch: b, studyType: c, treeInPlace: true }, grid);
+  }
   return Object.assign({ studyType: c }, res);
 }

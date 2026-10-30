@@ -5,7 +5,7 @@ import {
   analyzeGrid, isAbsorbSuccess, absorbStatusKey,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
-  absorbShouldRecord, absorbPrecheckDecision,
+  absorbShouldRecord, absorbPrecheckDecision, absorbBranchSourceTrusted,
 } from '../src/tools/absorb-report.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -51,10 +51,34 @@ test('analyzeGrid: אין התאמה (2 שורות, אף אחת לא תואמת)
   assert.deepEqual(analyzeGrid(GRID_TWO, '206136871'), { found: false, matchType: null });
 });
 
-test('analyzeGrid: fallback לשורה יחידה (count==1) — כמו v3.2', () => {
-  const rows = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
-  // M-d: הכותרת מבטיחה count==1, ולכן הספירה מועברת בפועל (קודם לא הועברה כלל).
+// ממצא 10: "התאמה לפי שורה יחידה" מותרת רק כשהתא מכיל את ספרות המזהה (אחרי נרמול), למשל
+// תא עם תוספת ("ID 337386692"). שורה יחידה עם מזהה *אחר* אינה הצלחה: {found:false, singleOther}.
+test('analyzeGrid (ממצא 10): fallback לשורה יחידה רק כשהתא מכיל את ספרות המזהה', () => {
+  const rows = [['', '1', 'תעודת זהות', 'ID 337386692', 'משה', 'כהן']];
   assert.deepEqual(analyzeGrid(rows, '337386692', 1), { found: true, matchType: 'single-row-fallback' });
+  assert.deepEqual(analyzeGrid(rows, '337386692'), { found: true, matchType: 'single-row-fallback' });
+});
+
+test('analyzeGrid (ממצא 10): שורה יחידה עם מזהה אחר → לא נמצא, עם המזהה שבתא ב-singleOther', () => {
+  const rows = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(rows, '337386692', 1), { found: false, matchType: null, singleOther: '000000123' });
+  assert.deepEqual(analyzeGrid(rows, '337386692', null), { found: false, matchType: null, singleOther: '000000123' });
+  assert.deepEqual(analyzeGrid(rows, '337386692'), { found: false, matchType: null, singleOther: '000000123' });
+  // עם count=2+ אין fallback וגם אין singleOther (הגריד לא תואם את התווית)
+  assert.deepEqual(analyzeGrid(rows, '337386692', 2), { found: false, matchType: null });
+});
+
+test('ABSORB_STATUS.VERIFY (ממצא 10): "לאמת ידנית" קיים ואינו הצלחה', () => {
+  assert.equal(ABSORB_STATUS.VERIFY, 'לאמת ידנית');
+  assert.equal(isAbsorbSuccess(ABSORB_STATUS.VERIFY), false);
+});
+
+test('absorbBranchSourceTrusted (ממצא 1ב): רק breadcrumb/institute מספיקים לקליטה במקום', () => {
+  assert.equal(absorbBranchSourceTrusted('breadcrumb'), true);
+  assert.equal(absorbBranchSourceTrusted('institute'), true);
+  assert.equal(absorbBranchSourceTrusted('map'), false);
+  assert.equal(absorbBranchSourceTrusted('intent'), false);
+  assert.equal(absorbBranchSourceTrusted(null), false);
 });
 
 test('analyzeGrid: גריד ריק = לא נמצא', () => {
@@ -75,7 +99,7 @@ test('analyzeGrid: דרכון לא מרופד ולא רגיש לרישיות', (
 test('analyzeGrid: שורת-כותרת לא נספרת כשורת-נתונים', () => {
   const rows = [
     ['', 'סדר קליטה', 'סוג מזהה', 'ת.ז. / דרכון', 'שם', 'שם משפחה'],
-    ['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן'],
+    ['', '1', 'תעודת זהות', 'ID 337386692', 'משה', 'כהן'],
   ];
   assert.deepEqual(analyzeGrid(rows, '337386692'), { found: true, matchType: 'single-row-fallback' });
 });
@@ -313,19 +337,21 @@ test('analyzeGrid: count=0 חוסם גם התאמה מדויקת בשורה יח
   assert.deepEqual(analyzeGrid(single, '6136871', 0), { found: false, matchType: null });
 });
 
-test('analyzeGrid: count=1 → fallback לשורה יחידה מותר', () => {
-  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
-  assert.deepEqual(analyzeGrid(single, '337386692', 1), { found: true, matchType: 'single-row-fallback' });
+test('analyzeGrid: count=1 → fallback לשורה יחידה מותר (כשהתא מכיל את המזהה)', () => {
+  const single = [['', '1', 'תעודת זהות', '337386692 ', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(single, '337386692', 1), { found: true, matchType: 'exact' });
+  const prefixed = [['', '1', 'תעודת זהות', 'ID 337386692', 'משה', 'כהן']];
+  assert.deepEqual(analyzeGrid(prefixed, '337386692', 1), { found: true, matchType: 'single-row-fallback' });
 });
 
 test('analyzeGrid: count=2+ → רק התאמה מדויקת, בלי fallback', () => {
-  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+  const single = [['', '1', 'תעודת זהות', 'ID 337386692', 'משה', 'כהן']];
   assert.deepEqual(analyzeGrid(single, '337386692', 2), { found: false, matchType: null });
   assert.deepEqual(analyzeGrid(GRID_TWO, '006136871', 2), { found: true, matchType: 'exact' });
 });
 
-test('analyzeGrid: count=null/undefined → התנהגות תואמת-אחורה (fallback מותר)', () => {
-  const single = [['', '1', 'תעודת זהות', '000000123', 'משה', 'כהן']];
+test('analyzeGrid: count=null/undefined → התנהגות תואמת-אחורה (fallback מותר כשהתא מכיל את המזהה)', () => {
+  const single = [['', '1', 'תעודת זהות', 'ID 337386692', 'משה', 'כהן']];
   assert.deepEqual(analyzeGrid(single, '337386692', null), { found: true, matchType: 'single-row-fallback' });
   assert.deepEqual(analyzeGrid(single, '337386692', undefined), { found: true, matchType: 'single-row-fallback' });
   assert.deepEqual(analyzeGrid(single, '337386692'), { found: true, matchType: 'single-row-fallback' });
