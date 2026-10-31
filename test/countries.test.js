@@ -44,3 +44,15 @@ test('קידומת חד-משמעית באורך 3+ נפתרת', () => {
 test('קידומת דו-משמעית → null', () => {
   assert.equal(resolveCountry('אוסטר'), null); // אוסטריה / אוסטרליה
 });
+
+test('resolveCountry (1.11.2026): כינויים ושמות באנגלית כמו בסקריפט הישן; הקפדנות על קידומות נשמרת', () => {
+  assert.equal(resolveCountry('ארה"ב'), '710');
+  assert.equal(resolveCountry('אמריקה'), '710');
+  assert.equal(resolveCountry('USA'), '710');
+  assert.equal(resolveCountry('united states'), '710');
+  assert.equal(resolveCountry('England'), '590');
+  assert.equal(resolveCountry('שווייץ'), '520');
+  assert.equal(resolveCountry('Holland'), '610');
+  assert.equal(resolveCountry('ארצות הברית'), '710', 'השם הרשמי עדיין קודם');
+  assert.equal(resolveCountry('א'), null, 'קידומת קצרה עדיין נדחית');
+});

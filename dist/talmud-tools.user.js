@@ -1450,6 +1450,20 @@ function detectIdType(raw) {
 const WRAP_QUOTES = /^[\u0022\u0027\u05F4\u05F3\u201C\u201D\u2018\u2019]+|[\u0022\u0027\u05F4\u05F3\u201C\u201D\u2018\u2019]+$/g;
 
 const byName = new Map(COUNTRIES.map(c => [c.he, c.value]));
+// כינויים ושמות באנגלית, כמו בסקריפט הישן (קליטה v3.2, COUNTRY_MAP): הוחזרו 1.11.2026 אחרי השוואת ישן-חדש.
+// מפתחות באותיות קטנות; הערכים הם קודי האתר (ddlCountryOfOrigine).
+const COUNTRY_ALIASES = {
+  'ארה"ב': '710', 'ארה״ב': '710', 'ארהב': '710', 'אמריקה': '710', 'usa': '710', 'us': '710', 'america': '710', 'united states': '710',
+  'בלגיה': '620', 'belgium': '620',
+  'אנגליה': '590', 'בריטניה': '590', 'uk': '590', 'england': '590', 'united kingdom': '590', 'britain': '590',
+  'france': '640', 'canada': '700', 'australia': '860', 'argentina': '830',
+  'south africa': '270', 'brazil': '810', 'mexico': '720',
+  'שוויץ': '520', 'שווייץ': '520', 'switzerland': '520', 'swiss': '520',
+  'netherlands': '610', 'holland': '610', 'germany': '500', 'italy': '670', 'spain': '660',
+  'austria': '510', 'ukraine': '305', 'russia': '306', 'uzbekistan': '315',
+  'morocco': '200', 'sweden': '560', 'finland': '550', 'denmark': '580',
+  'norway': '570', 'iceland': '581', 'ireland': '600', 'new zealand': '870',
+};
 function resolveCountry(input) {
   if (input == null) return null;
   const s = String(input)
@@ -1460,6 +1474,8 @@ function resolveCountry(input) {
   if (!s) return null;
   if (/^\d+$/.test(s)) return s;
   if (byName.has(s)) return byName.get(s);
+  const alias = COUNTRY_ALIASES[s.toLowerCase()];
+  if (alias) return alias;
   // ‏B3: התאמת-קידומת מותרת רק כשהיא חד-משמעית. הגרסה הקודמת החזירה את ההתאמה
   // ה*ראשונה* וגם התאימה בכיוון ההפוך (s מתחיל בשם ארץ), ולכן "א" → 710 (ארצות
   // הברית) ו"ניגריה הצפונית" → 211 (ניגר) — ערך אמיתי, ארץ שגויה, בלי שום סימן
