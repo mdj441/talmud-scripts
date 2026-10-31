@@ -48,11 +48,18 @@ function detectDelimiter(text) {
   return 'whitespace';
 }
 
+const looksLikeDate = (s) => DATE_PATTERNS.some((p) => p.re.test(String(s || '').trim()));
+
 function splitCells(line, delimiter) {
   let cells;
   if (delimiter === 'tab') cells = line.split('\t');
   else if (delimiter === 'comma') cells = line.split(',');
-  else cells = line.trim().split(/\s+/).filter((c) => c !== '');
+  else {
+    cells = line.trim().split(/\s+/).filter((c) => c !== '');
+    // סבב רטוב 1.11.2026: ברווחים, ארץ של כמה מילים ("ארצות הברית") פיצלה את שורת-הדרכון ל-6 תאים (סדר-התבנית).
+    // כשהתא הרביעי הוא תאריך לידה, כל המילים שאחריו הן הארץ.
+    if (cells.length >= 5 && looksLikeDate(cells[3])) cells = cells.slice(0, 4).concat(cells.slice(4).join(' '));
+  }
   return cells.map((c) => c.trim());
 }
 

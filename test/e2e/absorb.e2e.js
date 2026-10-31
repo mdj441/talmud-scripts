@@ -157,6 +157,21 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
+  test('1.11.2026: ריצה שנגמרה אחרי טעינות-דף (תלמיד חדש בסניף אחר) → הטבלה ריקה; "השאר רק שורות שדורשות טיפול" בונה אותה מהתוצאות', async () => {
+    const { context, page } = await session();
+    try {
+      const run = await runAbsorb(page, `16${T}600${T}078901234`, { startUrl: URLS.institute(491), timeoutMs: 120000 });
+      assert.match(run.results[0].status, /^תלמיד חדש/, run.log);
+      await page.fill(ABSORB_SEL.input, ''); // מדמה טבלה ריקה אחרי טעינת-דף (ובאתר האמיתי זה המצב ממילא)
+      await page.click('#tt-absorb-keep-attention');
+      const kept = await page.$$eval('#tt-absorb-grid tr[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
+      assert.deepEqual(kept, ['078901234'], 'השורה נבנתה מהתוצאות');
+      const branch = await page.$eval('#tt-absorb-grid tr[data-i="0"] input[data-k="branch"]', (e) => e.value);
+      assert.equal(branch, '16');
+      assert.equal(await page.isChecked('#tt-absorb-extra'), true, 'עמודות תלמיד חדש נפתחו');
+    } finally { await context.close(); }
+  });
+
   test('9h אצווה רב-סניפית: 00 → 16 → 05 → 00, כולל תלמיד חדש באמצע', async () => {
     const { context, page } = await session();
     try {

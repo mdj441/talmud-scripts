@@ -187,3 +187,14 @@ test('31.10.2026: דרכון שכולו ספרות: הארץ מכריעה (בל�
   assert.equal(d.tasks.length + d.errors.length, 1);
   if (d.tasks.length) assert.equal(d.tasks[0].idType, 'tz', 'קידומת מפורשת ת.ז. גוברת על הארץ');
 });
+
+test('1.11.2026: ברווחים, ארץ של כמה מילים אחרי תאריך הלידה ("ארצות הברית") נשארת ארץ אחת, לא סדר-התבנית', () => {
+  const r = parseAbsorbInput('01 600 AB1234567 12/11/2004 ארצות הברית');
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  assert.equal(r.tasks[0].idType, 'passport');
+  assert.equal(r.tasks[0].birthDate, '12/11/2004');
+  assert.equal(r.tasks[0].country, 'ארצות הברית');
+  assert.ok(r.tasks[0].countryValue, 'הארץ נפתרה לערך של האתר');
+  const t = parseAbsorbInput('01\t600\tAB1234567\t12/11/2004\tארצות הברית');
+  assert.equal(t.tasks[0].country, 'ארצות הברית', 'טאבים: בלי שינוי');
+});

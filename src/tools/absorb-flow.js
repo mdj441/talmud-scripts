@@ -486,6 +486,7 @@ export async function processStudent(task, gen) {
     const afterConfirm = await absorbAfterConfirmPopup(gen);
     if (afterConfirm.pop) {
       if (afterConfirm.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות). הסקריפט לא מאשר לבד: בצע את הקליטה ידנית והחלט על ההודעה');
+      if (afterConfirm.pop.kind === 'error') return mk(`${ABSORB_STATUS.ERROR}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה ידנית: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור"; אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
       popupDetail = afterConfirm.pop.text;
     }
     if (absorbModalVisible()) {

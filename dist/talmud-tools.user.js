@@ -1520,11 +1520,18 @@ function detectDelimiter(text) {
   return 'whitespace';
 }
 
+const looksLikeDate = (s) => DATE_PATTERNS.some((p) => p.re.test(String(s || '').trim()));
+
 function splitCells(line, delimiter) {
   let cells;
   if (delimiter === 'tab') cells = line.split('\t');
   else if (delimiter === 'comma') cells = line.split(',');
-  else cells = line.trim().split(/\s+/).filter((c) => c !== '');
+  else {
+    cells = line.trim().split(/\s+/).filter((c) => c !== '');
+    // סבב רטוב 1.11.2026: ברווחים, ארץ של כמה מילים ("ארצות הברית") פיצלה את שורת-הדרכון ל-6 תאים (סדר-התבנית).
+    // כשהתא הרביעי הוא תאריך לידה, כל המילים שאחריו הן הארץ.
+    if (cells.length >= 5 && looksLikeDate(cells[3])) cells = cells.slice(0, 4).concat(cells.slice(4).join(' '));
+  }
   return cells.map((c) => c.trim());
 }
 
@@ -2304,6 +2311,10 @@ function classifyPopupText(text, flags) {
   const f = flags && typeof flags === 'object' ? flags : {};
   const negated = /לא\s+הצליח|נכשל/.test(t);
   if (!negated && (/^הצלחה/.test(t) || /קליטת תלמיד הצליחה/.test(t))) return 'success';
+  // סבב רטוב 1.11.2026: "שגיאה תקלה בתהליך קליטת תלמיד" מגיעה עם כפתור "המשך" בלבד. זו הודעת-שגיאה של האתר,
+  // לא בקשת-אישור: "המשך" שם רק סוגר. בלי הסיווג הזה השורה סומנה "נחסם" עם הוראה מטעה ("האתר מבקש אישור").
+  // (עם "אישור" בלבד זו עדיין 'info', כמו קודם: הקורא סוגר וממשיך לפי ההקשר.)
+  if (f.hasContinue && (/^(שגיאה|תקלה)/.test(t) || /תקלה בתהליך/.test(t))) return 'error';
   if (f.hasContinue) return 'confirm';
   if (f.hasOkOnly) return 'info';
   return 'unknown';
@@ -2647,8 +2658,9 @@ async function absorbReadAndHidePopup(where, gen) {
   if (!pop) return { pop: null, blocked: false };
   absorbLogPopup(where, pop);
   await absorbHidePopup(gen);
-  const blocked = !!pop.hasContinue && pop.kind !== 'success';
+  const blocked = !!pop.hasContinue && pop.kind !== 'success' && pop.kind !== 'error';
   if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה — ממשיכים לאימות בגריד');
+  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר — השורה תסומן "שגיאה"');
   await sleepCheckStop(200, gen);
   return { pop, blocked };
 }
@@ -3160,6 +3172,7 @@ async function processStudent(task, gen) {
     const afterConfirm = await absorbAfterConfirmPopup(gen);
     if (afterConfirm.pop) {
       if (afterConfirm.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות). הסקריפט לא מאשר לבד: בצע את הקליטה ידנית והחלט על ההודעה');
+      if (afterConfirm.pop.kind === 'error') return mk(`${ABSORB_STATUS.ERROR}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה ידנית: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור"; אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
       popupDetail = afterConfirm.pop.text;
     }
     if (absorbModalVisible()) {
@@ -3724,7 +3737,12 @@ function renderResults() {
 // זרימת-התיקון (31.10.2026): אחרי ריצה, הטבלה עדיין מציגה את כל השורות. הכפתור משאיר רק את אלה שלא הצליחו
 // (לפי התוצאות), פותח את עמודות תלמיד-חדש כשצריך, ובעל-המערכת משלים/מתקן ולוחץ "התחל קליטה" שוב.
 function keepRowsNeedingAttention() {
-  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(rows, results);
+  // סבב רטוב 1.11.2026: ריצה שנגמרה אחרי טעינת-דף משאירה טבלה ריקה בדף האחרון (השורות לא שורדות טעינה).
+  // אז בונים את השורות מהתוצאות עצמן (סניף, סוג, מזהה); את שאר הפרטים בעל-המערכת ממילא משלים.
+  const source = rows.some((r) => !rowIsBlank(r))
+    ? rows
+    : results.map((r) => ({ fields: { branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' } }));
+  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(source, results);
   rows = kept.map((r) => ({ fields: Object.assign({}, r.fields) }));
   if (needsExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
   renderTable();

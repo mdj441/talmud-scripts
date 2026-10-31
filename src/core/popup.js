@@ -21,6 +21,10 @@ export function classifyPopupText(text, flags) {
   const f = flags && typeof flags === 'object' ? flags : {};
   const negated = /לא\s+הצליח|נכשל/.test(t);
   if (!negated && (/^הצלחה/.test(t) || /קליטת תלמיד הצליחה/.test(t))) return 'success';
+  // סבב רטוב 1.11.2026: "שגיאה תקלה בתהליך קליטת תלמיד" מגיעה עם כפתור "המשך" בלבד. זו הודעת-שגיאה של האתר,
+  // לא בקשת-אישור: "המשך" שם רק סוגר. בלי הסיווג הזה השורה סומנה "נחסם" עם הוראה מטעה ("האתר מבקש אישור").
+  // (עם "אישור" בלבד זו עדיין 'info', כמו קודם: הקורא סוגר וממשיך לפי ההקשר.)
+  if (f.hasContinue && (/^(שגיאה|תקלה)/.test(t) || /תקלה בתהליך/.test(t))) return 'error';
   if (f.hasContinue) return 'confirm';
   if (f.hasOkOnly) return 'info';
   return 'unknown';

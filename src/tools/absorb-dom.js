@@ -251,8 +251,9 @@ export async function absorbReadAndHidePopup(where, gen) {
   if (!pop) return { pop: null, blocked: false };
   absorbLogPopup(where, pop);
   await absorbHidePopup(gen);
-  const blocked = !!pop.hasContinue && pop.kind !== 'success';
+  const blocked = !!pop.hasContinue && pop.kind !== 'success' && pop.kind !== 'error';
   if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה — ממשיכים לאימות בגריד');
+  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר — השורה תסומן "שגיאה"');
   await sleepCheckStop(200, gen);
   return { pop, blocked };
 }

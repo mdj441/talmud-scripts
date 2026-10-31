@@ -212,7 +212,12 @@ function renderResults() {
 // זרימת-התיקון (31.10.2026): אחרי ריצה, הטבלה עדיין מציגה את כל השורות. הכפתור משאיר רק את אלה שלא הצליחו
 // (לפי התוצאות), פותח את עמודות תלמיד-חדש כשצריך, ובעל-המערכת משלים/מתקן ולוחץ "התחל קליטה" שוב.
 function keepRowsNeedingAttention() {
-  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(rows, results);
+  // סבב רטוב 1.11.2026: ריצה שנגמרה אחרי טעינת-דף משאירה טבלה ריקה בדף האחרון (השורות לא שורדות טעינה).
+  // אז בונים את השורות מהתוצאות עצמן (סניף, סוג, מזהה); את שאר הפרטים בעל-המערכת ממילא משלים.
+  const source = rows.some((r) => !rowIsBlank(r))
+    ? rows
+    : results.map((r) => ({ fields: { branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' } }));
+  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(source, results);
   rows = kept.map((r) => ({ fields: Object.assign({}, r.fields) }));
   if (needsExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
   renderTable();

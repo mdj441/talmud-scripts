@@ -407,3 +407,10 @@ test('readMessagePopup: רק "אישור" → info; חלונית לא גלויה
     assert.equal(readMessagePopup(), null);
   });
 });
+
+test('classifyPopupText (1.11.2026): "שגיאה תקלה בתהליך קליטת תלמיד" עם "המשך" בלבד → error, לא confirm; הצלחה ואזהרה כמו קודם', () => {
+  assert.equal(classifyPopupText('שגיאה תקלה בתהליך קליטת תלמיד', { hasContinue: true, hasOkOnly: false }), 'error');
+  assert.equal(classifyPopupText('הצלחה מעבר תלמיד הצליח', { hasContinue: true }), 'success');
+  assert.equal(classifyPopupText('אזהרה תלמיד זה רשום כבר במוסד אחר. האם אתה בטוח?', { hasContinue: true }), 'confirm');
+  assert.equal(classifyPopupText('קליטת תלמיד לא הצליחה', { hasContinue: true }), 'confirm', 'ניסוח שלילי בלי "שגיאה" נשאר כמו קודם');
+});
