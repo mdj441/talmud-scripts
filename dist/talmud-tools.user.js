@@ -1657,12 +1657,25 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
       countryRaw = opt(3);
       genderRaw = opt(4);
       statusRaw = opt(5);
-    } else if (idInfo.type === 'passport') {
+    } else if (idInfo.type === 'passport' || cells.length === 4 || cells.length === 5) {
+      // 4-5 תאים = (תאריך לידה, ארץ): דרכון עם אותיות, או דרכון שכולו ספרות שהארץ מכריעה עליו (למטה)
       birthDateRaw = opt(0);
       countryRaw = opt(1);
-    } else if (cells.length === 4 || cells.length === 5) {
-      return err('מספר עמודות לא צפוי (לת.ז. עם פרטי תלמיד חדש צריך גם שם פרטי, שם משפחה ותאריך לידה)');
     }
+  }
+
+  // דרכון שכולו ספרות (31.10.2026): אי-אפשר להבדיל ממספר ת.ז. לפי הספרות, ולכן הארץ מכריעה. מזהה ספרתי עם
+  // ארץ = דרכון (בלי ריפוד לתשע ספרות). קידומת מפורשת "ת.ז.:" גוברת. בלי ארץ ובלי אותיות: ת.ז.
+  let idType = idInfo.type;
+  let identityNorm = idInfo.identifier;
+  const explicitTz = /^(tz|ת\.?ז\.?)\s*[:=]/i.test(identity);
+  // בלי כותרת הארץ חייבת להיות מוכרת (אחרת "01,300,ת.ז.,ישראל,כהן" היה נקרא כדרכון); עם כותרת, עמודת "ארץ" מלאה מספיקה.
+  const countryDecides = !!countryRaw && !explicitTz && (columnMap ? true : resolveCountry(countryRaw) !== null);
+  if (idType === 'tz' && countryDecides) {
+    idType = 'passport';
+    identityNorm = identity.replace(/^(דרכון|passport)\s*[:=]\s*/i, '').trim().toUpperCase();
+  } else if (idType === 'tz' && !columnMap && (cells.length === 4 || cells.length === 5)) {
+    return err('מספר עמודות לא צפוי (לדרכון שכולו ספרות צריך ארץ בעמודה החמישית; לת.ז. עם פרטי תלמיד חדש צריך שם פרטי, שם משפחה ותאריך לידה)');
   }
 
   const dateResult = normalizeDate(birthDateRaw);
@@ -1700,7 +1713,7 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
 
   const task = {
     line: lineNo, branch: branch.padStart(2, '0'), studyType,
-    idType: idInfo.type, identity: idInfo.identifier,
+    idType, identity: identityNorm,
     birthDate: dateResult.value, country: countryRaw, countryValue,
   };
   if (newStudent) task.newStudent = newStudent;
@@ -3594,7 +3607,8 @@ function cellSelect(i, key, value, options) {
 function rowState(r) {
   const f = r.fields;
   const blank = rowIsBlank(r);
-  const passport = !!f.identifier && detectIdType(f.identifier).type === 'passport';
+  // דרכון: אותיות במזהה, או (31.10.2026) מזהה ספרתי עם ארץ מלאה (דרכון שכולו ספרות; תא הארץ פתוח להקלדה תמיד)
+  const passport = !!f.identifier && (detectIdType(f.identifier).type === 'passport' || (!!String(f.country || '').trim() && !/^(tz|ת\.?ז\.?)\s*[:=]/i.test(f.identifier)));
   const needBirth = passport || !!(f.firstName || f.lastName);
   return { blank, passport, needBirth };
 }

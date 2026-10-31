@@ -95,7 +95,8 @@ function cellSelect(i, key, value, options) {
 function rowState(r) {
   const f = r.fields;
   const blank = rowIsBlank(r);
-  const passport = !!f.identifier && detectIdType(f.identifier).type === 'passport';
+  // דרכון: אותיות במזהה, או (31.10.2026) מזהה ספרתי עם ארץ מלאה (דרכון שכולו ספרות; תא הארץ פתוח להקלדה תמיד)
+  const passport = !!f.identifier && (detectIdType(f.identifier).type === 'passport' || (!!String(f.country || '').trim() && !/^(tz|ת\.?ז\.?)\s*[:=]/i.test(f.identifier)));
   const needBirth = passport || !!(f.firstName || f.lastName);
   return { blank, passport, needBirth };
 }

@@ -169,3 +169,21 @@ test('absorbFieldRowsToText → parseAbsorbInput: סבב מלא מהטבלה ל�
   assert.equal(parsed.errors.length, 1);
   assert.equal(parsed.errors[0].line, 3, 'שורת הכותרת היא 1, השורה השנייה בטבלה היא 3');
 });
+
+test('31.10.2026: דרכון שכולו ספרות: הארץ מכריעה (בלי כותרת, 5 תאים; ועם כותרת), בלי ארץ נשאר ת.ז.', () => {
+  const a = parseAbsorbInput('16 600 123456 15/03/1995 צרפת');
+  assert.equal(a.errors.length, 0, JSON.stringify(a.errors));
+  assert.equal(a.tasks[0].idType, 'passport');
+  assert.equal(a.tasks[0].identity, '123456', 'דרכון לא מרופד לתשע ספרות');
+  assert.equal(a.tasks[0].birthDate, '15/03/1995');
+  const b = parseAbsorbInput('סניף\tסוג לימוד\tת.ז./דרכון\tתאריך לידה\tארץ\n16\t600\t87654321\t12/11/2004\tארצות הברית');
+  assert.equal(b.errors.length, 0, JSON.stringify(b.errors));
+  assert.equal(b.tasks[0].idType, 'passport');
+  assert.equal(b.tasks[0].identity, '87654321');
+  const c = parseAbsorbInput('סניף\tסוג לימוד\tת.ז./דרכון\tתאריך לידה\tארץ\n16\t600\t6136871\t\t');
+  assert.equal(c.tasks[0].idType, 'tz');
+  assert.equal(c.tasks[0].identity, '006136871');
+  const d = parseAbsorbInput('16 600 ת.ז.:123456789 15/03/1995 צרפת');
+  assert.equal(d.tasks.length + d.errors.length, 1);
+  if (d.tasks.length) assert.equal(d.tasks[0].idType, 'tz', 'קידומת מפורשת ת.ז. גוברת על הארץ');
+});
