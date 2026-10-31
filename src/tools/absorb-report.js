@@ -110,6 +110,26 @@ export function summarizeAbsorbResults(results) {
 }
 
 // דוח "מה נשאר": שורה אופרטיבית לכל תוצאה שאינה הצלחה + סיכום.
+// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה — כל שורה
+// שהתוצאה שלה (אותו סניף, סוג-לימוד ומזהה) אינה הצלחה. שורה בלי תוצאה (לא רצה) נשארת. מחזירה
+// {rows, needsExtra}: needsExtra = יש "תלמיד חדש" שדורש שם/משפחה/תאריך לידה (לפתוח את העמודות).
+export function absorbRowsNeedingAttention(rows, results) {
+  const key = (branch, studyType, identity) => `${String(branch || '').trim().padStart(2, '0')}|${String(studyType || '').trim()}|${absorbNormalizeId(identity)}`;
+  const byKey = new Map();
+  for (const r of results || []) byKey.set(key(r.branch, r.studyType, r.identity), r);
+  const kept = [];
+  let needsExtra = false;
+  for (const row of rows || []) {
+    const f = row && row.fields ? row.fields : {};
+    if (!String(f.identifier || '').trim()) continue;
+    const res = byKey.get(key(f.branch, f.studyType, f.identifier));
+    if (res && isAbsorbSuccess(res.status)) continue;
+    if (res && absorbStatusKey(res.status).startsWith('תלמיד חדש')) needsExtra = true;
+    kept.push(row);
+  }
+  return { rows: kept, needsExtra };
+}
+
 export function buildRemainingReport(results) {
   const list = Array.isArray(results) ? results : [];
   const counts = summarizeAbsorbResults(list);

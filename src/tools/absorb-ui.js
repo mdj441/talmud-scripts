@@ -11,7 +11,7 @@ import { detectIdType } from '../core/identity.js';
 import { readBranchesFromTree, gridToRows, gridStudyTypes } from '../core/navigate.js';
 import { parseAbsorbInput, absorbTextToFieldRows, absorbFieldRowsToText, ABSORB_FIELD_ORDER } from './absorb-parse.js';
 import { loadXlsxFile } from './absorb-xlsx.js';
-import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows } from './absorb-report.js';
+import { ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, buildResultsTsv, buildResultsCsvRows, absorbRowsNeedingAttention } from './absorb-report.js';
 import { clearAbsorbStop } from './absorb-state.js';
 import {
   absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults,
@@ -203,6 +203,22 @@ function classify(r) {
 function renderResults() {
   setHtml(`${P}-results`, resultsTableHtml({ columns: RESULT_COLUMNS, rows: results, classify }));
   show(`${P}-results-wrap`, results.length > 0);
+  const attention = results.filter((r) => !isAbsorbSuccess(r.status)).length;
+  setDisabled(`${P}-keep-attention`, attention === 0);
+  setText(`${P}-keep-attention`, attention ? `השאר בטבלה רק ${attention} שורות שדורשות טיפול` : 'השאר בטבלה רק שורות שדורשות טיפול');
+}
+
+// זרימת-התיקון (31.10.2026): אחרי ריצה, הטבלה עדיין מציגה את כל השורות. הכפתור משאיר רק את אלה שלא הצליחו
+// (לפי התוצאות), פותח את עמודות תלמיד-חדש כשצריך, ובעל-המערכת משלים/מתקן ולוחץ "התחל קליטה" שוב.
+function keepRowsNeedingAttention() {
+  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(rows, results);
+  rows = kept.map((r) => ({ fields: Object.assign({}, r.fields) }));
+  if (needsExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
+  renderTable();
+  ui.status(rows.filter((r) => !rowIsBlank(r)).length
+    ? `${rows.filter((r) => !rowIsBlank(r)).length} שורות בטבלה. השלם או תקן לפי עמודת "מה לעשות" בתוצאות, ולחץ "התחל קליטה"`
+    : 'אין שורות שדורשות טיפול');
+  log(`[קלט] נשארו בטבלה ${rows.filter((r) => !rowIsBlank(r)).length} שורות שדורשות טיפול`);
 }
 
 function renderErrors(errors, validCount) {
@@ -371,7 +387,7 @@ function mount(container, panelUi, page) {
     ])}
     <div id="${P}-results-wrap" hidden>
       <div class="tt-row" style="justify-content:space-between"><b>תוצאות</b>
-        <span>${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
+        <span>${buttonHtml({ id: `${P}-keep-attention`, label: 'השאר בטבלה רק שורות שדורשות טיפול', kind: 'ghost', size: 'small', disabled: true, title: 'מסיר מהטבלה את השורות שהצליחו; משלימים פרטים ומריצים שוב' })} ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
       <div id="${P}-results" class="tt-scroll"></div>
     </div>
     <div id="${P}-report" class="tt-box tt-box-warn" hidden></div>`;
@@ -395,6 +411,7 @@ function mount(container, panelUi, page) {
   $el(`${P}-stop`).addEventListener('click', stop, true);
   $el(`${P}-tsv`).addEventListener('click', copyTsv);
   $el(`${P}-csv`).addEventListener('click', exportCsv);
+  $el(`${P}-keep-attention`).addEventListener('click', keepRowsNeedingAttention);
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());

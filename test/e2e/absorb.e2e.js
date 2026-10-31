@@ -138,6 +138,12 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       const db = await readMockDb(page);
       assert.ok(!db.enrolled['10002'].some((s) => s.id === '078901234'), 'תלמיד חדש נשמר בלי פרטים!');
       assert.equal(db.pendingNewStudent, null, 'דף תלמיד-חדש נשאר "פתוח" בשרת');
+      // זרימת-התיקון (31.10.2026): "השאר בטבלה רק שורות שדורשות טיפול" → נשארת שורת התלמיד החדש, עמודות השם נפתחות
+      await page.click('#tt-absorb-keep-attention');
+      const kept = await page.$$eval('#tt-absorb-grid tr[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
+      assert.deepEqual(kept, ['078901234'], 'בטבלה צריכה להישאר רק שורת התלמיד החדש');
+      assert.equal(await page.isChecked('#tt-absorb-extra'), true, 'עמודות תלמיד חדש נפתחו');
+      assert.ok(await page.$('#tt-absorb-grid input[data-k="firstName"]'), 'עמודת שם פרטי מוצגת');
     } finally { await context.close(); }
   });
 

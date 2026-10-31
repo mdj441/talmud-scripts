@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ABSORB_STATUS, ABSORB_TSV_HEADER, ABSORB_CSV_HEADER, ABSORB_TEMPLATE_HEADER,
-  analyzeGrid, isAbsorbSuccess, absorbStatusKey,
+  analyzeGrid, isAbsorbSuccess, absorbStatusKey, absorbRowsNeedingAttention,
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
   absorbShouldRecord, absorbPrecheckDecision, absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation,
@@ -435,4 +435,27 @@ test('absorbNavTimeoutIsNavigation (ממצא ב-2): רק timeout עם unloadSeen
   assert.equal(absorbNavTimeoutIsNavigation({ ok: false, reason: 'PRM: server error' }, true), false);
   assert.equal(absorbNavTimeoutIsNavigation({ ok: true }, true), false);
   assert.equal(absorbNavTimeoutIsNavigation(null, true), false);
+});
+
+test('absorbRowsNeedingAttention (31.10.2026): משאיר רק שורות שתוצאתן אינה הצלחה; תלמיד-חדש פותח עמודות; שורה בלי תוצאה נשארת', () => {
+  const rows = [
+    { fields: { branch: '16', studyType: '600', identifier: '123456789' } },      // נקלט → יוצא
+    { fields: { branch: '16', studyType: '600', identifier: '6136871' } },        // כבר קיים (ת.ז. בלי ריפוד) → יוצא
+    { fields: { branch: '2', studyType: '600', identifier: '234567890' } },       // נחסם (סניף בלי אפס) → נשאר
+    { fields: { branch: '02', studyType: '600', identifier: '345678901' } },      // תלמיד חדש → נשאר + needsExtra
+    { fields: { branch: '02', studyType: '720', identifier: '456789012' } },      // בלי תוצאה (לא רץ) → נשאר
+    { fields: { branch: '', studyType: '', identifier: '' } },                    // ריקה → יוצאת
+  ];
+  const results = [
+    { branch: '16', studyType: '600', identity: '123456789', status: ABSORB_STATUS.OK },
+    { branch: '16', studyType: '600', identity: '006136871', status: ABSORB_STATUS.EXISTS },
+    { branch: '02', studyType: '600', identity: '234567890', status: `${ABSORB_STATUS.BLOCKED}: אזהרה` },
+    { branch: '02', studyType: '600', identity: '345678901', status: ABSORB_STATUS.NEW_STUDENT_MISSING },
+  ];
+  const r = absorbRowsNeedingAttention(rows, results);
+  assert.deepEqual(r.rows.map((x) => x.fields.identifier), ['234567890', '345678901', '456789012']);
+  assert.equal(r.needsExtra, true);
+  const r2 = absorbRowsNeedingAttention(rows.slice(0, 3), results);
+  assert.equal(r2.needsExtra, false);
+  assert.deepEqual(absorbRowsNeedingAttention([], []).rows, []);
 });

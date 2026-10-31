@@ -1917,6 +1917,26 @@ function summarizeAbsorbResults(results) {
 }
 
 // דוח "מה נשאר": שורה אופרטיבית לכל תוצאה שאינה הצלחה + סיכום.
+// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה — כל שורה
+// שהתוצאה שלה (אותו סניף, סוג-לימוד ומזהה) אינה הצלחה. שורה בלי תוצאה (לא רצה) נשארת. מחזירה
+// {rows, needsExtra}: needsExtra = יש "תלמיד חדש" שדורש שם/משפחה/תאריך לידה (לפתוח את העמודות).
+function absorbRowsNeedingAttention(rows, results) {
+  const key = (branch, studyType, identity) => `${String(branch || '').trim().padStart(2, '0')}|${String(studyType || '').trim()}|${absorbNormalizeId(identity)}`;
+  const byKey = new Map();
+  for (const r of results || []) byKey.set(key(r.branch, r.studyType, r.identity), r);
+  const kept = [];
+  let needsExtra = false;
+  for (const row of rows || []) {
+    const f = row && row.fields ? row.fields : {};
+    if (!String(f.identifier || '').trim()) continue;
+    const res = byKey.get(key(f.branch, f.studyType, f.identifier));
+    if (res && isAbsorbSuccess(res.status)) continue;
+    if (res && absorbStatusKey(res.status).startsWith('תלמיד חדש')) needsExtra = true;
+    kept.push(row);
+  }
+  return { rows: kept, needsExtra };
+}
+
 function buildRemainingReport(results) {
   const list = Array.isArray(results) ? results : [];
   const counts = summarizeAbsorbResults(list);
@@ -3682,6 +3702,22 @@ function classify(r) {
 function renderResults() {
   setHtml(`${P}-results`, resultsTableHtml({ columns: RESULT_COLUMNS, rows: results, classify }));
   show(`${P}-results-wrap`, results.length > 0);
+  const attention = results.filter((r) => !isAbsorbSuccess(r.status)).length;
+  setDisabled(`${P}-keep-attention`, attention === 0);
+  setText(`${P}-keep-attention`, attention ? `השאר בטבלה רק ${attention} שורות שדורשות טיפול` : 'השאר בטבלה רק שורות שדורשות טיפול');
+}
+
+// זרימת-התיקון (31.10.2026): אחרי ריצה, הטבלה עדיין מציגה את כל השורות. הכפתור משאיר רק את אלה שלא הצליחו
+// (לפי התוצאות), פותח את עמודות תלמיד-חדש כשצריך, ובעל-המערכת משלים/מתקן ולוחץ "התחל קליטה" שוב.
+function keepRowsNeedingAttention() {
+  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(rows, results);
+  rows = kept.map((r) => ({ fields: Object.assign({}, r.fields) }));
+  if (needsExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
+  renderTable();
+  ui.status(rows.filter((r) => !rowIsBlank(r)).length
+    ? `${rows.filter((r) => !rowIsBlank(r)).length} שורות בטבלה. השלם או תקן לפי עמודת "מה לעשות" בתוצאות, ולחץ "התחל קליטה"`
+    : 'אין שורות שדורשות טיפול');
+  log(`[קלט] נשארו בטבלה ${rows.filter((r) => !rowIsBlank(r)).length} שורות שדורשות טיפול`);
 }
 
 function renderErrors(errors, validCount) {
@@ -3850,7 +3886,7 @@ function mount(container, panelUi, page) {
     ])}
     <div id="${P}-results-wrap" hidden>
       <div class="tt-row" style="justify-content:space-between"><b>תוצאות</b>
-        <span>${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
+        <span>${buttonHtml({ id: `${P}-keep-attention`, label: 'השאר בטבלה רק שורות שדורשות טיפול', kind: 'ghost', size: 'small', disabled: true, title: 'מסיר מהטבלה את השורות שהצליחו; משלימים פרטים ומריצים שוב' })} ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
       <div id="${P}-results" class="tt-scroll"></div>
     </div>
     <div id="${P}-report" class="tt-box tt-box-warn" hidden></div>`;
@@ -3874,6 +3910,7 @@ function mount(container, panelUi, page) {
   $el(`${P}-stop`).addEventListener('click', stop, true);
   $el(`${P}-tsv`).addEventListener('click', copyTsv);
   $el(`${P}-csv`).addEventListener('click', exportCsv);
+  $el(`${P}-keep-attention`).addEventListener('click', keepRowsNeedingAttention);
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
