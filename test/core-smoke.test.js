@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { $el, isVisible, sleep, waitFor } from '../src/core/dom.js';
 import { getPRM, waitPRM, firePostback } from '../src/core/prm.js';
-import { readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal, classifyPopupText } from '../src/core/popup.js';
+import { readMessagePopup, hideMessagePopup, hideMessagePopupAsync, closeModal, classifyPopupText, pressMessagePopupContinueAsync } from '../src/core/popup.js';
 
 // ─── Smoke: import in Node succeeds, no top-level document/window/Sys access ────
 test('smoke: כל היצוא הוא פונקציות (import ב-Node לא זרק)', () => {
@@ -151,6 +151,44 @@ test('hideMessagePopupAsync: נפילה ל-btnMCancel רושמת waitPRM לפנ�
     const settled = await res.wait;
     assert.equal(settled.ok, true);
     assert.equal(settled.started, true);
+  } finally {
+    if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
+    if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+    if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+  }
+});
+
+test('pressMessagePopupContinueAsync (31.10.2026): לוחץ "המשך" רק כשהוא גלוי, waitPRM נרשם לפני, הלחיצה נדחית ל-setTimeout(0)', async () => {
+  const handlers = { begin: [], end: [] };
+  const fakePrm = {
+    add_beginRequest: (h) => handlers.begin.push(h),
+    add_endRequest: (h) => handlers.end.push(h),
+    remove_beginRequest: (h) => { handlers.begin = handlers.begin.filter(x => x !== h); },
+    remove_endRequest: (h) => { handlers.end = handlers.end.filter(x => x !== h); },
+  };
+  let clicked = 0;
+  let endRequestRegisteredBeforeClick = false;
+  let visible = false;
+  const btn = { getClientRects: () => (visible ? [{}] : []), click: () => { clicked++; endRequestRegisteredBeforeClick = handlers.end.length > 0; } };
+  const prevSys = globalThis.Sys;
+  const prevDoc = globalThis.document;
+  const prevWindow = globalThis.window;
+  globalThis.Sys = { WebForms: { PageRequestManager: { getInstance: () => fakePrm } } };
+  globalThis.document = { getElementById: (id) => (id === 'ucMessagePopUp_btnMOK' ? btn : null) };
+  globalThis.window = { getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' }) };
+  try {
+    assert.deepEqual(pressMessagePopupContinueAsync(), { pressed: false, wait: null }, 'כפתור "המשך" מוסתר → לא לוחצים');
+    visible = true;
+    const res = pressMessagePopupContinueAsync();
+    assert.equal(res.pressed, true);
+    assert.equal(clicked, 0, 'הלחיצה לא סינכרונית');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(clicked, 1);
+    assert.equal(endRequestRegisteredBeforeClick, true, 'endRequest נרשם לפני הלחיצה');
+    handlers.begin[0]({}, {});
+    handlers.end[0]({}, { get_error: () => null, set_errorHandled: () => {} });
+    const settled = await res.wait;
+    assert.equal(settled.ok, true);
   } finally {
     if (prevSys === undefined) delete globalThis.Sys; else globalThis.Sys = prevSys;
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;

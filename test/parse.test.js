@@ -66,6 +66,15 @@ test('כותרת חסרה עמודת חובה (מזהה) → כל שורות ה�
   assert.match(r.errors[0].reason, /מזהה/);
 });
 
+test('סבב רטוב 31.10.2026: תו זר לפני הסניף בשורה הראשונה אינו "כותרת" → שגיאה מפורשת לשורה, שאר השורות נקראות', () => {
+  const r = parseAbsorbInput('a02 600 123456789\n02 600 234567890');
+  assert.equal(r.tasks.length, 1, 'השורה השנייה חייבת להיקרא');
+  assert.equal(r.tasks[0].branch, '02');
+  assert.equal(r.errors.length, 1);
+  assert.equal(r.errors[0].line, 1);
+  assert.match(r.errors[0].reason, /סניף לא מספרי/);
+});
+
 test('תאריך ISO מנורמל לפורמט DD/MM/YYYY', () => {
   const { tasks: [t] } = parseAbsorbInput('12,600,AB1234567,1995-03-05,');
   assert.equal(t.birthDate, '05/03/1995');

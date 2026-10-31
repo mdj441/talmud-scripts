@@ -31,6 +31,9 @@ export const S = {
   // ממצא ב-9: {idx, identity} של "אישור" במודאל שנלחץ. אם "אישור" הוא טעינה מלאה של אותו דף, ההמשך
   // מוצא את התלמיד ברשימה ומדווח "נקלט" (לא "כבר קיים"). נשמר עם המצב; נמחק ברישום התוצאה.
   pendingConfirm: null,
+  // סבב רטוב 31.10.2026: בעל-המערכת סימן בפאנל "אשר המשך" — על אזהרת "תלמיד זה רשום כבר במוסד אחר"
+  // לוחצים "המשך" (מעבר בין מוסדות). נקבע בהתחלת הריצה ונשמר עם המצב (הריצה שורדת טעינות-דף).
+  continueOtherInstitute: false,
   generation: 0,
 };
 
@@ -85,6 +88,7 @@ export function saveAbsorbState(extra) {
     startedAt: S.startedAt || new Date().toISOString(),
     pendingSave: S.pendingSave || null,
     pendingConfirm: S.pendingConfirm || null,
+    continueOtherInstitute: !!S.continueOtherInstitute,
   };
   if (extra) Object.assign(state, extra);
   try { sessionStorage.setItem(QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[מצב] שמירה נכשלה: ' + (e && e.message)); }
@@ -149,4 +153,5 @@ export function absorbResetRun() {
   S.justSaved = null;
   S.pendingSave = null;
   S.pendingConfirm = null;
+  S.continueOtherInstitute = false;
 }

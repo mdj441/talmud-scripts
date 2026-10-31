@@ -87,6 +87,17 @@ export function hideMessagePopupAsync() {
   return { hidden: false, wait: null };
 }
 
+// לוחץ "המשך" (btnMOK). לא נקרא לעולם מעצמו: רק מזרימה שבעל-המערכת סימן בה במפורש שהוא מאשר
+// (למשל "אשר המשך" בלשונית הקליטה, סבב רטוב 31.10.2026: אזהרת "תלמיד זה רשום כבר במוסד אחר").
+// postback צד-שרת: waitPRM נרשם *לפני*, והלחיצה נדחית ל-setTimeout(0). מחזיר {pressed, wait}.
+export function pressMessagePopupContinueAsync() {
+  const btn = $el('ucMessagePopUp_btnMOK');
+  if (!isVisible(btn)) return { pressed: false, wait: null };
+  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 }); // (1) נרשם קודם
+  setTimeout(() => { try { btn.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
+  return { pressed: true, wait };
+}
+
 // תאימות: אותה התנהגות, בלי ה-Promise (מי שלא ממתין לתוצאה).
 export function hideMessagePopup() {
   return hideMessagePopupAsync().hidden;

@@ -137,7 +137,7 @@ const SITE = 'https://talmud.edu.gov.il';
 const INST_00_URL = `${SITE}/Institutes/InstitutesDetails.aspx?InstituteID=491`;
 const ST_00_600_URL = `${SITE}/StudyType/StudyTypeDetails.aspx`; // F3: דרך הגריד, בלי query
 const ST_16_600_DIRECT = `${SITE}/StudyType/StudyTypeDetails.aspx?InstituteStudyTypeID=10269&InstituteID=4159`;
-const TREE_HREFS = ["javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\00')", "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\16')"];
+const TREE_HREFS = ["javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\\\00')", "javascript:__doPostBack('ctl00$ucTalmudSideBar$tvTalmud','sעטרת שלמה\\\\16')"];
 const ABSORB_BASE = 'ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails';
 const fakeLocation = (href) => ({ href, protocol: 'https:', host: 'talmud.edu.gov.il', origin: SITE });
 

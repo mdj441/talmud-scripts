@@ -217,11 +217,15 @@ export function gridToRows(table) {
 }
 
 // טהורה: href בפורמט javascript:__doPostBack('target','arg') → {target, arg}.
+// הערכים הם מחרוזות-JS בתוך התכונה, ולכן מפענחים את תווי-הבריחה שלהן כמו שהדפדפן עושה בלחיצה:
+// צומת-העץ כתוב `'sעטרת שלמה\\16'` ובריצה הוא `sעטרת שלמה\16`. בלי הפענוח האתר מקבל שני לוכסנים
+// ומתעלם (ממצא סבב רטוב חלק 2, 31.10.2026: "לא הגיעה טעינת דף תוך 12 שניות").
+const unescapeJsString = (s) => s.replace(/\\(.)/g, '$1');
 export function parsePostbackHref(href) {
   if (typeof href !== 'string') return null;
   const m = /^(?:javascript:)?__doPostBack\('([^']*)'\s*,\s*'([^']*)'\)\s*;?$/.exec(href.trim());
   if (!m) return null;
-  return { target: m[1], arg: m[2] };
+  return { target: unescapeJsString(m[1]), arg: unescapeJsString(m[2]) };
 }
 
 const INSTITUTE_TAB_CONTAINER = 'ContentPlaceHolder1_tabInstituteDetails';

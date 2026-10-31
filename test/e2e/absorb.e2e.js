@@ -3,7 +3,7 @@
 // כל התעודות בדויות. הרצה: npm run test:e2e   (HEADED=1 להצגת הדפדפן)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, readResults, readReport, readLog, sleep, evalRetry } from './harness.js';
+import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, waitForRunDone, readResults, readReport, readLog, sleep, evalRetry } from './harness.js';
 
 const NO_SESSION = { instituteId: null, studyTypeId: null };
 import { ABSORB_STATUS } from '../../src/tools/absorb-report.js';
@@ -65,6 +65,37 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       assert.equal(run.results[0].status, 'נקלט', run.log);
       const db = await readMockDb(page);
       assert.ok(db.enrolled['10002'].some((s) => s.id === '034567890'), 'התלמיד לא נמצא בגריד של הדמה');
+    } finally { await context.close(); }
+  });
+
+  test('31.10.2026: אזהרת "רשום כבר במוסד אחר" בלי "אשר המשך" → "נחסם", בלי "המשך", התלמיד לא נקלט', async () => {
+    const { context, page } = await session();
+    try {
+      const run = await runAbsorb(page, `00${T}600${T}056789012`, { startUrl: URLS.institute(491) });
+      assert.match(run.results[0].status, /^נחסם/, run.log);
+      const db = await readMockDb(page);
+      assert.ok(!(db.log || []).some((l) => /continue 056789012/.test(l)), `נלחץ "המשך" בלי אישור:\n${(db.log || []).join('\n')}`);
+      assert.ok(!(db.enrolled['10002'] || []).some((s) => s.id === '056789012'), 'התלמיד נקלט למרות שלא אושר');
+    } finally { await context.close(); }
+  });
+
+  test('31.10.2026: "אשר המשך" מסומן → "המשך" נלחץ, "הצלחה מעבר תלמיד הצליח", אימות בגריד → "נקלט"', async () => {
+    const { context, page } = await session();
+    try {
+      await page.goto(URLS.institute(491));
+      await waitForPanel(page);
+      await page.check('#tt-absorb-continue-other');
+      await page.fill(ABSORB_SEL.input, `00${T}600${T}056789012`);
+      await page.click(ABSORB_SEL.start);
+      await waitForRunDone(page);
+      const results = await readResults(page);
+      const log = await readLog(page);
+      assert.equal(results[0].status, 'נקלט', log);
+      assert.match(log, /"אשר המשך" מסומן/, 'היומן מספר שההמשך אושר על-ידי בעל-המערכת');
+      assert.match(log, /הצלחה מעבר תלמיד הצליח/, 'הודעת האתר אחרי "המשך" ביומן');
+      const db = await readMockDb(page);
+      assert.ok((db.log || []).some((l) => /continue 056789012 → transferred/.test(l)), (db.log || []).join('\n'));
+      assert.ok((db.enrolled['10002'] || []).some((s) => s.id === '056789012'), 'התלמיד לא נקלט בדמה');
     } finally { await context.close(); }
   });
 

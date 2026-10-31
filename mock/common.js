@@ -51,7 +51,9 @@
   // מלאה לכתובת שהדף מבקש (דף המוסד: אותה כתובת, הכתובת לא משתנה). מחזיר null כשהיעד אינו העץ.
   function handleTreePostback(db, target, arg, urlAfter) {
     if (target !== 'ctl00$ucTalmudSideBar$tvTalmud') return null;
-    const mm = /\\(\d{2})$/.exec(arg || '');
+    // לוכסן אחד בדיוק לפני הסניף, כמו שהדפדפן מפענח את ה-href (`\\NN` בתכונה = `\NN` בריצה).
+    // ארגומנט עם שני לוכסנים (פרסור בלי פענוח) נדחה כמו באתר: אין טעינה.
+    const mm = /^s[^\\]+\\(\d{2})$/.exec(arg || '');
     if (!mm) return { kind: 'none' };
     const id = window.__mockDb.branchToInstituteId(db, mm[1]);
     if (!id) return { kind: 'async', apply: () => showMessage('סניף לא נמצא', ['ok']) };

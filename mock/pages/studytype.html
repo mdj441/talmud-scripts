@@ -212,6 +212,8 @@
           return { kind: 'async', apply: () => { window.Page_ClientValidate('PopValidation'); D.log(db, 'confirm rejected by validation'); } };
         }
         if (db.blocked && db.blocked[id]) {
+          // כמו באתר: החלון נסגר, אזהרה עם "המשך"/"לא". "המשך" (onContinue) מבצע את המעבר ומציג "הצלחה מעבר תלמיד הצליח".
+          db.pendingTransfer = { id, idType, stId: String(stId), birth, country, accepted };
           return { kind: 'async', apply: () => { closeModal(); C.showMessage(db.blocked[id], ['continue', 'no']); D.log(db, `confirm ${id} → blocked/confirm`); } };
         }
         if (D.findEnrolled(db, stId, id).length) {
@@ -243,7 +245,17 @@
 
       return { kind: 'none' };
     },
-    onContinue() { D.log(db, 'user clicked המשך'); },
+    onContinue() {
+      D.log(db, 'user clicked המשך');
+      const t = db.pendingTransfer;
+      if (!t) return;
+      db.pendingTransfer = null;
+      const known = (db.known && db.known[t.id]) || { first: 'תלמיד', last: 'מועבר', birth: t.birth || '01/01/1990' };
+      D.enroll(db, t.stId, { id: t.id, idType: t.idType, first: known.first, last: known.last, birth: known.birth || t.birth, accepted: t.accepted, country: t.idType === '2' ? t.country : undefined });
+      D.log(db, `continue ${t.id} → transferred to ${t.stId}`);
+      // כמו באתר (31.10.2026): הודעת-הצלחה עם "המשך" גלוי; מצב אישור מעבר "במעבר" אינו מדומה.
+      C.showMessage('הצלחה מעבר תלמיד הצליח', ['continue']);
+    },
     afterPostback() { D.save(db); },
   };
 

@@ -499,11 +499,15 @@ function gridToRows(table) {
 }
 
 // טהורה: href בפורמט javascript:__doPostBack('target','arg') → {target, arg}.
+// הערכים הם מחרוזות-JS בתוך התכונה, ולכן מפענחים את תווי-הבריחה שלהן כמו שהדפדפן עושה בלחיצה:
+// צומת-העץ כתוב `'sעטרת שלמה\\16'` ובריצה הוא `sעטרת שלמה\16`. בלי הפענוח האתר מקבל שני לוכסנים
+// ומתעלם (ממצא סבב רטוב חלק 2, 31.10.2026: "לא הגיעה טעינת דף תוך 12 שניות").
+const unescapeJsString = (s) => s.replace(/\\(.)/g, '$1');
 function parsePostbackHref(href) {
   if (typeof href !== 'string') return null;
   const m = /^(?:javascript:)?__doPostBack\('([^']*)'\s*,\s*'([^']*)'\)\s*;?$/.exec(href.trim());
   if (!m) return null;
-  return { target: m[1], arg: m[2] };
+  return { target: unescapeJsString(m[1]), arg: unescapeJsString(m[2]) };
 }
 
 const INSTITUTE_TAB_CONTAINER = 'ContentPlaceHolder1_tabInstituteDetails';
@@ -1711,6 +1715,9 @@ function maybeHeader(rawLines, delimiter) {
     const cells = splitCells(rawLines[i], delimiter);
     if (isPurelyNumericCell(cells[0])) return none;
     const columnMap = buildColumnMap(cells);
+    // סבב רטוב 31.10.2026: שורה ראשונה בלי אף כותרת מוכרת (למשל תו זר לפני הסניף: "a02 600 …") אינה
+    // כותרת. בלי זה כל השורות נעלמו בשקט ("0 שורות · 0 שגויות"). עכשיו היא שורת-נתונים → שגיאה מפורשת.
+    if (Object.keys(columnMap).length === 0) return none;
     const missingRequiredLabels = ['branch', 'studyType', 'identifier']
       .filter((f) => !(f in columnMap))
       .map((f) => FIELD_LABELS[f]);
@@ -2028,6 +2035,9 @@ const S = {
   // ממצא ב-9: {idx, identity} של "אישור" במודאל שנלחץ. אם "אישור" הוא טעינה מלאה של אותו דף, ההמשך
   // מוצא את התלמיד ברשימה ומדווח "נקלט" (לא "כבר קיים"). נשמר עם המצב; נמחק ברישום התוצאה.
   pendingConfirm: null,
+  // סבב רטוב 31.10.2026: בעל-המערכת סימן בפאנל "אשר המשך" — על אזהרת "תלמיד זה רשום כבר במוסד אחר"
+  // לוחצים "המשך" (מעבר בין מוסדות). נקבע בהתחלת הריצה ונשמר עם המצב (הריצה שורדת טעינות-דף).
+  continueOtherInstitute: false,
   generation: 0,
 };
 
@@ -2082,6 +2092,7 @@ function saveAbsorbState(extra) {
     startedAt: S.startedAt || new Date().toISOString(),
     pendingSave: S.pendingSave || null,
     pendingConfirm: S.pendingConfirm || null,
+    continueOtherInstitute: !!S.continueOtherInstitute,
   };
   if (extra) Object.assign(state, extra);
   try { sessionStorage.setItem(QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[מצב] שמירה נכשלה: ' + (e && e.message)); }
@@ -2146,6 +2157,7 @@ function absorbResetRun() {
   S.justSaved = null;
   S.pendingSave = null;
   S.pendingConfirm = null;
+  S.continueOtherInstitute = false;
 }
 
 // ─── src/core/lock.js ───
@@ -2323,6 +2335,17 @@ function hideMessagePopupAsync() {
     return { hidden: true, wait };
   }
   return { hidden: false, wait: null };
+}
+
+// לוחץ "המשך" (btnMOK). לא נקרא לעולם מעצמו: רק מזרימה שבעל-המערכת סימן בה במפורש שהוא מאשר
+// (למשל "אשר המשך" בלשונית הקליטה, סבב רטוב 31.10.2026: אזהרת "תלמיד זה רשום כבר במוסד אחר").
+// postback צד-שרת: waitPRM נרשם *לפני*, והלחיצה נדחית ל-setTimeout(0). מחזיר {pressed, wait}.
+function pressMessagePopupContinueAsync() {
+  const btn = $el('ucMessagePopUp_btnMOK');
+  if (!isVisible(btn)) return { pressed: false, wait: null };
+  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 }); // (1) נרשם קודם
+  setTimeout(() => { try { btn.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0); // (2) נדחה
+  return { pressed: true, wait };
 }
 
 // תאימות: אותה התנהגות, בלי ה-Promise (מי שלא ממתין לתוצאה).
@@ -3073,6 +3096,8 @@ async function processStudent(task, gen) {
       const startEl = $el(ABSORB_IDS.startDate);
       if (startEl && startEl.value !== startDate) await absorbSetAndWait(startEl, startDate);
     }
+    // סבב רטוב 31.10.2026: האתר דורש תאריך קליטה >= היום (cvalAcceptanceDate). היומן מספר מה נשלח בפועל.
+    try { const d = $el(ABSORB_IDS.startDate); if (d) log(`[מודאל] תאריך תחילת לימודים בחלון: "${d.value || ''}"`); } catch (e) { /* יומן בלבד */ }
     checkStop('after-fields', gen);
 
     // ── שלב 5: אישור ──
@@ -3099,7 +3124,7 @@ async function processStudent(task, gen) {
 
     // ── שלב 7: הודעה → מודאל → אימות ──
     await sleepCheckStop(300, gen);
-    const afterConfirm = await absorbReadAndHidePopup('אחרי אישור', gen);
+    const afterConfirm = await absorbAfterConfirmPopup(gen);
     if (afterConfirm.pop) {
       if (afterConfirm.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות). הסקריפט לא מאשר לבד: בצע את הקליטה ידנית והחלט על ההודעה');
       popupDetail = afterConfirm.pop.text;
@@ -3129,14 +3154,46 @@ async function processStudent(task, gen) {
     return mk(ABSORB_STATUS.UNVERIFIED, popupDetail || 'לא נמצא ברשימה אחרי הקליטה', searchListAction(code, branch));
   } finally {
     try {
-      if (absorbIsCancelled(gen)) log('[מודאל] ניסיון שבוטל — לא נוגעים בדף');
-      else if (absorbModalVisible()) await absorbCloseAcceptModal();
+      // סבב רטוב 31.10.2026: "עצור" אחרי שה-postback של "קליטה" כבר יצא משאיר את חלון הקליטה פתוח
+      // (עם רקע שחוסם את הדף, כולל העץ). סגירה ב"ביטול" היא בטוחה: שום דבר לא נשלח. שאר הדף: לא נוגעים.
+      if (absorbIsCancelled(gen)) {
+        if (absorbModalVisible()) { log('[מודאל] ניסיון שבוטל — סוגרים את חלון הקליטה ב"ביטול", לא נוגעים בשאר הדף'); await absorbCloseAcceptModal(); }
+        else log('[מודאל] ניסיון שבוטל — לא נוגעים בדף');
+      } else if (absorbModalVisible()) await absorbCloseAcceptModal();
     } catch (e) { /* אצווה לא נתקעת */ }
   }
 }
 
 function startDateFromPanel() {
   try { const v = S.hooks.getStartDate ? S.hooks.getStartDate() : ''; return v ? String(v).trim() : ''; } catch (e) { return ''; }
+}
+
+function continueOtherInstituteFromPanel() {
+  try { return !!(S.hooks.getContinueOtherInstitute && S.hooks.getContinueOtherInstitute()); } catch (e) { return false; }
+}
+
+// ─── חלונית ההודעה אחרי "אישור" (סבב רטוב 31.10.2026) ────────────────────────
+// האתר מזהיר על תלמיד "רשום כבר במוסד אחר" ומבקש "המשך" (= מעבר בין מוסדות; לימודיו שם מסתיימים).
+// ברירת-המחדל נשארת: לא מאשרים לבד → "נחסם". רק כשבעל-המערכת סימן בפאנל "אשר המשך" בתחילת הריצה,
+// לוחצים "המשך", ממתינים ל-postback, וקוראים את ההודעה הבאה (באתר: "הצלחה מעבר תלמיד הצליח").
+// כל חלונית אחרת עם "המשך" (טקסט שונה) נשארת "נחסם" גם כשהאפשרות מסומנת.
+const OTHER_INSTITUTE_RE = /רשום כבר במוסד אחר/;
+async function absorbAfterConfirmPopup(gen) {
+  const pop = readMessagePopup();
+  if (!pop) return { pop: null, blocked: false };
+  const confirmKind = !!pop.hasContinue && pop.kind !== 'success';
+  if (!(confirmKind && S.continueOtherInstitute && OTHER_INSTITUTE_RE.test(pop.text))) {
+    return absorbReadAndHidePopup('אחרי אישור', gen);
+  }
+  log(`[הודעה] אחרי אישור: ${pop.text} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
+  log('[המשך] "אשר המשך" מסומן בפאנל: לוחצים "המשך" (מעבר בין מוסדות; לימודיו במוסד האחר מסתיימים)');
+  const pressed = pressMessagePopupContinueAsync();
+  if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא — נשאר "נחסם"'); return { pop, blocked: true }; }
+  if (pressed.wait) await pressed.wait;
+  await sleepCheckStop(300, gen);
+  const after = await absorbReadAndHidePopup('אחרי המשך', gen);
+  if (after.pop && after.pop.kind !== 'success') return { pop: after.pop, blocked: !!after.blocked };
+  return { pop: after.pop || pop, blocked: false, continued: true };
 }
 
 // ─── timeout + ניסיון חוזר אחד ──────────────────────────────────────────────
@@ -3297,6 +3354,8 @@ async function absorbStartRun(tasks) {
   absorbResetLandings();
   S.queue = Array.isArray(tasks) ? tasks.slice() : [];
   S.startedAt = new Date().toISOString();
+  S.continueOtherInstitute = continueOtherInstituteFromPanel();
+  if (S.continueOtherInstitute) log('[התחלה] "אשר המשך" מסומן: אזהרת "רשום כבר במוסד אחר" תאושר אוטומטית');
   saveAbsorbState();
   return runQueue();
 }
@@ -3383,6 +3442,7 @@ async function absorbResumeIfPending(opts) {
   // ממצא ב-9: סמן "אישור נלחץ" שייך לשורה הנוכחית בלבד
   S.pendingConfirm = st.pendingConfirm && typeof st.pendingConfirm === 'object' && st.pendingConfirm.idx === S.curIdx ? st.pendingConfirm : null;
   if (S.pendingConfirm) log('[המשך] "אישור" נלחץ לפני הטעינה: אם התלמיד ברשימה, זה "נקלט"');
+  S.continueOtherInstitute = !!st.continueOtherInstitute;
   if (S.curIdx >= S.queue.length) { finishRun(); return false; }
 
   if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
@@ -3593,14 +3653,22 @@ function onGridClick(e) {
   renderTable();
 }
 
-function fillFromText(text, sourceLabel) {
+let lastInputLogLine = '';
+let inputLogTimer = null;
+function fillFromText(text, sourceLabel, opts) {
   const parsedRows = absorbTextToFieldRows(text);
   rows = parsedRows.map((r) => ({ fields: r.fields }));
   const anyExtra = rows.some((r) => r.fields.firstName || r.fields.lastName || r.fields.gender || r.fields.familyStatus);
   if (anyExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
   const v = renderTable();
   ui.status(`${sourceLabel}: ${v.filled.length} שורות נטענו לטבלה${v.errors.length ? `, ${v.errors.length} עם שגיאה` : ''}. בדוק ולחץ "התחל קליטה"`);
-  log(`[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.errors.length} שגויות`);
+  lastInputLogLine = `[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.errors.length} שגויות`;
+  if (!(opts && opts.quiet)) log(lastInputLogLine);
+}
+
+function scheduleInputLog() {
+  clearTimeout(inputLogTimer);
+  inputLogTimer = setTimeout(() => { if (lastInputLogLine) log(lastInputLogLine); }, 600);
 }
 
 // ─── תוצאות / דוח / תור שמור ────────────────────────────────────────────────
@@ -3769,6 +3837,7 @@ function mount(container, panelUi, page) {
       <span id="${P}-grid-summary" class="tt-hint"></span>
       <label class="tt-hint" style="cursor:pointer"><input type="checkbox" id="${P}-extra"${showExtra ? ' checked' : ''}> עמודות תלמיד חדש (שם, משפחה, מגדר, מצב)</label>
     </div>
+    <label class="tt-hint" style="cursor:pointer;display:block;margin:2px 0 6px" title="האתר מזהיר כשהתלמיד רשום במוסד אחר ומבקש אישור. בלי הסימון השורה מסומנת &quot;נחסם&quot; ואתה מחליט ידנית."><input type="checkbox" id="${P}-continue-other"> אשר "המשך" כשהאתר מזהיר שהתלמיד רשום במוסד אחר (לימודיו שם יסתיימו מהיום)</label>
     <div id="${P}-grid" class="tt-scroll" style="max-height:260px"></div>
     <div id="${P}-errors" class="tt-box tt-box-error" hidden></div>
     <div id="${P}-stale" class="tt-box tt-box-warn" hidden></div>
@@ -3787,7 +3856,9 @@ function mount(container, panelUi, page) {
     <div id="${P}-report" class="tt-box tt-box-warn" hidden></div>`;
 
   bindDateMask(`${P}-start-date`);
-  $el(`${P}-input`).addEventListener('input', function () { fillFromText(this.value, 'הדבקה'); });
+  // הטבלה מתעדכנת בכל הקשה; שורת היומן "[קלט] הדבקה" נכתבת פעם אחת אחרי שההקלדה נרגעה (סבב רטוב 31.10.2026:
+  // 20 שורות-יומן על שתי שורות שהוקלדו).
+  $el(`${P}-input`).addEventListener('input', function () { fillFromText(this.value, 'הדבקה', { quiet: true }); scheduleInputLog(); });
   const grid = $el(`${P}-grid`);
   grid.addEventListener('input', onCellInput);
   grid.addEventListener('change', onCellInput);
@@ -3810,6 +3881,7 @@ function mount(container, panelUi, page) {
 
   absorbSetHooks({
     getStartDate: startDate,
+    getContinueOtherInstitute: () => { const el = $el(`${P}-continue-other`); return !!(el && el.checked); },
     onStart: (queue, idx) => { total = queue.length; ui.progress(idx, total); setRunning(true); },
     onResume: (queue, res, idx) => {
       total = queue.length; results = res.slice(); renderResults(); ui.progress(idx, total); setRunning(true);

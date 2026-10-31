@@ -243,6 +243,9 @@ function maybeHeader(rawLines, delimiter) {
     const cells = splitCells(rawLines[i], delimiter);
     if (isPurelyNumericCell(cells[0])) return none;
     const columnMap = buildColumnMap(cells);
+    // סבב רטוב 31.10.2026: שורה ראשונה בלי אף כותרת מוכרת (למשל תו זר לפני הסניף: "a02 600 …") אינה
+    // כותרת. בלי זה כל השורות נעלמו בשקט ("0 שורות · 0 שגויות"). עכשיו היא שורת-נתונים → שגיאה מפורשת.
+    if (Object.keys(columnMap).length === 0) return none;
     const missingRequiredLabels = ['branch', 'studyType', 'identifier']
       .filter((f) => !(f in columnMap))
       .map((f) => FIELD_LABELS[f]);

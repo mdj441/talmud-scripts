@@ -174,14 +174,22 @@ function onGridClick(e) {
   renderTable();
 }
 
-function fillFromText(text, sourceLabel) {
+let lastInputLogLine = '';
+let inputLogTimer = null;
+function fillFromText(text, sourceLabel, opts) {
   const parsedRows = absorbTextToFieldRows(text);
   rows = parsedRows.map((r) => ({ fields: r.fields }));
   const anyExtra = rows.some((r) => r.fields.firstName || r.fields.lastName || r.fields.gender || r.fields.familyStatus);
   if (anyExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
   const v = renderTable();
   ui.status(`${sourceLabel}: ${v.filled.length} שורות נטענו לטבלה${v.errors.length ? `, ${v.errors.length} עם שגיאה` : ''}. בדוק ולחץ "התחל קליטה"`);
-  log(`[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.errors.length} שגויות`);
+  lastInputLogLine = `[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.errors.length} שגויות`;
+  if (!(opts && opts.quiet)) log(lastInputLogLine);
+}
+
+function scheduleInputLog() {
+  clearTimeout(inputLogTimer);
+  inputLogTimer = setTimeout(() => { if (lastInputLogLine) log(lastInputLogLine); }, 600);
 }
 
 // ─── תוצאות / דוח / תור שמור ────────────────────────────────────────────────
@@ -350,6 +358,7 @@ function mount(container, panelUi, page) {
       <span id="${P}-grid-summary" class="tt-hint"></span>
       <label class="tt-hint" style="cursor:pointer"><input type="checkbox" id="${P}-extra"${showExtra ? ' checked' : ''}> עמודות תלמיד חדש (שם, משפחה, מגדר, מצב)</label>
     </div>
+    <label class="tt-hint" style="cursor:pointer;display:block;margin:2px 0 6px" title="האתר מזהיר כשהתלמיד רשום במוסד אחר ומבקש אישור. בלי הסימון השורה מסומנת &quot;נחסם&quot; ואתה מחליט ידנית."><input type="checkbox" id="${P}-continue-other"> אשר "המשך" כשהאתר מזהיר שהתלמיד רשום במוסד אחר (לימודיו שם יסתיימו מהיום)</label>
     <div id="${P}-grid" class="tt-scroll" style="max-height:260px"></div>
     <div id="${P}-errors" class="tt-box tt-box-error" hidden></div>
     <div id="${P}-stale" class="tt-box tt-box-warn" hidden></div>
@@ -368,7 +377,9 @@ function mount(container, panelUi, page) {
     <div id="${P}-report" class="tt-box tt-box-warn" hidden></div>`;
 
   bindDateMask(`${P}-start-date`);
-  $el(`${P}-input`).addEventListener('input', function () { fillFromText(this.value, 'הדבקה'); });
+  // הטבלה מתעדכנת בכל הקשה; שורת היומן "[קלט] הדבקה" נכתבת פעם אחת אחרי שההקלדה נרגעה (סבב רטוב 31.10.2026:
+  // 20 שורות-יומן על שתי שורות שהוקלדו).
+  $el(`${P}-input`).addEventListener('input', function () { fillFromText(this.value, 'הדבקה', { quiet: true }); scheduleInputLog(); });
   const grid = $el(`${P}-grid`);
   grid.addEventListener('input', onCellInput);
   grid.addEventListener('change', onCellInput);
@@ -391,6 +402,7 @@ function mount(container, panelUi, page) {
 
   absorbSetHooks({
     getStartDate: startDate,
+    getContinueOtherInstitute: () => { const el = $el(`${P}-continue-other`); return !!(el && el.checked); },
     onStart: (queue, idx) => { total = queue.length; ui.progress(idx, total); setRunning(true); },
     onResume: (queue, res, idx) => {
       total = queue.length; results = res.slice(); renderResults(); ui.progress(idx, total); setRunning(true);
