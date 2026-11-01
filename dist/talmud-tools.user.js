@@ -2320,6 +2320,34 @@ function absorbQueueIsStale(startedAt, now, maxAgeMs) {
   return nowMs - t0 > max;
 }
 
+// סבב רטוב 1.11.2026 (סקירת ישן-חדש): "ישן" נמדד מהפעילות האחרונה (savedAt, נכתב בכל שמירת-מצב), לא מתחילת הריצה:
+// אצווה של 40 דקות שעדיין רצה אינה "ישנה". בלי savedAt (מצב ישן) חוזרים ל-startedAt.
+function absorbQueueLastActivity(state) {
+  if (!state || typeof state !== 'object') return null;
+  return state.savedAt || state.startedAt || null;
+}
+
+// תאריך היום כ-DD/MM/YYYY (הסקריפט הישן כתב "היום" במפורש במודאל; האתר זוכר תאריך קודם באותה טעינה).
+function absorbTodayDMY() {
+  const d = new Date();
+  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
+}
+
+// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה).
+function absorbIsValidDate(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return false;
+  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
+  return d <= new Date(y, mo, 0).getDate();
+}
+
+// תאריך הקליטה שנכתב במודאל: מה שבשדה, ואם ריק: היום במפורש.
+function absorbResolveStartDate(panelValue) {
+  const v = String(panelValue == null ? '' : panelValue).trim();
+  return v || absorbTodayDMY();
+}
+
 // מקור אחד לרשומת-תוצאה. ריפוד אפסים לת.ז., דרכון כמות-שהוא.
 function makeAbsorbResult(task, status, detail, action) {
   const t = task || {};
@@ -2448,6 +2476,7 @@ function saveAbsorbState(extra) {
   const state = {
     queue: S.queue, results: S.results, curIdx: S.curIdx,
     startedAt: S.startedAt || new Date().toISOString(),
+    savedAt: new Date().toISOString(), // הפעילות האחרונה: "ישן" ו"לפני N דקות" נמדדים ממנה
     pendingSave: S.pendingSave || null,
     pendingConfirm: S.pendingConfirm || null,
     continueOtherInstitute: !!S.continueOtherInstitute,
@@ -3467,8 +3496,9 @@ async function processStudent(task, gen) {
       await sleepCheckStop(150, gen);
     }
 
-    const startDate = startDateFromPanel();
-    if (startDate) {
+    // סקירת ישן-חדש 1.11.2026: שדה ריק = היום, ונכתב במפורש (כמו בישן): המודאל של האתר זוכר תאריך קודם באותה טעינה
+    const startDate = absorbResolveStartDate(startDateFromPanel());
+    {
       const startEl = $el(ABSORB_IDS.startDate);
       if (startEl && startEl.value !== startDate) await absorbSetAndWait(startEl, startDate);
     }
@@ -3752,7 +3782,7 @@ function absorbHasSavedQueue() {
 function absorbSavedQueueInfo() {
   const st = loadAbsorbState();
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return null;
-  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS) };
+  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: absorbQueueLastActivity(st), stale: absorbQueueIsStale(absorbQueueLastActivity(st), Date.now(), ABSORB_MAX_QUEUE_AGE_MS) };
 }
 
 function absorbDiscardSavedQueue() {
@@ -3799,8 +3829,8 @@ async function absorbResumeIfPending(opts) {
     return false;
   }
 
-  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: false, reason: '' };
-  if (!force && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
+  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: absorbQueueLastActivity(st), stale: false, reason: '' };
+  if (!force && absorbQueueIsStale(absorbQueueLastActivity(st), Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
     log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות: לא ממשיכים אוטומטית`);
     hook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
     return false;
@@ -4198,6 +4228,11 @@ function createGrid(cfg) {
 // מסלול-פרסור אחד: הטבלה → טקסט עם כותרת → parseAbsorbInput (כמו הדבקה). אין גישה ל-document ברמת המודול.
 
 
+// סבב רטוב 1.11.2026 (קטן): שלב "תיקון" שורד טעינת-דף (הדגל ב-sessionStorage; השורות נבנות מחדש מהתוצאות)
+const STAGE_KEY = 'talmud.absorb.stage';
+function readStageFlag() { try { return sessionStorage.getItem(STAGE_KEY) || ''; } catch (e) { return ''; } }
+function writeStageFlag(s) { try { if (s === 'fix') sessionStorage.setItem(STAGE_KEY, 'fix'); else sessionStorage.removeItem(STAGE_KEY); } catch (e) { /* noop */ } }
+
 const P = 'tt-absorb';
 const CONTINUE_KEY = 'tt.absorb.continueOther'; // '0' = בעל-המערכת ביטל את "אשר המשך" (ברירת-המחדל: מסומן, הכרעה ט)
 const COUNTRY_NAMES = COUNTRIES.map((c) => c.he).sort((a, b) => a.localeCompare(b, 'he'));
@@ -4498,6 +4533,7 @@ function buildGrid() {
 // ─── שלבים ──────────────────────────────────────────────────────────────────
 function setStage(s) {
   stage = s;
+  writeStageFlag(s);
   show(`${P}-zone-in`, s === 'prep' || s === 'fix');
   show(`${P}-zone-run`, s === 'run');
   show(`${P}-zone-out`, s === 'run' || s === 'results');
@@ -4639,8 +4675,8 @@ function onResultsClick(e) {
 function renderStaleQueue(info) {
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
   const done = info.curIdx || 0;
-  const startedMs = Date.parse(info.startedAt);
-  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
+  const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
   const why = info.reason === 'foreign-page'
     ? 'הדף הזה אינו חלק מהקליטה, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף סוג-הלימוד של התלמיד הבא.'
     : 'עבר זמן רב, ולכן הכלי לא ממשיך לבד.';
@@ -4683,6 +4719,9 @@ function startDate() {
 async function start() {
   if (absorbIsBusy()) { ui.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
   if (absorbHasSavedQueue()) { ui.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
+  // סקירת ישן-חדש 1.11.2026: אימות התאריך לפני הריצה (כמו בעזיבה), ולא על כל שורה דרך ולידטור האתר
+  const startDateValue = String(($el(`${P}-start-date`) || {}).value || '').trim();
+  if (startDateValue && !absorbIsValidDate(startDateValue)) { ui.status('תאריך הקליטה לא תקין. הפורמט: יום/חודש/שנה, או השאר ריק (= היום)'); return; }
   grid.refresh();
   const v = runnable();
   if (!v.filled.length) { ui.status(grid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
@@ -4960,6 +4999,7 @@ function mount(container, panelUi, page) {
   });
 
   log(`[קליטה] דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
+  const stageBeforeLoad = readStageFlag(); // לפני setStage('prep'), שמוחק את הדגל
   setStage('prep');
   grid.render();
   results = absorbGetResults();
@@ -4975,6 +5015,7 @@ function mount(container, panelUi, page) {
       renderReport(last.report, last.at);
       setStage('results');
       ui.status(`תוצאות הריצה האחרונה (${results.length} תלמידים)`);
+      if (stageBeforeLoad === 'fix') { fixAndRerun(); ui.status('תיקון והרצה חוזרת (שוחזר אחרי טעינת הדף)'); }
     }
   }
   Promise.resolve().then(() => absorbResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
@@ -5302,8 +5343,14 @@ function departSaveState() {
   const state = {
     queue: DEPART_S.queue, results: DEPART_S.results, curIdx: DEPART_S.curIdx,
     startedAt: DEPART_S.startedAt || new Date().toISOString(), settings: DEPART_S.settings,
+    savedAt: new Date().toISOString(), // הפעילות האחרונה (סבב רטוב 1.11.2026): "ישן" ו"לפני N דקות" נמדדים ממנה
   };
   try { sessionStorage.setItem(DEPART_QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[עזיבה] שמירת המצב נכשלה: ' + (e && e.message)); }
+}
+// הפעילות האחרונה של התור השמור (savedAt), ובלי savedAt (מצב ישן) תחילת הריצה.
+function departQueueLastActivity(state) {
+  if (!state || typeof state !== 'object') return null;
+  return state.savedAt || state.startedAt || null;
 }
 function departLoadState() {
   try {
@@ -5802,7 +5849,7 @@ function departHasSavedQueue() {
 function departSavedQueueInfo() {
   const st = departLoadState();
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return null;
-  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS) };
+  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS) };
 }
 
 function departDiscardSavedQueue() {
@@ -5822,9 +5869,9 @@ async function departResumeIfPending(opts) {
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
 
   if (departIsStopped()) { log('[המשך] דגל עצירה - מנקים מצב'); departClearState(); departClearStop(); return false; }
-  if (!allowStale && departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור עזיבה שמור מ-${st.startedAt} ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
-    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: true });
+  if (!allowStale && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
+    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: true });
     return false;
   }
 
@@ -6108,8 +6155,8 @@ function departOnResultsClick(e) {
 function departRenderStaleQueue(info) {
   if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
   const done = info.curIdx || 0;
-  const startedMs = Date.parse(info.startedAt);
-  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
+  const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
   setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. עבר זמן רב, ולכן הכלי לא ממשיך לבד.
     ${buttonsRowHtml([
       { id: `${DEPART_P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },

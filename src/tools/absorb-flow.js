@@ -12,6 +12,7 @@ import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision, absorbShortStatus, OTHER_INSTITUTE_RE,
   absorbShouldRecord, absorbQueueIsStale, buildRemainingReport, manualStudyTypeAction, absorbNormalizeId,
   absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation, absorbUnreadableGridDetail,
+  absorbQueueLastActivity, absorbResolveStartDate,
 } from './absorb-report.js';
 import {
   S, ABSORB_MAX_LANDINGS, absorbIsStopped, requestAbsorbStop, clearAbsorbStop, absorbStopError, isAbsorbStopError,
@@ -458,8 +459,9 @@ export async function processStudent(task, gen) {
       await sleepCheckStop(150, gen);
     }
 
-    const startDate = startDateFromPanel();
-    if (startDate) {
+    // סקירת ישן-חדש 1.11.2026: שדה ריק = היום, ונכתב במפורש (כמו בישן): המודאל של האתר זוכר תאריך קודם באותה טעינה
+    const startDate = absorbResolveStartDate(startDateFromPanel());
+    {
       const startEl = $el(ABSORB_IDS.startDate);
       if (startEl && startEl.value !== startDate) await absorbSetAndWait(startEl, startDate);
     }
@@ -743,7 +745,7 @@ export function absorbHasSavedQueue() {
 export function absorbSavedQueueInfo() {
   const st = loadAbsorbState();
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return null;
-  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS) };
+  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: absorbQueueLastActivity(st), stale: absorbQueueIsStale(absorbQueueLastActivity(st), Date.now(), ABSORB_MAX_QUEUE_AGE_MS) };
 }
 
 export function absorbDiscardSavedQueue() {
@@ -790,8 +792,8 @@ export async function absorbResumeIfPending(opts) {
     return false;
   }
 
-  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: false, reason: '' };
-  if (!force && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
+  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: absorbQueueLastActivity(st), stale: false, reason: '' };
+  if (!force && absorbQueueIsStale(absorbQueueLastActivity(st), Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
     log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות: לא ממשיכים אוטומטית`);
     hook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
     return false;

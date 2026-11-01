@@ -234,3 +234,14 @@ test('departQueueIsStale: מעל 30 דקות = ישן; startedAt חסר = לא �
   assert.equal(departQueueIsStale('2026-09-10T10:00:00Z', t0 + 5 * 60000), false);
   assert.equal(departQueueIsStale(null, t0), false);
 });
+
+// ─── סבב רטוב 1.11.2026: "ישן" לפי הפעילות האחרונה (savedAt), לא לפי תחילת הריצה ───────────────────────────────
+test('departQueueLastActivity: savedAt לפני startedAt; תור של 40 דקות שעדיין פעיל אינו ישן', async () => {
+  const { departQueueLastActivity, departQueueIsStale } = await import('../src/tools/depart.js');
+  assert.equal(departQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z', savedAt: '2026-11-01T10:40:00.000Z' }), '2026-11-01T10:40:00.000Z');
+  assert.equal(departQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z' }), '2026-11-01T10:00:00.000Z');
+  assert.equal(departQueueLastActivity(null), null);
+  const now = Date.parse('2026-11-01T10:41:00.000Z');
+  assert.equal(departQueueIsStale(departQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z', savedAt: '2026-11-01T10:40:00.000Z' }), now, 30 * 60 * 1000), false);
+  assert.equal(departQueueIsStale(departQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z' }), now, 30 * 60 * 1000), true);
+});

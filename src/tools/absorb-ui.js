@@ -16,7 +16,13 @@ import { loadXlsxFile } from './absorb-xlsx.js';
 import {
   ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, absorbResultKind, absorbSummarizeKinds,
   absorbIsOtherInstituteBlock, absorbNormalizeId, buildResultsTsv, buildResultsCsvRows, absorbRowsNeedingAttention,
+  absorbIsValidDate,
 } from './absorb-report.js';
+
+// סבב רטוב 1.11.2026 (קטן): שלב "תיקון" שורד טעינת-דף (הדגל ב-sessionStorage; השורות נבנות מחדש מהתוצאות)
+const STAGE_KEY = 'talmud.absorb.stage';
+function readStageFlag() { try { return sessionStorage.getItem(STAGE_KEY) || ''; } catch (e) { return ''; } }
+function writeStageFlag(s) { try { if (s === 'fix') sessionStorage.setItem(STAGE_KEY, 'fix'); else sessionStorage.removeItem(STAGE_KEY); } catch (e) { /* noop */ } }
 import { clearAbsorbStop, clearAbsorbLastResults } from './absorb-state.js';
 import {
   absorbSetHooks, absorbStartRun, absorbResumeIfPending, absorbStop, absorbHasSavedQueue, absorbGetResults,
@@ -328,6 +334,7 @@ function buildGrid() {
 // ─── שלבים ──────────────────────────────────────────────────────────────────
 function setStage(s) {
   stage = s;
+  writeStageFlag(s);
   show(`${P}-zone-in`, s === 'prep' || s === 'fix');
   show(`${P}-zone-run`, s === 'run');
   show(`${P}-zone-out`, s === 'run' || s === 'results');
@@ -469,8 +476,8 @@ function onResultsClick(e) {
 function renderStaleQueue(info) {
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
   const done = info.curIdx || 0;
-  const startedMs = Date.parse(info.startedAt);
-  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
+  const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
   const why = info.reason === 'foreign-page'
     ? 'הדף הזה אינו חלק מהקליטה, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף סוג-הלימוד של התלמיד הבא.'
     : 'עבר זמן רב, ולכן הכלי לא ממשיך לבד.';
@@ -513,6 +520,9 @@ function startDate() {
 async function start() {
   if (absorbIsBusy()) { ui.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
   if (absorbHasSavedQueue()) { ui.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
+  // סקירת ישן-חדש 1.11.2026: אימות התאריך לפני הריצה (כמו בעזיבה), ולא על כל שורה דרך ולידטור האתר
+  const startDateValue = String(($el(`${P}-start-date`) || {}).value || '').trim();
+  if (startDateValue && !absorbIsValidDate(startDateValue)) { ui.status('תאריך הקליטה לא תקין. הפורמט: יום/חודש/שנה, או השאר ריק (= היום)'); return; }
   grid.refresh();
   const v = runnable();
   if (!v.filled.length) { ui.status(grid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
@@ -790,6 +800,7 @@ function mount(container, panelUi, page) {
   });
 
   log(`[קליטה] דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}${page.studyType ? ' · סוג ' + page.studyType : ''}`);
+  const stageBeforeLoad = readStageFlag(); // לפני setStage('prep'), שמוחק את הדגל
   setStage('prep');
   grid.render();
   results = absorbGetResults();
@@ -805,6 +816,7 @@ function mount(container, panelUi, page) {
       renderReport(last.report, last.at);
       setStage('results');
       ui.status(`תוצאות הריצה האחרונה (${results.length} תלמידים)`);
+      if (stageBeforeLoad === 'fix') { fixAndRerun(); ui.status('תיקון והרצה חוזרת (שוחזר אחרי טעינת הדף)'); }
     }
   }
   Promise.resolve().then(() => absorbResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });

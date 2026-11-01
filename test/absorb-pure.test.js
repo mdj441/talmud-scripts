@@ -6,6 +6,7 @@ import {
   buildResultsTsv, buildResultsCsvRows, buildRemainingReport, summarizeAbsorbResults,
   absorbParsePostbackFromHref, absorbParseCount, absorbQueueIsStale, makeAbsorbResult,
   absorbShouldRecord, absorbPrecheckDecision, absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation,
+  absorbTodayDMY, absorbIsValidDate, absorbResolveStartDate, absorbQueueLastActivity,
 } from '../src/tools/absorb-report.js';
 import { maskId, maskIdsInText, log, getLogText, clearLog } from '../src/core/log.js';
 import { toCsv } from '../src/core/csv.js';
@@ -458,4 +459,27 @@ test('absorbRowsNeedingAttention (31.10.2026): משאיר רק שורות שתו
   const r2 = absorbRowsNeedingAttention(rows.slice(0, 3), results);
   assert.equal(r2.needsExtra, false);
   assert.deepEqual(absorbRowsNeedingAttention([], []).rows, []);
+});
+
+// ─── סבב רטוב 1.11.2026, סקירת ישן-חדש: תאריך קליטה ריק נכתב במפורש כ"היום" (כמו בסקריפט הישן; המודאל של האתר זוכר
+// תאריך קודם), אימות תאריך לפני ריצה (כמו בעזיבה), ו"ישן" לפי הפעילות האחרונה ולא לפי תחילת הריצה ───────────────
+test('absorbTodayDMY / absorbIsValidDate / absorbResolveStartDate', () => {
+  assert.match(absorbTodayDMY(), /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.equal(absorbIsValidDate('01/11/2026'), true);
+  assert.equal(absorbIsValidDate('31/02/2026'), false);
+  assert.equal(absorbIsValidDate('1/11/2026'), false);
+  assert.equal(absorbIsValidDate(''), false);
+  assert.equal(absorbResolveStartDate('05/11/2026'), '05/11/2026');
+  assert.equal(absorbResolveStartDate(''), absorbTodayDMY(), 'ריק = היום, במפורש');
+  assert.equal(absorbResolveStartDate('  '), absorbTodayDMY());
+});
+
+test('absorbQueueLastActivity: הפעילות האחרונה (savedAt) ולא תחילת הריצה; בלי savedAt חוזרים ל-startedAt', () => {
+  assert.equal(absorbQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z', savedAt: '2026-11-01T10:40:00.000Z' }), '2026-11-01T10:40:00.000Z');
+  assert.equal(absorbQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z' }), '2026-11-01T10:00:00.000Z');
+  assert.equal(absorbQueueLastActivity(null), null);
+  // ריצה של 40 דקות שעדיין פעילה אינה "ישנה" (30 דקות נמדדות מהשמירה האחרונה)
+  const now = Date.parse('2026-11-01T10:41:00.000Z');
+  assert.equal(absorbQueueIsStale(absorbQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z', savedAt: '2026-11-01T10:40:00.000Z' }), now), false);
+  assert.equal(absorbQueueIsStale(absorbQueueLastActivity({ startedAt: '2026-11-01T10:00:00.000Z' }), now), true);
 });

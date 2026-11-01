@@ -313,8 +313,14 @@ function departSaveState() {
   const state = {
     queue: DEPART_S.queue, results: DEPART_S.results, curIdx: DEPART_S.curIdx,
     startedAt: DEPART_S.startedAt || new Date().toISOString(), settings: DEPART_S.settings,
+    savedAt: new Date().toISOString(), // הפעילות האחרונה (סבב רטוב 1.11.2026): "ישן" ו"לפני N דקות" נמדדים ממנה
   };
   try { sessionStorage.setItem(DEPART_QUEUE_KEY, JSON.stringify(state)); } catch (e) { log('[עזיבה] שמירת המצב נכשלה: ' + (e && e.message)); }
+}
+// הפעילות האחרונה של התור השמור (savedAt), ובלי savedAt (מצב ישן) תחילת הריצה.
+export function departQueueLastActivity(state) {
+  if (!state || typeof state !== 'object') return null;
+  return state.savedAt || state.startedAt || null;
 }
 function departLoadState() {
   try {
@@ -813,7 +819,7 @@ export function departHasSavedQueue() {
 export function departSavedQueueInfo() {
   const st = departLoadState();
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return null;
-  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS) };
+  return { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS) };
 }
 
 export function departDiscardSavedQueue() {
@@ -833,9 +839,9 @@ export async function departResumeIfPending(opts) {
   if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
 
   if (departIsStopped()) { log('[המשך] דגל עצירה - מנקים מצב'); departClearState(); departClearStop(); return false; }
-  if (!allowStale && departQueueIsStale(st.startedAt, Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור עזיבה שמור מ-${st.startedAt} ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
-    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: true });
+  if (!allowStale && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
+    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: true });
     return false;
   }
 

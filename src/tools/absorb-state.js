@@ -86,6 +86,7 @@ export function saveAbsorbState(extra) {
   const state = {
     queue: S.queue, results: S.results, curIdx: S.curIdx,
     startedAt: S.startedAt || new Date().toISOString(),
+    savedAt: new Date().toISOString(), // הפעילות האחרונה: "ישן" ו"לפני N דקות" נמדדים ממנה
     pendingSave: S.pendingSave || null,
     pendingConfirm: S.pendingConfirm || null,
     continueOtherInstitute: !!S.continueOtherInstitute,

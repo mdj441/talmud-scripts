@@ -37,6 +37,27 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     return openSession(browser, { scenario, script });
   }
 
+  // סקירת ישן-חדש 1.11.2026: תאריך קליטה לא תקין נתפס לפני הריצה (כמו בעזיבה), ותאריך ריק נכתב במודאל במפורש כהיום
+  test('תאריך קליטה: לא תקין נעצר לפני הריצה; ריק = היום נכתב במודאל', async () => {
+    const { context, page } = await session();
+    try {
+      await page.goto(URLS.institute(491));
+      await waitForPanel(page);
+      await fillPasteBox(page, ABSORB_SEL.input, `00${T}600${T}034567890`);
+      await page.fill(ABSORB_SEL.startDate, '31/02/2026');
+      await page.click(ABSORB_SEL.start);
+      await sleep(400);
+      assert.match(await page.textContent(ABSORB_SEL.status), /תאריך הקליטה לא תקין/, 'תאריך שגוי לא נתפס לפני הריצה');
+      assert.equal(await page.$eval('#tt-absorb-steps .tt-step-on', (el) => el.textContent.trim()), 'הכנה', 'הריצה התחילה למרות תאריך שגוי');
+      await page.fill(ABSORB_SEL.startDate, '');
+      const run = await runAbsorb(page, `00${T}600${T}034567890`);
+      assert.equal(run.results[0].status, 'נקלט', run.log);
+      const d = new Date();
+      const today = [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
+      assert.match(run.log, new RegExp(`תאריך תחילת לימודים בחלון: "${today}"`), 'תאריך ריק לא נכתב כהיום: ' + run.log);
+    } finally { await context.close(); }
+  });
+
   test('9a תלמיד קיים → "כבר קיים" בלי ניסיון קליטה (מדף המוסד)', async () => {
     const { context, page, consoleLines } = await session();
     try {
@@ -426,6 +447,15 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
       assert.match(report, /לא רצו 1/);
       const saved = await page.evaluate(() => sessionStorage.getItem('talmud.absorb.queue'));
       assert.equal(saved, null, 'התור נוקה');
+      // סבב רטוב 1.11.2026 (קטן): שלב "תיקון" חזר ל"תוצאות" אחרי טעינת-דף; עכשיו הוא שורד אותה
+      await page.click('#tt-absorb-keep-attention');
+      const stepText = () => page.$eval('#tt-absorb-steps .tt-step-on', (el) => el.textContent.trim());
+      assert.equal(await stepText(), 'תיקון והרצה חוזרת');
+      await page.reload();
+      await waitForPanel(page);
+      await sleep(800);
+      assert.equal(await stepText(), 'תיקון והרצה חוזרת', 'שלב התיקון לא שרד טעינת-דף');
+      assert.equal(await page.$$eval('#tt-absorb-grid tbody tr.tt-r-main', (rows) => rows.length), 1, 'שורת התיקון לא שוחזרה');
     } finally { await context.close(); }
   });
 

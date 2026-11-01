@@ -218,6 +218,34 @@ export function absorbQueueIsStale(startedAt, now, maxAgeMs) {
   return nowMs - t0 > max;
 }
 
+// סבב רטוב 1.11.2026 (סקירת ישן-חדש): "ישן" נמדד מהפעילות האחרונה (savedAt, נכתב בכל שמירת-מצב), לא מתחילת הריצה:
+// אצווה של 40 דקות שעדיין רצה אינה "ישנה". בלי savedAt (מצב ישן) חוזרים ל-startedAt.
+export function absorbQueueLastActivity(state) {
+  if (!state || typeof state !== 'object') return null;
+  return state.savedAt || state.startedAt || null;
+}
+
+// תאריך היום כ-DD/MM/YYYY (הסקריפט הישן כתב "היום" במפורש במודאל; האתר זוכר תאריך קודם באותה טעינה).
+export function absorbTodayDMY() {
+  const d = new Date();
+  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
+}
+
+// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה).
+export function absorbIsValidDate(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return false;
+  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
+  return d <= new Date(y, mo, 0).getDate();
+}
+
+// תאריך הקליטה שנכתב במודאל: מה שבשדה, ואם ריק: היום במפורש.
+export function absorbResolveStartDate(panelValue) {
+  const v = String(panelValue == null ? '' : panelValue).trim();
+  return v || absorbTodayDMY();
+}
+
 // מקור אחד לרשומת-תוצאה. ריפוד אפסים לת.ז., דרכון כמות-שהוא.
 export function makeAbsorbResult(task, status, detail, action) {
   const t = task || {};

@@ -247,8 +247,8 @@ function departOnResultsClick(e) {
 function departRenderStaleQueue(info) {
   if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
   const done = info.curIdx || 0;
-  const startedMs = Date.parse(info.startedAt);
-  const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
+  const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
+  const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
   setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. עבר זמן רב, ולכן הכלי לא ממשיך לבד.
     ${buttonsRowHtml([
       { id: `${DEPART_P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },
