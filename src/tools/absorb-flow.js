@@ -606,6 +606,9 @@ function recordResult(result, gen, idx) {
   if (!absorbShouldRecord(S.lastRecordedIdx, at)) { log(`[תוצאה] לשורה ${at + 1} כבר נרשמה תוצאה`); return false; }
   S.lastRecordedIdx = at;
   S.results.push(result);
+  // סבב רטוב 1.11.2026: "נקלט" נרשם ביומן ב-◀, אבל "נחסם" / "שגיאה" / "לא נמצא" לא, ובקריאת היומן נראו כשורות בלי תוצאה.
+  // "נקלט" כבר נרשם במקום שבו אומת; "נעצר" מסוכם בשורת ⛔ אחת (ולא שורה לכל תלמיד).
+  if (!/^(נקלט|נעצר)/.test(String(result && result.status || ''))) log(`◀ ${result.status}`);
   S.curIdx = Math.max(S.curIdx, at + 1);
   if (S.pendingSave && S.pendingSave.idx === at) S.pendingSave = null; // ממצא 4: השמירה נסגרה עם השורה
   if (S.pendingConfirm && S.pendingConfirm.idx === at) S.pendingConfirm = null; // ממצא ב-9

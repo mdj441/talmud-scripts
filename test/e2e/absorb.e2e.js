@@ -74,6 +74,8 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       const run = await runAbsorb(page, `00${T}600${T}056789012`, { startUrl: URLS.institute(491), continueOther: false });
       assert.equal(run.results[0].status, 'נחסם: רשום במוסד אחר', run.log);
       assert.match(run.results[0].action, /סמן "אשר המשך"/, 'מה לעשות: לסמן ולהריץ שוב');
+      // סבב רטוב 1.11.2026: לשורה שנחסמה לא הייתה שורת "◀" ביומן (רק "נקלט" נרשם), וזה הטעה בקריאת היומן
+      assert.match(run.log, /◀ נחסם: רשום במוסד אחר/, 'היומן לא מסכם את השורה שנחסמה: ' + run.log);
       // הכרעה ט: כפתור "סמן אשר המשך והרץ שוב" מוצג, ומריץ שוב רק את מי שנחסם
       const btn = await page.$('#tt-absorb-continue-rerun:not([hidden])');
       assert.ok(btn, 'כפתור "סמן אשר המשך והרץ שוב" לא מוצג');
