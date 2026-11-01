@@ -4,6 +4,26 @@ export function padId9(raw) {
   const s = String(raw).trim();
   return /^\d+$/.test(s) && s.length < 9 ? s.padStart(9, '0') : s;
 }
+// ספרת-ביקורת של ת.ז. ישראלית (שכבת-הבהירות 1.11.2026, הכרעה ד): אזהרה בלבד, לא חסימה. מקבל ספרות (עד 9,
+// מרופדות באפסים). לא-ספרות או יותר מ-9 ספרות → false. עובד על הפרשי-המשקל 1,2,1,2,… וסכום ספרות-המכפלה.
+export function isValidIsraeliId(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!/^\d{1,9}$/.test(s)) return false;
+  const d = s.padStart(9, '0');
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let n = Number(d[i]) * (i % 2 === 0 ? 1 : 2);
+    if (n > 9) n -= 9;
+    sum += n;
+  }
+  return sum % 10 === 0;
+}
+
+// "ישראל" אינה ארץ-דרכון באתר; מספר ספרתי עם ארץ ישראל הוא ת.ז. (הכרעה 1ב, סבב 2).
+export function isIsraelCountry(raw) {
+  return /^(ישראל|israel)$/i.test(String(raw == null ? '' : raw).trim());
+}
+
 const PREFIX = /^(דרכון|passport|tz|ת\.?ז\.?)\s*[:=]\s*(.+)$/i;
 export function detectIdType(raw) {
   const s = String(raw).trim();

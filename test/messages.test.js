@@ -25,11 +25,9 @@ test('smoke: המודולים נטענים ב-Node והחוזה של הלשונ�
   for (const fn of [messagesRunBulk, messagesScan, messagesRunTable]) assert.equal(typeof fn, 'function');
   assert.equal(messagesIsRunning(), false);
   assert.equal(messagesTool.id, 'messages');
-  // הלשונית מוגבלת לכתובת דף ההודעות (matches), לא לכל דף "אחר" באתר (רטוב 30.10: צצה גם בדף הכניסה)
-  assert.deepEqual(messagesTool.pages, []);
-  assert.equal(typeof messagesTool.matches, 'function');
-  assert.equal(messagesTool.matches({ url: 'https://talmud.edu.gov.il/Association/Default.aspx' }), true);
-  assert.equal(messagesTool.matches({ url: 'https://talmud.edu.gov.il/LogIn.aspx' }), false);
+  // הכרעה ח (1.11.2026): הלשונית בכל דף ('*'); מחוץ לדף ההודעות היא מציעה לעבור אליו. דף הכניסה מסונן ב-main.
+  assert.deepEqual(messagesTool.pages, ['*']);
+  assert.deepEqual(messagesTool.steps, ['סריקה', 'סקירה', 'ביצוע', 'תוצאות']);
   for (const k of ['hasPendingRun', 'isRunning', 'onStop', 'mount']) assert.equal(typeof messagesTool[k], 'function');
   assert.equal(messagesTool.hasPendingRun(), false);
 });

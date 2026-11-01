@@ -9,7 +9,7 @@ import { padId9 } from '../core/identity.js';
 import { getPage, gotoStudyType, normalizeBranch, classifyUrl } from '../core/navigate.js';
 import { acquireRunLock, refreshRunLock, releaseRunLock, RUN_LOCK_REFRESH_MS, RUN_LOCK_BUSY_MESSAGE } from '../core/lock.js';
 import {
-  ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision,
+  ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision, absorbShortStatus, OTHER_INSTITUTE_RE,
   absorbShouldRecord, absorbQueueIsStale, buildRemainingReport, manualStudyTypeAction, absorbNormalizeId,
   absorbBranchSourceTrusted, absorbNavTimeoutIsNavigation, absorbUnreadableGridDetail,
 } from './absorb-report.js';
@@ -38,12 +38,19 @@ const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — ל�
 // ─── טקסטי "מה לעשות" (ממצא 12): תמיד עם "איך", לא רק "מה" ───────────────────
 const SUPPORT_URL = 'https://github.com/mdj441/talmud-scripts/issues';
 const LOG_ACTION = `לחץ "העתק יומן" (ממוסך) וצרף אותו לדיווח בדף התמיכה של הכלי: ${SUPPORT_URL}`;
-const MANUAL_ABSORB_ACTION = 'לחץ "קליטה" בדף סוג-הלימוד, מלא את המזהה (ולדרכון גם תאריך לידה וארץ) ולחץ "אישור"';
+const MANUAL_ABSORB_ACTION = 'לחץ "קליטה" בדף סוג-הלימוד, מלא את המספר (ולדרכון גם תאריך לידה וארץ) ולחץ "אישור"';
+const BLOCKED_OTHER_ACTION = 'התלמיד רשום במוסד אחר והאתר מבקש אישור. סמן "אשר המשך" ולחץ "תקן והרץ שוב", או קלוט ידנית באתר';
+const BLOCKED_OTHER_SAVE_ACTION = 'האתר מבקש אישור "המשך" בשמירת התלמיד. הכלי לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט';
 function verifyListAction(code, branch) {
-  return `ודא ברשימת התלמידים של סוג ${code} בסניף ${branch} שהתלמיד נקלט, ואם אינו שם, קלוט אותו ידנית`;
+  return `פתח את רשימת התלמידים של סוג ${code} בסניף ${branch} וחפש את המספר. אם אינו שם, קלוט ידנית`;
 }
 function searchListAction(code, branch) {
-  return `חפש את המזהה ברשימת התלמידים של סוג ${code} בסניף ${branch}; אם אינו שם, קלוט ידנית`;
+  return verifyListAction(code, branch);
+}
+// "נחסם" עם הודעת האתר: לאזהרת "רשום במוסד אחר" יש פתרון בלחיצה (אשר המשך); לכל חלונית אחרת, הוראה כללית.
+function blockedResult(mk, text, generalAction) {
+  const other = OTHER_INSTITUTE_RE.test(String(text || ''));
+  return mk(absorbShortStatus(ABSORB_STATUS.BLOCKED, text), text, other ? BLOCKED_OTHER_ACTION : generalAction);
 }
 function manualRowAction() {
   return `בצע את השורה הזו ידנית באתר (${MANUAL_ABSORB_ACTION}). אם זה חוזר, ${LOG_ACTION}`;
@@ -144,8 +151,8 @@ async function ensureStudyTypePage(task, gen) {
       return {
         ok: false, reason: res.reason,
         action: /בעץ/.test(String(res.reason || ''))
-          ? `בדוק שסניף ${branch} מופיע בעץ-הצד של האתר. אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`
-          : `בדוק בדף המוסד של סניף ${branch}, בלשונית "סוגי לימוד למוסד", שסוג ${code} קיים ואינו "סגור". אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`,
+          ? `סניף ${branch} לא נמצא בעץ-הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
+          : `סוג לימוד ${code} לא נמצא בסניף ${branch} (או מסומן "סגור"). בדוק בדף המוסד, בלשונית "סוגי לימוד למוסד". אם הוא שם, תקן את השורה ולחץ "תקן והרץ שוב"`,
       };
     }
     return { ok: false, reason: (res && res.reason) || 'הניווט נכשל', action: manualStudyTypeAction(branch, code) };
@@ -192,8 +199,8 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const note = [pendingSaveNote(), pop ? pop.text : ''].filter(Boolean).join(' | ');
     S.justSaved = null;
     let res;
-    if (errs.length) res = mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
-    else if (blocked) res = mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
+    if (errs.length) res = mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
+    else if (blocked) res = blockedResult(mk, pop.text, BLOCKED_OTHER_SAVE_ACTION);
     else res = mk(ABSORB_STATUS.SAVED_UNVERIFIED, note || 'דף תלמיד-חדש נטען מחדש אחרי השמירה; לא ידוע אם נשמר', verifyListAction(task.studyType, task.branch));
     if (!recordResult(res, gen, myIdx)) return CONTINUE;
     return leaveNewStudentPage(task, res, gen);
@@ -208,8 +215,9 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
 
   if (missing.length) {
     log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}) — לא שומרים`);
+    const digitsOnly = /^\d+$/.test(String(identity || ''));
     const res = mk(ABSORB_STATUS.NEW_STUDENT_MISSING, `חסר: ${missing.join(', ')}`,
-      `התלמיד לא מוכר למערכת. הוסף לשורה שלו את העמודות ${missing.join(', ')} (ואם צריך גם מגדר ומצב משפחתי; ברירת-המחדל: זכר, נשוי) והרץ אותה שוב`);
+      `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם יש לו דרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
     if (!recordResult(res, gen, myIdx)) return CONTINUE;
     return leaveNewStudentPage(task, res, gen);
   }
@@ -226,14 +234,14 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const g = $el(ABSORB_NEW_IDS.gender);
     if (g) {
       const r = await absorbSelectOption(g, ns.gender, 'מגדר', ABSORB_GENDER_LABELS[ns.gender]);
-      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן את עמודת "מגדר" (זכר/נקבה) והרץ שוב, או בחר ידנית בדף התלמיד ולחץ "שמירה"');
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן בשורה את המגדר (זכר או נקבה) ולחץ "תקן והרץ שוב", או בחר ידנית בדף התלמיד ולחץ "שמירה"');
     }
   }
   if (ns.familyStatus) {
     const f = $el(ABSORB_NEW_IDS.familyStatus);
     if (f) {
       const r = await absorbSelectOption(f, ns.familyStatus, 'מצב משפחתי', ABSORB_FAMILY_STATUS_LABELS[ns.familyStatus]);
-      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן את עמודת "מצב משפחתי" (רווק/נשוי/גרוש/אלמן) והרץ שוב, או בחר ידנית בדף התלמיד ולחץ "שמירה"');
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן בשורה את המצב המשפחתי (רווק, נשוי, גרוש או אלמן) ולחץ "תקן והרץ שוב", או בחר ידנית בדף התלמיד ולחץ "שמירה"');
     }
   }
   await sleepCheckStop(200, gen);
@@ -244,7 +252,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   const v = absorbRunClientValidation('Validation');
   if (!v.ok) {
     return mk(ABSORB_STATUS.ERROR, 'ולידציה בדף תלמיד-חדש: ' + (v.messages.join(' | ') || 'שדה לא תקין'),
-      'תקן בשורה: שם פרטי ושם משפחה באותיות עבריות בלבד, תאריך לידה DD/MM/YYYY וגיל 16 לפחות. הרץ שוב');
+      'תקן בשורה: שם פרטי ושם משפחה באותיות עבריות בלבד, תאריך לידה יום/חודש/שנה וגיל 16 לפחות. ואז "תקן והרץ שוב"');
   }
 
   // "שמירה" עלולה לטעון דף אחר. מסמנים לפני, כדי שההמשך ידע לאמת "נקלט (תלמיד חדש)".
@@ -265,7 +273,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     S.justSaved = null;
     S.pendingSave = null;
     saveAbsorbState();
-    return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
+    return blockedResult(mk, pop.text, BLOCKED_OTHER_SAVE_ACTION);
   }
 
   // ממצא ב-6: לפי הכתובת, לא לפי getPage: "שמירה" שנשארת באותו מסמך משנה את hidStudentState מ--1
@@ -277,7 +285,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
       S.justSaved = null;
       S.pendingSave = null;
       saveAbsorbState();
-      return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
+      return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
     }
     // נשארנו בדף (עם או בלי הודעת הצלחה) — האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
     log('[תלמיד חדש] נשארנו בדף אחרי השמירה — עוברים לרשימת התלמידים לאימות');
@@ -343,8 +351,8 @@ export async function processStudent(task, gen) {
   }
 
   if (task.idType === 'passport') {
-    if (!task.birthDate) return mk(ABSORB_STATUS.ERROR, 'דרכון ללא תאריך לידה', 'הוסף לשורה עמודת "תאריך לידה" (DD/MM/YYYY) והרץ שוב');
-    if (!task.countryValue) return mk(ABSORB_STATUS.ERROR, `ארץ דרכון חסרה או לא מוכרת: "${task.country || 'ריק'}"`, 'כתוב בעמודת "ארץ" שם מהרשימה (כפתור "רשימת ארצות") והרץ שוב');
+    if (!task.birthDate) return mk(ABSORB_STATUS.ERROR, 'דרכון ללא תאריך לידה', 'מלא בשורה תאריך לידה (יום/חודש/שנה) ולחץ "תקן והרץ שוב"');
+    if (!task.countryValue) return mk(ABSORB_STATUS.ERROR, `ארץ דרכון חסרה או לא מוכרת: "${task.country || 'ריק'}"`, 'בחר ארץ מהרשימה בשורה ולחץ "תקן והרץ שוב"');
   }
 
   // ── שלב 1: הדף הנכון ──
@@ -413,7 +421,7 @@ export async function processStudent(task, gen) {
     const afterOpen = await absorbReadAndHidePopup('אחרי "קליטה"', gen);
     if (afterOpen.pop) {
       popupDetail = afterOpen.pop.text;
-      if (afterOpen.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${popupDetail}`, popupDetail, 'המערכת מבקשת אישור "המשך". הסקריפט לא מאשר לבד: לחץ "קליטה" ידנית, קרא את ההודעה והחלט');
+      if (afterOpen.blocked) return blockedResult(mk, popupDetail, 'האתר מבקש אישור "המשך". הכלי לא מאשר לבד: לחץ "קליטה" ידנית, קרא את ההודעה והחלט');
     }
     checkStop('after-absorb-click', gen);
 
@@ -446,7 +454,7 @@ export async function processStudent(task, gen) {
       const countryEl = $el(ABSORB_IDS.countryDdl);
       if (!countryEl) return mk(ABSORB_STATUS.ERROR, 'שדה ארץ דרכון בחלון הקליטה לא נמצא', MANUAL_ABSORB_ACTION);
       const country = await absorbSelectOption(countryEl, task.countryValue, 'ארץ', task.country);
-      if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'תקן את עמודת "ארץ" לשם מהרשימה (כפתור "רשימת ארצות") והרץ שוב');
+      if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'בחר ארץ מהרשימה בשורה ולחץ "תקן והרץ שוב"');
       await sleepCheckStop(150, gen);
     }
 
@@ -463,7 +471,7 @@ export async function processStudent(task, gen) {
     const confirmBtn = $el(ABSORB_IDS.confirmBtn);
     if (!confirmBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "אישור" לא נמצא בחלון הקליטה', MANUAL_ABSORB_ACTION);
     const v = absorbRunClientValidation('PopValidation');
-    if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המזהה, תאריך הלידה או הארץ לפי ההודעה, והרץ שוב');
+    if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המספר, תאריך הלידה או הארץ לפי ההודעה, ולחץ "תקן והרץ שוב"');
 
     // "אישור" עלול לטעון דף תלמיד-חדש, או (ממצא ב-9) לטעון מחדש את אותו דף: מסמנים לפני.
     S.pendingConfirm = { idx: myIdx, identity };
@@ -485,13 +493,13 @@ export async function processStudent(task, gen) {
     await sleepCheckStop(300, gen);
     const afterConfirm = await absorbAfterConfirmPopup(gen);
     if (afterConfirm.pop) {
-      if (afterConfirm.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות). הסקריפט לא מאשר לבד: בצע את הקליטה ידנית והחלט על ההודעה');
-      if (afterConfirm.pop.kind === 'error') return mk(`${ABSORB_STATUS.ERROR}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה ידנית: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור"; אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
+      if (afterConfirm.blocked) return blockedResult(mk, afterConfirm.pop.text, 'האתר מבקש אישור "המשך". הכלי לא מאשר לבד: בצע את הקליטה ידנית באתר והחלט על ההודעה');
+      if (afterConfirm.pop.kind === 'error') return mk(absorbShortStatus(ABSORB_STATUS.ERROR, afterConfirm.pop.text), afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה שוב ("תקן והרץ שוב"), או ידנית באתר: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור". אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
       popupDetail = afterConfirm.pop.text;
     }
     if (absorbModalVisible()) {
       const errs = absorbCollectValidationMessages();
-      return mk(ABSORB_STATUS.NOT_COMPLETED, errs.join(' | ') || popupDetail || 'חלון הקליטה נשאר פתוח', 'פתח את חלון הקליטה ידנית, קרא את הודעת השגיאה ותקן את השורה');
+      return mk(ABSORB_STATUS.NOT_COMPLETED, errs.join(' | ') || popupDetail || 'חלון הקליטה נשאר פתוח', 'פתח את חלון הקליטה ידנית באתר, קרא את ההודעה, תקן את השורה ולחץ "תקן והרץ שוב"');
     }
     checkStop('before-verify', gen);
 
@@ -537,7 +545,6 @@ function continueOtherInstituteFromPanel() {
 // ברירת-המחדל נשארת: לא מאשרים לבד → "נחסם". רק כשבעל-המערכת סימן בפאנל "אשר המשך" בתחילת הריצה,
 // לוחצים "המשך", ממתינים ל-postback, וקוראים את ההודעה הבאה (באתר: "הצלחה מעבר תלמיד הצליח").
 // כל חלונית אחרת עם "המשך" (טקסט שונה) נשארת "נחסם" גם כשהאפשרות מסומנת.
-const OTHER_INSTITUTE_RE = /רשום כבר במוסד אחר/;
 async function absorbAfterConfirmPopup(gen) {
   const pop = readMessagePopup();
   if (!pop) return { pop: null, blocked: false };
@@ -666,7 +673,7 @@ export async function runQueue() {
   while (S.curIdx < S.queue.length) {
     if (absorbIsStopped()) {
       log('⛔ נעצר — ממלאים את שארית התור');
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
     const taskIdx = S.curIdx;
@@ -678,8 +685,8 @@ export async function runQueue() {
       result = await processStudentSafe(task);
     } catch (stopErr) {
       log(`⛔ נעצר באמצע עיבוד: ${stopErr && stopErr.message}`);
-      recordResult(makeAbsorbResult(task, ABSORB_STATUS.STOPPED, 'נעצר באמצע עיבוד', 'בדוק את מצב התלמיד באתר והרץ שוב את השורה'), null, taskIdx);
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      recordResult(makeAbsorbResult(task, ABSORB_STATUS.STOPPED, 'נעצר באמצע עיבוד', 'בדוק את מצב התלמיד באתר, ואז "תקן והרץ שוב"'), null, taskIdx);
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
 
@@ -775,7 +782,7 @@ export async function absorbResumeIfPending(opts) {
     S.curIdx = st.curIdx || 0;
     S.lastRecordedIdx = S.curIdx - 1;
     S.startedAt = st.startedAt || null;
-    fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+    fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
     finishRun();
     return false;
   }
@@ -841,7 +848,7 @@ export function absorbStop() {
   navigating = false;
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       finishRun();
     } else {
       clearAbsorbState();

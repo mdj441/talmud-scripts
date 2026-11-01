@@ -126,9 +126,10 @@ test('טקסטי "מה לעשות" (ממצא 12): בלי הוראות חלשות
   assert.ok(!/וצרף את היומן['"`]/.test(src), 'לאן לצרף?');
   assert.ok(src.includes('https://github.com/mdj441/talmud-scripts/issues'), 'קישור לדף התמיכה');
   assert.ok(src.includes('לחץ "העתק יומן"'), 'מפנה לכפתור בשמו');
-  const verifyLines = src.split('\n').filter((l) => l.includes('ודא ברשימת התלמידים'));
+  // שכבת-הבהירות (1.11.2026): הוראת "לבדוק ברשימה" אומרת איפה לחפש ומה לעשות אם אינו שם
+  const verifyLines = src.split('\n').filter((l) => l.includes('פתח את רשימת התלמידים של סוג'));
   assert.ok(verifyLines.length >= 1);
-  for (const line of verifyLines) assert.ok(line.includes('קלוט אותו ידנית'), `חסר "ואם אינו שם, קלוט אותו ידנית": ${line.trim()}`);
+  for (const line of verifyLines) assert.ok(line.includes('אם אינו שם, קלוט ידנית'), `חסר "אם אינו שם, קלוט ידנית": ${line.trim()}`);
   assert.ok(src.includes('לחץ "קליטה" בדף סוג-הלימוד'), 'הוראת קליטה ידנית מפורטת');
 });
 

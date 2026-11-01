@@ -8,7 +8,7 @@
 import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
-import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, fitBoxHtml, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import {
   MESSAGES_ACTION, MESSAGES_ALL_ACTIONS, MESSAGES_RESULT, MESSAGES_TRANSFER_HEADER, MESSAGES_TRANSFER_DONE_HEADER,
   messagesIsMessagesUrl, messagesParseTable, messagesLoadSummary, messagesBuildTsv,
@@ -19,6 +19,8 @@ import {
 } from './messages.js';
 
 const MP = 'tt-messages';
+export const MESSAGES_STEPS = ['סריקה', 'סקירה', 'ביצוע', 'תוצאות'];
+const MESSAGES_PAGE_PATH = '/Association/Default.aspx';
 let msgUi = null;
 let msgMode = 'table';
 let msgPending = []; // מסלול האקסל: הרשומות שנטענו מהטקסט המודבק
@@ -291,7 +293,10 @@ function messagesMount(container, panelUi, page) {
   msgUi = panelUi;
   const url = (page && page.url) || (typeof location !== 'undefined' ? location.href : '');
   if (!messagesIsMessagesUrl(url)) {
-    container.innerHTML = '<div class="tt-box tt-box-info">הכלי עובד בדף ההודעות בלבד.</div>';
+    // הכרעה ח (1.11.2026): הלשונית מופיעה בכל דף; מחוץ לדף ההודעות היא מסבירה ומציעה לעבור
+    container.innerHTML = fitBoxHtml({ id: `${MP}-fit`, text: 'כאן מטפלים בהודעות שנשלחו אליכם (בקשות-מעבר ועדכונים). הכלי עובד מתוך דף ההודעות של האתר.', buttonId: `${MP}-goto`, buttonLabel: 'עבור לדף ההודעות' });
+    msgUi.status('הכלי עובד מתוך דף ההודעות');
+    $el(`${MP}-goto`).addEventListener('click', () => { msgUi.status('עובר לדף ההודעות…'); location.href = (typeof location !== 'undefined' ? location.origin : '') + MESSAGES_PAGE_PATH; });
     return;
   }
   const panel = $el('tt-panel');
@@ -313,13 +318,12 @@ function messagesMount(container, panelUi, page) {
       ${buttonsRowHtml([{ id: `${MP}-bulk-run`, label: 'הפעל מצב גורף', kind: 'primary' }])}
     </div>
     <div id="${MP}-table">
-      <div class="tt-box tt-box-info">
-        "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
-        (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
-        בקשת מעבר = מוסד אחר מבקש תלמיד שלנו. הדבקת מצבת מאקסל מסמנת על כל בקשה: "ממתין" כשהתלמיד עדיין
-        במצבת (לאשר או לדחות), "כנראה בוצע" כשאינו במצבת. זה רמז לבדיקה, ההחלטה לא משתנה מעצמה;
-        "כל 'כנראה בוצע': סמן כטופל" מחיל אותה.
-      </div>
+      <p class="tt-zone-lead">"סרוק" אוסף את כל ההודעות הפתוחות לטבלה אחת. בוחרים החלטה לכל שורה, ואז "בצע לפי הטבלה".</p>
+      <details class="tt-section"><summary>איך זה עובד, בפירוט</summary><div class="tt-box tt-box-info">
+        כפילויות ממוזגות לשורה אחת. ברירת-המחדל להחלטה: בקשת מעבר (מוסד אחר מבקש תלמיד שלנו) → אישור מעבר; כל הודעה אחרת → טופל.
+        "דלג" לא נוגע בהודעה. הדבקת מצבת מאקסל מסמנת על כל בקשת-מעבר: "ממתין" כשהתלמיד עדיין במצבת (לאשר או לדחות),
+        "כנראה בוצע" כשאינו במצבת. זה רמז לבדיקה, ההחלטה לא משתנה מעצמה; "כל 'כנראה בוצע': סמן כטופל" מחיל אותה.
+      </div></details>
       ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
       <details class="tt-section" id="${MP}-roster">
@@ -385,6 +389,7 @@ function messagesMount(container, panelUi, page) {
   messagesSetHooks({
     onStart: (mode) => {
       messagesSetRunning(true);
+      msgUi.step(mode === 'scan' ? 0 : 2);
       if (mode !== 'scan') { msgResults = []; messagesRenderResults(); messagesRenderReport(null); }
       msgUi.progress(0, 0);
       msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי הטבלה…');
@@ -399,6 +404,7 @@ function messagesMount(container, panelUi, page) {
       const merged = msgRows.length;
       setText(`${MP}-scan-status`, `✓ נסרקו ${info.total} הודעות מ-${info.pages} עמודים${merged < info.total ? ` (${merged} שורות אחרי מיזוג כפילויות)` : ''}${info.stopped ? ' (נעצר)' : ''}.`);
       messagesSetRunning(false);
+      msgUi.step(merged ? 1 : 0);
       const done = msgRows.filter((r) => r.probablyDone).length;
       msgUi.status(merged
         ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${MESSAGES_DONE_HINT(done)})` : ''}`
@@ -409,6 +415,7 @@ function messagesMount(container, panelUi, page) {
       messagesRenderResults();
       messagesRenderReport(report);
       messagesSetRunning(false);
+      msgUi.step(3);
       msgUi.progress(0, 0);
       msgUi.status(`${report.stopped ? 'נעצר' : 'הסתיים'}. ${report.summary}${report.lines.length ? ' (ראה "מה נשאר")' : ''}. סרוק שוב לרענון הטבלה`);
     },
@@ -419,14 +426,16 @@ function messagesMount(container, panelUi, page) {
   messagesRenderResults();
   messagesRebuildRows();
   log('[הודעות] דף ההודעות זוהה');
-  msgUi.status('מוכן. "סרוק" לטבלת סקירה, או "מצב גורף"');
+  msgUi.step(msgRows.length ? 1 : 0);
+  msgUi.status('מוכן. "סרוק" אוסף את כל ההודעות הפתוחות לטבלה אחת');
 }
 
 export const messagesTool = {
   id: 'messages',
   title: 'הודעות',
-  pages: [], // רק דף ההודעות, לפי הכתובת (לא כל דף "אחר" באתר; נצפה ברטוב 30.10: החלונית צצה גם בדף הכניסה)
-  matches: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
+  pages: ['*'], // הכרעה ח (1.11.2026): בכל דף; מחוץ לדף ההודעות הלשונית מציעה לעבור אליו. דף הכניסה מסונן ב-main.
+  fits: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
+  steps: MESSAGES_STEPS,
   hasPendingRun: () => false,
   isRunning: messagesIsRunning,
   onStop: messagesStop,

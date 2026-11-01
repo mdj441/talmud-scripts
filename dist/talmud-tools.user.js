@@ -766,11 +766,55 @@ function selectHtml({ id, options, value = '', placeholder = '', cls = '' }) {
   return `<select id="${esc(id)}" class="tt-select ${cls}">${opts.join('')}</select>`;
 }
 
+// סרגל-שלבים (שכבת-הבהירות 1.11.2026): "איפה אוחזים". labels = שמות השלבים; השלב הפעיל נקבע ב-setStep.
+function stepsHtml(id, labels) {
+  return `<div class="tt-steps" id="${esc(id)}" aria-label="שלבים">${(labels || []).map((l, i) => `<div class="tt-step" data-step="${i}">${esc(l)}</div>`).join('')}</div>`;
+}
+
+// טהורה: אילו מחלקות מקבל כל שלב כשהשלב current פעיל (לפניו: done; הוא: on; אחריו: כלום).
+function stepClasses(count, current) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(i < current ? 'tt-step-done' : (i === current ? 'tt-step-on' : ''));
+  return out;
+}
+
+function setStep(id, current) {
+  const el = $el(id);
+  if (!el) return;
+  const steps = Array.from(el.querySelectorAll('.tt-step'));
+  const classes = stepClasses(steps.length, current);
+  steps.forEach((s, i) => {
+    s.classList.toggle('tt-step-done', classes[i] === 'tt-step-done');
+    s.classList.toggle('tt-step-on', classes[i] === 'tt-step-on');
+    if (classes[i] === 'tt-step-on') s.setAttribute('aria-current', 'step'); else s.removeAttribute('aria-current');
+  });
+}
+
+// תגית-מצב (ספירה). kind: info | ok | warn | bad. ‏button=true → תגית לחיצה (סינון), עם data-filter.
+function tagHtml({ label, kind = 'info', id = '', button = false, filter = '', active = false, disabled = false, title = '' }) {
+  const cls = `tt-tag tt-tag-${kind}${active ? ' tt-tag-active' : ''}`;
+  if (button) return `<button type="button" class="${cls}"${id ? ` id="${esc(id)}"` : ''} data-filter="${esc(filter)}"${disabled ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</button>`;
+  return `<span class="${cls}"${id ? ` id="${esc(id)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</span>`;
+}
+
+// אזור ("הכנה" / "תוצאות"): כותרת, הערה קטנה, ותוכן. dim=true כשהאזור עוד לא רלוונטי.
+function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false }) {
+  return `<section class="tt-zone${dim ? ' tt-zone-dim' : ''}" id="${esc(id)}"${hidden ? ' hidden' : ''}>
+    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span></div>${inner}</section>`;
+}
+
+// הכרעה ח2: תיבה קצרה כשהדף לא מתאים ללשונית, עם כפתור מעבר (אופציונלי).
+function fitBoxHtml({ id, text, buttonId = '', buttonLabel = '' }) {
+  return `<div class="tt-box tt-box-info tt-fit" id="${esc(id)}">${esc(text)}${buttonId ? ` <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: buttonId, label: buttonLabel, kind: 'primary', size: 'small' })}</div>` : ''}</div>`;
+}
+
 // טבלת תוצאות. columns: [{key, label, mono?, center?, width?}]. classify(row) → 'ok' | 'warn' | 'bad' | ''
-function resultsTableHtml({ columns, rows, classify, emptyText = '' }) {
+// ‏actionKey (שכבת-הבהירות): לשורה שאינה 'ok' עם ערך בשדה הזה נוספת שורת "מה לעשות" מתחתיה (tr.tt-act).
+// שורות-התוצאה עצמן מסומנות data-row, כדי שקוראים (בדיקות) יספרו רק אותן.
+function resultsTableHtml({ columns, rows, classify, emptyText = '', actionKey = '' }) {
   if (!rows || !rows.length) return emptyText ? `<div class="tt-empty">${esc(emptyText)}</div>` : '';
   const head = columns.map((c) => `<th${c.width ? ` style="width:${c.width}"` : ''}>${esc(c.label)}</th>`).join('');
-  const body = rows.map((r) => {
+  const body = rows.map((r, i) => {
     const cls = classify ? classify(r) : '';
     const cells = columns.map((c) => {
       const v = r[c.key];
@@ -778,7 +822,8 @@ function resultsTableHtml({ columns, rows, classify, emptyText = '' }) {
       return `<td class="${classes}">${esc(v)}</td>`;
     }).join('');
     const title = r.detail ? ` title="${esc(r.detail)}"` : '';
-    return `<tr class="tt-r-${cls || 'none'}"${title}>${cells}</tr>`;
+    const action = actionKey && cls !== 'ok' && r[actionKey] ? `<tr class="tt-act tt-r-${cls || 'none'}"><td colspan="${columns.length}">${esc(r[actionKey])}</td></tr>` : '';
+    return `<tr class="tt-r-${cls || 'none'}" data-row="${i}"${title}>${cells}</tr>${action}`;
   }).join('');
   return `<table class="tt-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -863,18 +908,24 @@ function bindDateMask(id) {
   });
 }
 
+// ─── src/ui/logo.js ───
+// הלוגו של בעל-המערכת (github.com/mdj441.png, 96px, 3.3KB) מוטמע כ-data URI: בלי תלות ברשת, בסינון או במדיניות-תוכן של האתר.
+// הוטמע 1.11.2026 (הכרעה יג בדוח-הלפני של שכבת-הבהירות).
+const LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAaQAAAGkCAIAAADxLsZiAAAMvklEQVR4nOzWMQ2AQBBEUUJOBB4RgAYE4JFyJRCK6aHde78aBS8zqmqRpO6tGbCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72H3CbmRo8t72+8zs07UdmZ6dZ+fZeXaenWfX/dnBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jB7g92Dzt1MAAAAIBAzN+6Rxg3icEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7OLYHbuxY8cmAAJBEEURLMIeLcAaLMAeDbcEo9FY8DaQN9EWcLyDDzvYwQ52sHuF3VRVucduPfecZmbPjmXLOXBzDs/Os+t7dm3zxfpi7y9Ws9PsNDvNTrPT7DQ7zU6z+0uzgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYfYfdxW4d0wAQwmAYXU7EeUQAGhCAR2QwdWAkAYbm/VMN9OWDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHew2sfviuL7+1ziTrIwWp9m75XslZafslJ2yU3bHyg52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sFuxm+zXMQ2AQBBE0ZAgAo8IQAMC8Ei5Ei5XjIUr9t5Wq+DnDdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdktlN2Zx7l59//mda7VHVWVX+mUrmHpvuvJa8aasWasGWvGmrHdZ6zYiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YiZ3YbRe7wW4dDAAAACAQ87fuEcbNYmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmRHdmQXl91lN/brmAZgGIai4FIQ5VgAxVAA5RgYmUwgSizLujeZgE/6sIMd7GAHO9jBDnawgx3sYAc72MGuCHZXHMd7xhdnn/77jVPKyB8t/1Eedqofu9mdbLcZa8aasWasGbt5xsIOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgB7uW2E1266AEAAAEgiD2L3sRfNnBg/ltgmGdnbNzds7O2Tk7Z+fsnJ2zc3bOztk5O2fn7Jyds3N2zs7ZOTtn5+ycnbNzds7O2Tk7Z+fsnJ2zc3bOztk5O2fn7Jyds3N2zs7ZOTtn5+ycnbNzds7O2Tk7Z+fsnJ2zc3bOztk5O2fn7Jyds3N2zs7ZOTtn5+ycnbNzds7O2Tk7Z+fsnJ2zc3bOztk5O2fn7Jyds3N2zs7ZOTtn5+ycnbNzds7O2Tk7Z+fsnJ2zc3bO7s3ZTZJrZ+fsnJ2zc3bOztk5O2fXfHawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwQ52sIMd7GAHO9jBDnawgx3sYAc72MEOdrCDHexgBzvYwa4TO2fn7Jyds3N2zs7ZOTtn5+ycnbNzds7O2Tk7Z+fsnJ2zazy7HQC1iSe4uFcD9QAAAABJRU5ErkJggg==';
+
 // ─── src/ui/panel.js ───
-// השלד המאוחד: כפתור צף + מגירה אחת (צמודה לקצה הימני) עם לשוניות לכלים הרלוונטיים לדף הנוכחי.
-// כל כלי נרשם עם registerTool({ id, title, pages, mount, onStop, isRunning, hasPendingRun }).
-// ‏mount(container, ui) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), open() }.
+// השלד המאוחד: כפתור צף (הלוגו) + מגירה אחת, צמודה לשמאל כברירת-מחדל (ניתן להעביר לימין; הצד נזכר),
+// עם לשוניות לכל הכלים. כל כלי נרשם עם registerTool({ id, title, pages, steps, mount, onStop, isRunning, hasPendingRun }).
+// ‏mount(container, ui, page) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), step(i), open() }.
 // Escape → onStop של הלשונית הפעילה (רק כשהיא רצה). אין גישה ל-document ברמת המודול.
 //
-// עיצוב (30.10.2026): כלי-עבודה שקט בתוך אתר ממשלתי כחול-אפור. משפחת-גופן אחת (של המערכת, בלי טעינה
-// מהרשת), צבע-הדגשה אחד (ירוק-טורקיז עמוק, שונה מכחול האתר) לפעולה הראשית, ללשונית הפעילה ולפס-ההתקדמות.
-// פס-ההתקדמות הדק מתחת לשורת-המצב הוא האלמנט היחיד שמושך את העין; כל השאר ממושמע.
+// עיצוב (30.10.2026, שכבת-הבהירות 1.11.2026): כלי-עבודה שקט בתוך אתר ממשלתי כחול-אפור. משפחת-גופן אחת (של
+// המערכת), צבע-הדגשה אחד (ירוק-טורקיז עמוק) לפעולה הראשית, ללשונית הפעילה, לשלב הנוכחי ולפס-ההתקדמות.
+// מה שמושך את העין: סרגל-השלבים ושורת-המצב (איפה אוחזים), ואזורי "הכנה" / "תוצאות" המופרדים. כל השאר ממושמע.
 
 
 const PANEL_VERSION = '4.0';
+const PANEL_WARNING = 'הכלי לוחץ בשבילך באתר. כל פעולה היא באחריותך: בדוק את התוצאות באתר.';
 const UI_KEY = 'tt.ui';
 const tools = [];
 let activeToolId = null;
@@ -893,6 +944,13 @@ function saveUiState(patch) {
   try { localStorage.setItem(UI_KEY, JSON.stringify(Object.assign(loadUiState(), patch))); } catch (e) { /* noop */ }
 }
 
+// צד המגירה: 'left' (ברירת-המחדל: עץ-הסניפים של האתר יושב מימין) או 'right'. טהורה לבדיקה.
+function panelSide(state) {
+  return state && state.side === 'right' ? 'right' : 'left';
+}
+function otherSide(side) { return side === 'right' ? 'left' : 'right'; }
+function sideButtonLabel(side) { return side === 'right' ? 'לצד שמאל' : 'לצד ימין'; }
+
 const PANEL_CSS = `
 #tt-panel,#tt-fab{
   --tt-ink:#1b2a33;--tt-ink-2:#4a5a66;--tt-muted:#7a8891;--tt-paper:#fbfaf7;--tt-field:#ffffff;--tt-line:#d9dfe3;--tt-line-2:#eceff2;
@@ -900,9 +958,10 @@ const PANEL_CSS = `
   --tt-ok:#1e6b45;--tt-ok-bg:#edf7f0;--tt-warn:#8a5a00;--tt-warn-bg:#fff6df;--tt-bad:#a2261a;--tt-bad-bg:#fcefed;--tt-info:#24455c;--tt-info-bg:#eef3f7;
   --tt-font:"Segoe UI","Arial Hebrew",Arial,sans-serif;
 }
-#tt-fab{position:fixed;bottom:22px;right:22px;z-index:99998;width:42px;height:42px;border-radius:50%;border:0;cursor:pointer;
-  background:var(--tt-ink);color:#fff;font:700 18px/1 var(--tt-font);display:flex;align-items:center;justify-content:center;
-  box-shadow:0 2px 10px rgba(27,42,51,.28)}
+#tt-fab{position:fixed;bottom:22px;left:22px;z-index:99998;width:46px;height:46px;border-radius:50%;border:0;cursor:pointer;padding:0;
+  background:var(--tt-ink);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 12px rgba(27,42,51,.3)}
+#tt-fab.tt-side-right{left:auto;right:22px}
+#tt-fab img{width:38px;height:38px;border-radius:50%;display:block}
 #tt-fab:hover{background:#2b3f4b}
 #tt-fab:focus-visible{outline:2px solid var(--tt-accent);outline-offset:3px}
 #tt-fab .tt-badge{position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--tt-accent);display:none;pointer-events:none}
@@ -910,21 +969,26 @@ const PANEL_CSS = `
 @keyframes tt-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(1.12)}}
 @media (prefers-reduced-motion:reduce){#tt-fab.tt-running .tt-badge{animation:none}}
 
-#tt-panel{position:fixed;top:0;right:0;bottom:0;z-index:99999;width:600px;max-width:100vw;display:flex;flex-direction:column;
-  background:var(--tt-paper);color:var(--tt-ink);border-left:1px solid var(--tt-line);box-shadow:-10px 0 30px rgba(27,42,51,.14);
+#tt-panel{position:fixed;top:0;left:0;bottom:0;z-index:99999;width:660px;max-width:100vw;display:flex;flex-direction:column;
+  background:var(--tt-paper);color:var(--tt-ink);border-right:1px solid var(--tt-line);box-shadow:10px 0 30px rgba(27,42,51,.14);
   font:13px/1.5 var(--tt-font);direction:rtl;font-variant-numeric:tabular-nums}
+#tt-panel.tt-side-right{left:auto;right:0;border-right:0;border-left:1px solid var(--tt-line);box-shadow:-10px 0 30px rgba(27,42,51,.14)}
 #tt-panel.tt-panel-wide{width:820px}
 #tt-panel[hidden]{display:none}
 #tt-panel *{box-sizing:border-box}
 #tt-panel :focus-visible{outline:2px solid var(--tt-accent);outline-offset:1px}
 
-.tt-head{display:flex;align-items:baseline;gap:10px;padding:14px 18px 8px;user-select:none}
+.tt-head{display:flex;align-items:center;gap:10px;padding:10px 16px 6px;user-select:none}
+.tt-head .tt-logo{width:28px;height:28px;border-radius:50%;display:block;flex:none}
 .tt-head .tt-title{font-weight:700;font-size:16px;flex:1;letter-spacing:-.01em}
 .tt-head .tt-ver{font-size:11px;color:var(--tt-muted)}
-.tt-head .tt-x{background:transparent;border:0;color:var(--tt-ink-2);font:400 20px/1 var(--tt-font);cursor:pointer;padding:0 2px;align-self:center}
+.tt-head .tt-side{border:1px solid var(--tt-line);background:var(--tt-field);color:var(--tt-ink-2);border-radius:6px;font:inherit;font-size:12px;padding:3px 8px;cursor:pointer}
+.tt-head .tt-side:hover{border-color:#b9c3ca;color:var(--tt-ink)}
+.tt-head .tt-x{background:transparent;border:0;color:var(--tt-ink-2);font:400 20px/1 var(--tt-font);cursor:pointer;padding:0 2px}
 .tt-head .tt-x:hover{color:var(--tt-ink)}
+.tt-warnline{margin:0 16px 8px;padding:5px 10px;border-radius:6px;background:var(--tt-warn-bg);border:1px solid #ead9a8;color:#4f3600;font-size:12px}
 
-.tt-tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--tt-line)}
+.tt-tabs{display:flex;gap:18px;padding:0 16px;border-bottom:1px solid var(--tt-line)}
 .tt-tab{border:0;background:transparent;padding:7px 0 9px;cursor:pointer;font:inherit;font-size:13px;color:var(--tt-ink-2);
   border-bottom:2px solid transparent;margin-bottom:-1px}
 .tt-tab:hover{color:var(--tt-ink)}
@@ -932,18 +996,38 @@ const PANEL_CSS = `
 .tt-tab .tt-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--tt-accent);margin-inline-start:6px;vertical-align:middle}
 .tt-tab .tt-dot[hidden]{display:none}
 
-.tt-body{padding:0 18px 18px;overflow:auto;flex:1}
-.tt-strip{position:sticky;top:0;z-index:2;background:var(--tt-paper);margin:0 -18px 10px;padding:10px 18px 0}
+.tt-body{padding:0 16px 18px;overflow:auto;flex:1}
+.tt-strip{position:sticky;top:0;z-index:2;background:var(--tt-paper);margin:0 -16px 10px;padding:8px 16px 0}
+.tt-steps{display:flex;margin:0 0 6px;counter-reset:tt-s}
+.tt-step{flex:1;position:relative;text-align:center;font-size:12px;color:var(--tt-muted);padding:2px 0 0}
+.tt-step::before{counter-increment:tt-s;content:counter(tt-s);position:relative;z-index:1;display:block;width:20px;height:20px;line-height:18px;border-radius:50%;
+  border:1px solid var(--tt-line);background:var(--tt-field);margin:0 auto 2px;font-weight:600;font-size:11px}
+.tt-step::after{content:"";position:absolute;top:10px;right:50%;width:100%;height:1px;background:var(--tt-line)}
+.tt-step:first-child::after{display:none}
+.tt-step-on{color:var(--tt-accent);font-weight:700}
+.tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
+.tt-step-done{color:var(--tt-ink-2)}
+.tt-step-done::before{content:"✓";background:var(--tt-accent-soft);border-color:var(--tt-accent);color:var(--tt-accent)}
 .tt-strip-row{display:flex;align-items:baseline;gap:12px;min-height:22px}
 .tt-status{flex:1;font-size:13px;color:var(--tt-ink)}
 .tt-progress{font-size:12px;color:var(--tt-muted);white-space:nowrap}
-.tt-bar{height:2px;background:var(--tt-line-2);margin-top:8px;overflow:hidden}
+.tt-bar{height:2px;background:var(--tt-line-2);margin-top:6px;overflow:hidden}
 .tt-bar i{display:block;height:100%;width:100%;background:var(--tt-accent);transform:scaleX(0);transform-origin:right;transition:transform .25s ease}
 @media (prefers-reduced-motion:reduce){.tt-bar i{transition:none}}
 
+.tt-zone{border:1px solid var(--tt-line);border-radius:8px;background:var(--tt-field);margin:8px 0;padding:8px 12px 10px}
+.tt-zone-dim{opacity:.55}
+.tt-zone-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+.tt-zone-head b{font-size:13.5px}
+.tt-zone-head .tt-zone-note{font-size:12px;color:var(--tt-muted);flex:1}
+.tt-zone-lead{font-size:12.5px;color:var(--tt-ink-2);margin:0 0 6px}
+.tt-fit{margin:10px 0}
+
 .tt-row{display:flex;gap:8px;margin:8px 0;flex-wrap:wrap;align-items:center}
 .tt-row-tight{margin:4px 0 2px}
+.tt-row-between{justify-content:space-between}
 .tt-row > .tt-btn{flex:1 1 auto}
+.tt-row-wrap > .tt-btn{flex:0 1 auto}
 .tt-btn{border:1px solid var(--tt-line);background:var(--tt-field);color:var(--tt-ink);padding:7px 12px;border-radius:6px;cursor:pointer;font:inherit;font-size:13px}
 .tt-btn:hover{border-color:#b9c3ca;background:#f6f7f8}
 .tt-btn:disabled{opacity:.45;cursor:default}
@@ -955,11 +1039,14 @@ const PANEL_CSS = `
 .tt-btn-subtle{background:transparent;border-color:transparent;color:var(--tt-accent);text-decoration:underline;text-underline-offset:3px;text-decoration-color:rgba(15,107,92,.35)}
 .tt-btn-subtle:hover{background:var(--tt-accent-soft);border-color:transparent;text-decoration-color:var(--tt-accent)}
 .tt-btn-sm{padding:3px 8px;font-size:12px}
+.tt-btn[hidden]{display:none}
 
 .tt-field{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--tt-ink-2);flex:1}
 .tt-field-label{font-weight:600}
 .tt-hint{font-size:12px;color:var(--tt-muted)}
 .tt-hint-warn{color:var(--tt-warn)}
+.tt-legend{font-size:11.5px;color:var(--tt-muted)}
+.tt-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-inline-end:4px;vertical-align:-1px}
 .tt-input,.tt-select,.tt-textarea{border:1px solid var(--tt-line);border-radius:6px;padding:6px 8px;font:inherit;font-size:13px;background:var(--tt-field);color:var(--tt-ink);width:100%}
 .tt-input:focus,.tt-select:focus,.tt-textarea:focus{outline:2px solid var(--tt-accent);outline-offset:0;border-color:var(--tt-accent)}
 .tt-input::placeholder,.tt-textarea::placeholder{color:#a3adb4}
@@ -967,6 +1054,8 @@ const PANEL_CSS = `
 .tt-textarea-sm{min-height:60px}
 .tt-mono{direction:ltr;text-align:left;font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .tt-center{text-align:center}
+.tt-check{display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer}
+.tt-check input{margin:0}
 
 .tt-box{border:1px solid var(--tt-line);background:var(--tt-field);padding:8px 12px;margin:8px 0;font-size:12.5px;border-radius:6px}
 .tt-box-warn{background:var(--tt-warn-bg);border-color:#ead9a8;color:#4f3600}
@@ -978,6 +1067,20 @@ const PANEL_CSS = `
 .tt-section summary:hover{color:var(--tt-ink)}
 .tt-section[open] summary{margin-bottom:4px}
 
+.tt-tags{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0}
+.tt-tag{display:inline-block;border-radius:12px;padding:0 9px;font-size:12px;font-weight:600;line-height:20px;border:1px solid transparent;font-family:inherit}
+.tt-tag-info{background:var(--tt-info-bg);color:var(--tt-info)}
+.tt-tag-ok{background:var(--tt-ok-bg);color:var(--tt-ok)}
+.tt-tag-warn{background:var(--tt-warn-bg);color:var(--tt-warn)}
+.tt-tag-bad{background:var(--tt-bad-bg);color:var(--tt-bad)}
+.tt-tag-done{background:var(--tt-warn-bg);color:var(--tt-warn)}
+.tt-tag-count{background:var(--tt-info-bg);color:var(--tt-info)}
+button.tt-tag{cursor:pointer}
+button.tt-tag:hover{border-color:currentColor}
+button.tt-tag.tt-tag-active{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+button.tt-tag:disabled{opacity:.5;cursor:default}
+.tt-tags .tt-tags-spacer{flex:1}
+
 .tt-table{width:100%;border-collapse:collapse;font-size:12.5px;margin:4px 0;background:var(--tt-field)}
 .tt-table th{color:var(--tt-ink-2);font-weight:600;padding:6px 8px;text-align:right;border-bottom:1px solid var(--tt-line);position:sticky;top:0;background:var(--tt-field)}
 .tt-table td{padding:5px 8px;border-bottom:1px solid var(--tt-line-2);vertical-align:middle}
@@ -986,6 +1089,9 @@ const PANEL_CSS = `
 .tt-table tr.tt-r-ok td.tt-status-cell{color:var(--tt-ok)}.tt-table tr.tt-r-ok td.tt-status-cell::before{background:var(--tt-ok)}
 .tt-table tr.tt-r-warn td.tt-status-cell{color:var(--tt-warn)}.tt-table tr.tt-r-warn td.tt-status-cell::before{background:var(--tt-warn)}
 .tt-table tr.tt-r-bad td.tt-status-cell{color:var(--tt-bad)}.tt-table tr.tt-r-bad td.tt-status-cell::before{background:var(--tt-bad)}
+.tt-table tr.tt-r-bad td,.tt-table tr.tt-r-warn td{border-bottom-color:transparent}
+.tt-table tr.tt-act td{padding:0 8px 7px 24px;font-size:12px;color:var(--tt-ink-2);border-bottom:1px solid var(--tt-line-2);white-space:normal;line-height:1.45}
+.tt-table tr.tt-act td::before{content:"←";color:var(--tt-muted);margin-inline-end:6px}
 .tt-scroll{max-height:240px;overflow:auto;border:1px solid var(--tt-line);border-radius:6px;background:var(--tt-field)}
 .tt-scroll-tall{max-height:340px}
 .tt-empty{color:var(--tt-muted);font-size:12px;padding:6px}
@@ -996,25 +1102,34 @@ const PANEL_CSS = `
 .tt-ok{color:var(--tt-ok)}
 .tt-muted{color:var(--tt-muted);font-size:11px}
 .tt-summary{font-size:12px;color:var(--tt-ink-2);margin:2px 0 4px;min-height:16px}
-.tt-tag{display:inline-block;border-radius:3px;padding:0 6px;font-size:11px;font-weight:600;line-height:18px}
-.tt-tag-done{background:var(--tt-warn-bg);color:var(--tt-warn)}
-.tt-tag-count{background:var(--tt-info-bg);color:var(--tt-info)}
 
 .tt-log-details{margin-top:14px;border-top:1px solid var(--tt-line-2);padding-top:6px}
 .tt-log-details summary{cursor:pointer;font-size:12px;color:var(--tt-muted);user-select:none}
 .tt-log-details summary:hover{color:var(--tt-ink-2)}
 .tt-log{max-height:180px;overflow:auto;background:#1f2a31;color:#d8dee3;padding:8px 10px;border-radius:6px;font:11.5px/1.5 Consolas,"Courier New",monospace;white-space:pre-wrap;direction:ltr;text-align:left;margin:4px 0 0}
-.tt-chips{display:flex;flex-wrap:wrap;gap:4px;max-height:140px;overflow:auto;padding:4px 0}
-.tt-chip{border:1px solid var(--tt-line);border-radius:12px;padding:1px 8px;background:var(--tt-field);cursor:pointer;font-size:12px}
-.tt-chip:hover{background:var(--tt-accent-soft);border-color:var(--tt-accent)}
 
 .tt-grid-input{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--tt-field)}
-.tt-grid-input th{color:var(--tt-ink-2);font-weight:600;padding:5px 5px;text-align:right;border-bottom:1px solid var(--tt-line);white-space:nowrap}
-.tt-grid-input td{padding:3px 3px;border-bottom:1px solid var(--tt-line-2)}
+.tt-grid-input th{color:var(--tt-ink-2);font-weight:600;padding:6px 4px;text-align:right;border-bottom:1px solid var(--tt-line);white-space:nowrap;position:sticky;top:0;background:var(--tt-field);z-index:1}
+.tt-grid-input td{padding:5px 2px;vertical-align:middle}
+.tt-grid-input tr.tt-r-main td{border-top:1px solid var(--tt-line-2)}
+.tt-grid-input tr.tt-r-main:first-child td{border-top:0}
 .tt-grid-input .tt-input,.tt-grid-input .tt-select{padding:4px 6px;font-size:12.5px;min-width:0}
+.tt-grid-input .tt-select{padding-inline-end:2px}
 .tt-grid-input tr.tt-r-bad td{background:var(--tt-bad-bg)}
+.tt-grid-input tr.tt-r-warn td{background:var(--tt-warn-bg)}
+.tt-grid-input tr.tt-rowmsg td{padding:0 30px 6px 6px;font-size:11.5px;line-height:1.4}
+.tt-grid-input tr.tt-rowmsg.tt-r-bad td{color:var(--tt-bad)}
+.tt-grid-input tr.tt-rowmsg.tt-r-warn td{color:var(--tt-warn)}
+.tt-grid-input tr.tt-sub td{background:#f4f7f6;padding:5px 24px 7px 6px;border-bottom:1px solid var(--tt-line-2)}
+.tt-grid-input tr.tt-sub .tt-sub-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--tt-ink-2);max-width:540px}
+.tt-grid-input tr.tt-sub .tt-sub-row .tt-input,.tt-grid-input tr.tt-sub .tt-sub-row .tt-select{width:auto}
+.tt-grid-input tr[hidden]{display:none}
+.tt-grid-input .tt-rownum{color:var(--tt-muted);font-size:11px;text-align:center;width:22px}
 .tt-cell-off{background:#f4f5f6}
 .tt-cell-off .tt-input{background:transparent;border-color:transparent}
+.tt-input.tt-need{border-color:var(--tt-bad);background:#fff}
+.tt-grid-input .tt-newbtn{white-space:nowrap}
+.tt-grid-input .tt-newbtn.tt-newbtn-on{color:var(--tt-ok);text-decoration:none;font-weight:600}
 
 .tt-review-tools .tt-filter{flex:2 1 160px;width:auto;direction:rtl}
 .tt-review-tools > .tt-btn{flex:0 1 auto}
@@ -1024,7 +1139,7 @@ const PANEL_CSS = `
 .tt-review-table tr.tt-r-done{background:var(--tt-warn-bg)}
 .tt-review-table td.tt-roster-cell{font-size:11px;color:var(--tt-ink-2);white-space:normal;min-width:70px}
 
-.tt-foot{padding:8px 18px;border-top:1px solid var(--tt-line);font-size:11px;color:var(--tt-muted);display:flex;gap:12px;align-items:center}
+.tt-foot{padding:8px 16px;border-top:1px solid var(--tt-line);font-size:11px;color:var(--tt-muted);display:flex;gap:12px;align-items:center}
 .tt-foot a{color:var(--tt-accent);text-decoration:none}
 .tt-foot a:hover{text-decoration:underline}
 .tt-foot .tt-kbd{border:1px solid var(--tt-line);border-radius:3px;padding:0 4px;font-size:10px;background:var(--tt-field)}
@@ -1038,11 +1153,12 @@ function ensureStyle() {
   document.head.appendChild(style);
 }
 
-// כלי מתאים לדף לפי סוג הדף (pages) או לפי בדיקת-כתובת משלו (matches(page)); כלי עם תור פתוח מוצג בכל מקרה.
+// הכרעה ח2 (1.11.2026): החלונית מופיעה בכל דף של האתר (חוץ מדף הכניסה, שמסונן ב-main). כלי עם pages:['*']
+// מוצג תמיד; הלשונית עצמה אומרת אם הדף מתאים (fits) ומציעה לעבור. כלי עם רשימת דפים: לפי הדף, או עם תור פתוח.
 function toolsForPage(page) {
   const pageKind = page && page.kind;
   return tools.filter((t) => {
-    let fits = Array.isArray(t.pages) && t.pages.includes(pageKind);
+    let fits = Array.isArray(t.pages) && (t.pages.includes('*') || t.pages.includes(pageKind));
     if (!fits && typeof t.matches === 'function') { try { fits = !!t.matches(page); } catch (e) { fits = false; } }
     let pending = false;
     try { pending = !!(t.hasPendingRun && t.hasPendingRun()); } catch (e) { pending = false; }
@@ -1051,6 +1167,17 @@ function toolsForPage(page) {
 }
 
 function toolById(id) { return tools.find((t) => t.id === id) || null; }
+
+// הלשונית הראשונה שנפתחת: תור פתוח גובר; אחרת הלשונית שנזכרה אם היא מתאימה לדף (fits); אחרת הראשונה שמתאימה;
+// אחרת הנזכרה; אחרת הראשונה. טהורה לבדיקה.
+function initialTabFor(list, page, savedId) {
+  const fits = (t) => { try { return typeof t.fits === 'function' ? !!t.fits(page) : true; } catch (e) { return false; } };
+  const saved = list.find((t) => t.id === savedId);
+  if (saved && fits(saved)) return saved.id;
+  const fitting = list.find(fits);
+  if (fitting) return fitting.id;
+  return saved ? saved.id : list[0].id;
+}
 
 function makeUi(tool) {
   return {
@@ -1067,6 +1194,8 @@ function makeUi(tool) {
       const tab = $el(`tt-tab-${tool.id}`);
       if (tab) { const dot = tab.querySelector('.tt-dot'); if (dot) dot.hidden = !on; }
     },
+    // סרגל-השלבים של הלשונית: i = השלב הנוכחי (0-based); כל מה שלפניו מסומן ✓
+    step(i) { setStep(`tt-${tool.id}-steps`, i); },
     open() { openPanel(true); activateTab(tool.id); },
   };
 }
@@ -1075,7 +1204,18 @@ function openPanel(on) {
   const panel = $el('tt-panel');
   if (!panel) return;
   panel.hidden = !on;
+  const fab = $el('tt-fab');
+  if (fab) fab.title = on ? 'סגור את כלי תלמו"ד' : 'פתח את כלי תלמו"ד';
   saveUiState({ open: !!on });
+}
+
+function applySide(side) {
+  const panel = $el('tt-panel');
+  const fab = $el('tt-fab');
+  if (panel) panel.classList.toggle('tt-side-right', side === 'right');
+  if (fab) fab.classList.toggle('tt-side-right', side === 'right');
+  const btn = $el('tt-side');
+  if (btn) { btn.textContent = sideButtonLabel(side); btn.title = side === 'right' ? 'מעביר את החלונית לצד שמאל (נזכר)' : 'מעביר את החלונית לצד ימין (נזכר)'; }
 }
 
 function activateTab(id) {
@@ -1100,16 +1240,17 @@ function mountPanel(page) {
   ensureStyle();
 
   const state = loadUiState();
+  const side = panelSide(state);
   const pending = list.find((t) => { try { return t.hasPendingRun && t.hasPendingRun(); } catch (e) { return false; } });
-  const initialTab = (pending && pending.id) || (list.some((t) => t.id === state.tab) ? state.tab : list[0].id);
+  const initialTab = (pending && pending.id) || initialTabFor(list, page, state.tab);
   const initiallyOpen = pending ? true : state.open !== false;
 
   const fab = document.createElement('button');
   fab.id = 'tt-fab';
   fab.type = 'button';
-  fab.title = 'כלי תלמו"ד: פתיחה וסגירה של החלונית';
+  fab.title = initiallyOpen ? 'סגור את כלי תלמו"ד' : 'פתח את כלי תלמו"ד';
   fab.setAttribute('aria-label', 'כלי תלמו"ד');
-  fab.innerHTML = 'ת<span class="tt-badge"></span>';
+  fab.innerHTML = `<img src="${LOGO_DATA_URI}" alt=""><span class="tt-badge"></span>`;
   document.body.appendChild(fab);
 
   const panel = document.createElement('div');
@@ -1119,16 +1260,20 @@ function mountPanel(page) {
   panel.setAttribute('aria-label', 'כלי תלמו"ד');
   panel.innerHTML = `
     <div class="tt-head" id="tt-head">
+      <img class="tt-logo" src="${LOGO_DATA_URI}" alt="">
       <span class="tt-title">כלי תלמו"ד</span>
       <span class="tt-ver">גרסה ${esc(PANEL_VERSION)}</span>
+      <button type="button" class="tt-side" id="tt-side"></button>
       <button type="button" class="tt-x" id="tt-close" title="סגירה (הכפתור הצף פותח שוב)" aria-label="סגירה">×</button>
     </div>
+    <div class="tt-warnline" id="tt-warnline">${esc(PANEL_WARNING)}</div>
     <div class="tt-tabs" id="tt-tabs" role="tablist">
       ${list.map((t) => `<button type="button" role="tab" class="tt-tab" id="tt-tab-${esc(t.id)}">${esc(t.title)}<span class="tt-dot" hidden></span></button>`).join('')}
     </div>
     <div class="tt-body">
       ${list.map((t) => `<div id="tt-pane-${esc(t.id)}" hidden>
         <div class="tt-strip">
+          ${Array.isArray(t.steps) && t.steps.length ? stepsHtml(`tt-${esc(t.id)}-steps`, t.steps) : ''}
           <div class="tt-strip-row"><div class="tt-status" id="tt-${esc(t.id)}-status" aria-live="polite">מוכן</div><div class="tt-progress" id="tt-${esc(t.id)}-progress"></div></div>
           <div class="tt-bar"><i id="tt-${esc(t.id)}-bar"></i></div>
         </div>
@@ -1142,9 +1287,15 @@ function mountPanel(page) {
       <a href="https://github.com/mdj441/talmud-scripts/issues" target="_blank" rel="noopener">דיווח על בעיה</a>
     </div>`;
   document.body.appendChild(panel);
+  applySide(side);
 
   fab.addEventListener('click', () => openPanel(panel.hidden));
   $el('tt-close').addEventListener('click', () => openPanel(false));
+  $el('tt-side').addEventListener('click', () => {
+    const next = otherSide(panelSide(loadUiState()));
+    saveUiState({ side: next });
+    applySide(next);
+  });
   for (const t of list) $el(`tt-tab-${t.id}`).addEventListener('click', () => activateTab(t.id));
 
   // Escape → עצור בלשונית הפעילה (רק כשהיא רצה)
@@ -1431,6 +1582,26 @@ function padId9(raw) {
   const s = String(raw).trim();
   return /^\d+$/.test(s) && s.length < 9 ? s.padStart(9, '0') : s;
 }
+// ספרת-ביקורת של ת.ז. ישראלית (שכבת-הבהירות 1.11.2026, הכרעה ד): אזהרה בלבד, לא חסימה. מקבל ספרות (עד 9,
+// מרופדות באפסים). לא-ספרות או יותר מ-9 ספרות → false. עובד על הפרשי-המשקל 1,2,1,2,… וסכום ספרות-המכפלה.
+function isValidIsraeliId(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!/^\d{1,9}$/.test(s)) return false;
+  const d = s.padStart(9, '0');
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    let n = Number(d[i]) * (i % 2 === 0 ? 1 : 2);
+    if (n > 9) n -= 9;
+    sum += n;
+  }
+  return sum % 10 === 0;
+}
+
+// "ישראל" אינה ארץ-דרכון באתר; מספר ספרתי עם ארץ ישראל הוא ת.ז. (הכרעה 1ב, סבב 2).
+function isIsraelCountry(raw) {
+  return /^(ישראל|israel)$/i.test(String(raw == null ? '' : raw).trim());
+}
+
 const PREFIX = /^(דרכון|passport|tz|ת\.?ז\.?)\s*[:=]\s*(.+)$/i;
 function detectIdType(raw) {
   const s = String(raw).trim();
@@ -1692,6 +1863,10 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
   let idType = idInfo.type;
   let identityNorm = idInfo.identifier;
   const explicitTz = /^(tz|ת\.?ז\.?)\s*[:=]/i.test(identity);
+  // "ישראל" אינה ארץ-דרכון (הכרעה 1ב, סבב 2): ת.ז. עם ארץ ישראל נשארת ת.ז. והארץ מתעלמת; דרכון עם ישראל = שגיאה.
+  const israel = isIsraelCountry(countryRaw);
+  if (idType === 'passport' && israel) return err('ישראל אינה ארץ-דרכון. אם זו ת.ז., בחר "ת.ז."');
+  if (israel) countryRaw = undefined;
   // בלי כותרת הארץ חייבת להיות מוכרת (אחרת "01,300,ת.ז.,ישראל,כהן" היה נקרא כדרכון); עם כותרת, עמודת "ארץ" מלאה מספיקה.
   const countryDecides = !!countryRaw && !explicitTz && (columnMap ? true : resolveCountry(countryRaw) !== null);
   if (idType === 'tz' && countryDecides) {
@@ -1847,22 +2022,65 @@ async function loadXlsxFile(file) {
 // אין כאן DOM בכלל; הכל נבדק ביחידה (test/absorb-pure.test.js).
 
 
+// הנוסחים (שכבת-הבהירות 1.11.2026): קצרים, בלי מקף ארוך, "לבדוק" = צהוב (לא תקלה), השאר אדום.
 const ABSORB_STATUS = {
   OK: 'נקלט',
   OK_NEW: 'נקלט (תלמיד חדש)',
   EXISTS: 'כבר קיים',
-  SAVED_UNVERIFIED: 'נשמר — לאמת ידנית',
-  VERIFY: 'לאמת ידנית', // ממצא 10: ברשימה שורה יחידה עם מזהה אחר: לא הצלחה, המשתמש מאמת
-  UNVERIFIED: 'לא אומת בגריד',
-  NOT_COMPLETED: 'קליטה לא הושלמה',
+  SAVED_UNVERIFIED: 'נשמר, לבדוק ברשימה',
+  VERIFY: 'לבדוק ברשימה', // ממצא 10: ברשימה שורה יחידה עם מזהה אחר: לא הצלחה, המשתמש בודק
+  UNVERIFIED: 'לא נמצא ברשימה אחרי הקליטה',
+  NOT_COMPLETED: 'הקליטה לא הושלמה',
   BLOCKED: 'נחסם',
-  NEW_STUDENT_MISSING: 'תלמיד חדש — נדרשים שם פרטי, שם משפחה ותאריך לידה',
+  NEW_STUDENT_MISSING: 'תלמיד חדש: חסרים פרטים',
   ERROR: 'שגיאה',
   SKIPPED: 'דולג',
   STOPPED: 'נעצר',
 };
 
 const ABSORB_SUCCESS_KEYS = [ABSORB_STATUS.OK, ABSORB_STATUS.OK_NEW, ABSORB_STATUS.EXISTS];
+const ABSORB_VERIFY_KEYS = [ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.VERIFY, ABSORB_STATUS.UNVERIFIED];
+const ABSORB_STOPPED_KEYS = [ABSORB_STATUS.STOPPED, ABSORB_STATUS.SKIPPED];
+
+// אזהרת "רשום כבר במוסד אחר" של האתר (המקרה השכיח של "נחסם"); משמשת גם את הזרימה וגם את הממשק.
+const OTHER_INSTITUTE_RE = /רשום כבר במוסד אחר/;
+
+// סוג התוצאה לצבע ולתגיות: 'ok' (ירוק) | 'verify' (צהוב, לבדוק) | 'stopped' (צהוב, לא רץ) | 'bad' (אדום, דורש טיפול).
+function absorbResultKind(status) {
+  const key = absorbStatusKey(status);
+  if (ABSORB_SUCCESS_KEYS.indexOf(key) !== -1) return 'ok';
+  if (ABSORB_VERIFY_KEYS.indexOf(key) !== -1) return 'verify';
+  if (ABSORB_STOPPED_KEYS.indexOf(key) !== -1) return 'stopped';
+  return 'bad';
+}
+
+// ספירות לתגיות-הסיכום: נקלטו (נקלט + תלמיד חדש), כבר קיימים, לבדוק, דורשים טיפול, נעצרו.
+function absorbSummarizeKinds(results) {
+  const c = { absorbed: 0, exists: 0, verify: 0, bad: 0, stopped: 0 };
+  for (const r of Array.isArray(results) ? results : []) {
+    const key = absorbStatusKey(r && r.status);
+    if (key === ABSORB_STATUS.EXISTS) c.exists++;
+    else {
+      const k = absorbResultKind(r && r.status);
+      if (k === 'ok') c.absorbed++; else c[k]++;
+    }
+  }
+  return c;
+}
+
+// "נחסם" / "שגיאה" עם הודעת האתר: הסטטוס מקבל נוסח קצר; ההודעה המלאה נשארת ב"פירוט".
+function absorbShortStatus(kind, text) {
+  const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  if (kind === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(t)) return `${kind}: רשום במוסד אחר`;
+  if (!t) return kind;
+  const short = t.length > 48 ? t.slice(0, 46).trim() + '…' : t;
+  return `${kind}: ${short}`;
+}
+
+// האם תוצאת "נחסם" היא אזהרת "רשום במוסד אחר" (שמסומנת "אשר המשך" פותרת).
+function absorbIsOtherInstituteBlock(result) {
+  return !!result && absorbStatusKey(result.status) === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(String(result.detail || result.status || ''));
+}
 
 const ABSORB_TSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'מה לעשות'];
 const ABSORB_CSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'פירוט', 'מה לעשות'];
@@ -2056,7 +2274,7 @@ function absorbUnreadableGridDetail(count) {
 
 // הוראה אופרטיבית לניווט ידני לסוג-לימוד (משותפת לכמה סטטוסים).
 function manualStudyTypeAction(branch, code) {
-  return `פתח את דף המוסד של סניף ${branch}, לחץ על הלשונית "סוגי לימוד למוסד", לחץ על השורה של סוג ${code} ואז על "עריכה". כשדף סוג-הלימוד פתוח, הרץ שוב את השורה הזו`;
+  return `פתח את דף המוסד של סניף ${branch}, לחץ על הלשונית "סוגי לימוד למוסד", לחץ על השורה של סוג ${code} ואז על "עריכה". כשדף סוג-הלימוד פתוח, לחץ "תקן והרץ שוב" והתחל`;
 }
 
 // ─── src/tools/absorb-state.js ───
@@ -2740,12 +2958,19 @@ const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — ל�
 // ─── טקסטי "מה לעשות" (ממצא 12): תמיד עם "איך", לא רק "מה" ───────────────────
 const SUPPORT_URL = 'https://github.com/mdj441/talmud-scripts/issues';
 const LOG_ACTION = `לחץ "העתק יומן" (ממוסך) וצרף אותו לדיווח בדף התמיכה של הכלי: ${SUPPORT_URL}`;
-const MANUAL_ABSORB_ACTION = 'לחץ "קליטה" בדף סוג-הלימוד, מלא את המזהה (ולדרכון גם תאריך לידה וארץ) ולחץ "אישור"';
+const MANUAL_ABSORB_ACTION = 'לחץ "קליטה" בדף סוג-הלימוד, מלא את המספר (ולדרכון גם תאריך לידה וארץ) ולחץ "אישור"';
+const BLOCKED_OTHER_ACTION = 'התלמיד רשום במוסד אחר והאתר מבקש אישור. סמן "אשר המשך" ולחץ "תקן והרץ שוב", או קלוט ידנית באתר';
+const BLOCKED_OTHER_SAVE_ACTION = 'האתר מבקש אישור "המשך" בשמירת התלמיד. הכלי לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט';
 function verifyListAction(code, branch) {
-  return `ודא ברשימת התלמידים של סוג ${code} בסניף ${branch} שהתלמיד נקלט, ואם אינו שם, קלוט אותו ידנית`;
+  return `פתח את רשימת התלמידים של סוג ${code} בסניף ${branch} וחפש את המספר. אם אינו שם, קלוט ידנית`;
 }
 function searchListAction(code, branch) {
-  return `חפש את המזהה ברשימת התלמידים של סוג ${code} בסניף ${branch}; אם אינו שם, קלוט ידנית`;
+  return verifyListAction(code, branch);
+}
+// "נחסם" עם הודעת האתר: לאזהרת "רשום במוסד אחר" יש פתרון בלחיצה (אשר המשך); לכל חלונית אחרת, הוראה כללית.
+function blockedResult(mk, text, generalAction) {
+  const other = OTHER_INSTITUTE_RE.test(String(text || ''));
+  return mk(absorbShortStatus(ABSORB_STATUS.BLOCKED, text), text, other ? BLOCKED_OTHER_ACTION : generalAction);
 }
 function manualRowAction() {
   return `בצע את השורה הזו ידנית באתר (${MANUAL_ABSORB_ACTION}). אם זה חוזר, ${LOG_ACTION}`;
@@ -2846,8 +3071,8 @@ async function ensureStudyTypePage(task, gen) {
       return {
         ok: false, reason: res.reason,
         action: /בעץ/.test(String(res.reason || ''))
-          ? `בדוק שסניף ${branch} מופיע בעץ-הצד של האתר. אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`
-          : `בדוק בדף המוסד של סניף ${branch}, בלשונית "סוגי לימוד למוסד", שסוג ${code} קיים ואינו "סגור". אם הוא קיים, פתח אותו ולחץ "התחל" שוב על השורה הזו`,
+          ? `סניף ${branch} לא נמצא בעץ-הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
+          : `סוג לימוד ${code} לא נמצא בסניף ${branch} (או מסומן "סגור"). בדוק בדף המוסד, בלשונית "סוגי לימוד למוסד". אם הוא שם, תקן את השורה ולחץ "תקן והרץ שוב"`,
       };
     }
     return { ok: false, reason: (res && res.reason) || 'הניווט נכשל', action: manualStudyTypeAction(branch, code) };
@@ -2894,8 +3119,8 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const note = [pendingSaveNote(), pop ? pop.text : ''].filter(Boolean).join(' | ');
     S.justSaved = null;
     let res;
-    if (errs.length) res = mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
-    else if (blocked) res = mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
+    if (errs.length) res = mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
+    else if (blocked) res = blockedResult(mk, pop.text, BLOCKED_OTHER_SAVE_ACTION);
     else res = mk(ABSORB_STATUS.SAVED_UNVERIFIED, note || 'דף תלמיד-חדש נטען מחדש אחרי השמירה; לא ידוע אם נשמר', verifyListAction(task.studyType, task.branch));
     if (!recordResult(res, gen, myIdx)) return CONTINUE;
     return leaveNewStudentPage(task, res, gen);
@@ -2910,8 +3135,9 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
 
   if (missing.length) {
     log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}) — לא שומרים`);
+    const digitsOnly = /^\d+$/.test(String(identity || ''));
     const res = mk(ABSORB_STATUS.NEW_STUDENT_MISSING, `חסר: ${missing.join(', ')}`,
-      `התלמיד לא מוכר למערכת. הוסף לשורה שלו את העמודות ${missing.join(', ')} (ואם צריך גם מגדר ומצב משפחתי; ברירת-המחדל: זכר, נשוי) והרץ אותה שוב`);
+      `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם יש לו דרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
     if (!recordResult(res, gen, myIdx)) return CONTINUE;
     return leaveNewStudentPage(task, res, gen);
   }
@@ -2928,14 +3154,14 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     const g = $el(ABSORB_NEW_IDS.gender);
     if (g) {
       const r = await absorbSelectOption(g, ns.gender, 'מגדר', ABSORB_GENDER_LABELS[ns.gender]);
-      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן את עמודת "מגדר" (זכר/נקבה) והרץ שוב, או בחר ידנית בדף התלמיד ולחץ "שמירה"');
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן בשורה את המגדר (זכר או נקבה) ולחץ "תקן והרץ שוב", או בחר ידנית בדף התלמיד ולחץ "שמירה"');
     }
   }
   if (ns.familyStatus) {
     const f = $el(ABSORB_NEW_IDS.familyStatus);
     if (f) {
       const r = await absorbSelectOption(f, ns.familyStatus, 'מצב משפחתי', ABSORB_FAMILY_STATUS_LABELS[ns.familyStatus]);
-      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן את עמודת "מצב משפחתי" (רווק/נשוי/גרוש/אלמן) והרץ שוב, או בחר ידנית בדף התלמיד ולחץ "שמירה"');
+      if (!r.ok) return mk(ABSORB_STATUS.ERROR, r.reason, 'תקן בשורה את המצב המשפחתי (רווק, נשוי, גרוש או אלמן) ולחץ "תקן והרץ שוב", או בחר ידנית בדף התלמיד ולחץ "שמירה"');
     }
   }
   await sleepCheckStop(200, gen);
@@ -2946,7 +3172,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   const v = absorbRunClientValidation('Validation');
   if (!v.ok) {
     return mk(ABSORB_STATUS.ERROR, 'ולידציה בדף תלמיד-חדש: ' + (v.messages.join(' | ') || 'שדה לא תקין'),
-      'תקן בשורה: שם פרטי ושם משפחה באותיות עבריות בלבד, תאריך לידה DD/MM/YYYY וגיל 16 לפחות. הרץ שוב');
+      'תקן בשורה: שם פרטי ושם משפחה באותיות עבריות בלבד, תאריך לידה יום/חודש/שנה וגיל 16 לפחות. ואז "תקן והרץ שוב"');
   }
 
   // "שמירה" עלולה לטעון דף אחר. מסמנים לפני, כדי שההמשך ידע לאמת "נקלט (תלמיד חדש)".
@@ -2967,7 +3193,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     S.justSaved = null;
     S.pendingSave = null;
     saveAbsorbState();
-    return mk(`${ABSORB_STATUS.BLOCKED}: ${pop.text}`, pop.text, 'המערכת מבקשת אישור "המשך" בשמירת התלמיד. הסקריפט לא מאשר לבד: פתח את דף התלמיד, קרא את ההודעה והחלט');
+    return blockedResult(mk, pop.text, BLOCKED_OTHER_SAVE_ACTION);
   }
 
   // ממצא ב-6: לפי הכתובת, לא לפי getPage: "שמירה" שנשארת באותו מסמך משנה את hidStudentState מ--1
@@ -2979,7 +3205,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
       S.justSaved = null;
       S.pendingSave = null;
       saveAbsorbState();
-      return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את הפרטים לפי ההודעה והרץ שוב, או השלם ידנית בדף התלמיד');
+      return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
     }
     // נשארנו בדף (עם או בלי הודעת הצלחה) — האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
     log('[תלמיד חדש] נשארנו בדף אחרי השמירה — עוברים לרשימת התלמידים לאימות');
@@ -3045,8 +3271,8 @@ async function processStudent(task, gen) {
   }
 
   if (task.idType === 'passport') {
-    if (!task.birthDate) return mk(ABSORB_STATUS.ERROR, 'דרכון ללא תאריך לידה', 'הוסף לשורה עמודת "תאריך לידה" (DD/MM/YYYY) והרץ שוב');
-    if (!task.countryValue) return mk(ABSORB_STATUS.ERROR, `ארץ דרכון חסרה או לא מוכרת: "${task.country || 'ריק'}"`, 'כתוב בעמודת "ארץ" שם מהרשימה (כפתור "רשימת ארצות") והרץ שוב');
+    if (!task.birthDate) return mk(ABSORB_STATUS.ERROR, 'דרכון ללא תאריך לידה', 'מלא בשורה תאריך לידה (יום/חודש/שנה) ולחץ "תקן והרץ שוב"');
+    if (!task.countryValue) return mk(ABSORB_STATUS.ERROR, `ארץ דרכון חסרה או לא מוכרת: "${task.country || 'ריק'}"`, 'בחר ארץ מהרשימה בשורה ולחץ "תקן והרץ שוב"');
   }
 
   // ── שלב 1: הדף הנכון ──
@@ -3115,7 +3341,7 @@ async function processStudent(task, gen) {
     const afterOpen = await absorbReadAndHidePopup('אחרי "קליטה"', gen);
     if (afterOpen.pop) {
       popupDetail = afterOpen.pop.text;
-      if (afterOpen.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${popupDetail}`, popupDetail, 'המערכת מבקשת אישור "המשך". הסקריפט לא מאשר לבד: לחץ "קליטה" ידנית, קרא את ההודעה והחלט');
+      if (afterOpen.blocked) return blockedResult(mk, popupDetail, 'האתר מבקש אישור "המשך". הכלי לא מאשר לבד: לחץ "קליטה" ידנית, קרא את ההודעה והחלט');
     }
     checkStop('after-absorb-click', gen);
 
@@ -3148,7 +3374,7 @@ async function processStudent(task, gen) {
       const countryEl = $el(ABSORB_IDS.countryDdl);
       if (!countryEl) return mk(ABSORB_STATUS.ERROR, 'שדה ארץ דרכון בחלון הקליטה לא נמצא', MANUAL_ABSORB_ACTION);
       const country = await absorbSelectOption(countryEl, task.countryValue, 'ארץ', task.country);
-      if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'תקן את עמודת "ארץ" לשם מהרשימה (כפתור "רשימת ארצות") והרץ שוב');
+      if (!country.ok) return mk(ABSORB_STATUS.ERROR, country.reason, 'בחר ארץ מהרשימה בשורה ולחץ "תקן והרץ שוב"');
       await sleepCheckStop(150, gen);
     }
 
@@ -3165,7 +3391,7 @@ async function processStudent(task, gen) {
     const confirmBtn = $el(ABSORB_IDS.confirmBtn);
     if (!confirmBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "אישור" לא נמצא בחלון הקליטה', MANUAL_ABSORB_ACTION);
     const v = absorbRunClientValidation('PopValidation');
-    if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המזהה, תאריך הלידה או הארץ לפי ההודעה, והרץ שוב');
+    if (!v.ok) return mk(ABSORB_STATUS.ERROR, 'ולידציה בחלון הקליטה: ' + (v.messages.join(' | ') || 'שדה לא תקין'), 'תקן בשורה את המספר, תאריך הלידה או הארץ לפי ההודעה, ולחץ "תקן והרץ שוב"');
 
     // "אישור" עלול לטעון דף תלמיד-חדש, או (ממצא ב-9) לטעון מחדש את אותו דף: מסמנים לפני.
     S.pendingConfirm = { idx: myIdx, identity };
@@ -3187,13 +3413,13 @@ async function processStudent(task, gen) {
     await sleepCheckStop(300, gen);
     const afterConfirm = await absorbAfterConfirmPopup(gen);
     if (afterConfirm.pop) {
-      if (afterConfirm.blocked) return mk(`${ABSORB_STATUS.BLOCKED}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'המערכת מבקשת אישור "המשך" (למשל מעבר בין מוסדות). הסקריפט לא מאשר לבד: בצע את הקליטה ידנית והחלט על ההודעה');
-      if (afterConfirm.pop.kind === 'error') return mk(`${ABSORB_STATUS.ERROR}: ${afterConfirm.pop.text}`, afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה ידנית: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור"; אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
+      if (afterConfirm.blocked) return blockedResult(mk, afterConfirm.pop.text, 'האתר מבקש אישור "המשך". הכלי לא מאשר לבד: בצע את הקליטה ידנית באתר והחלט על ההודעה');
+      if (afterConfirm.pop.kind === 'error') return mk(absorbShortStatus(ABSORB_STATUS.ERROR, afterConfirm.pop.text), afterConfirm.pop.text, 'האתר דיווח על תקלה בקליטה. נסה שוב ("תקן והרץ שוב"), או ידנית באתר: "קליטה" בדף סוג-הלימוד, אותם פרטים, "אישור". אם גם ידנית נכשל, זו תקלה באתר (לפנות לתמיכה)');
       popupDetail = afterConfirm.pop.text;
     }
     if (absorbModalVisible()) {
       const errs = absorbCollectValidationMessages();
-      return mk(ABSORB_STATUS.NOT_COMPLETED, errs.join(' | ') || popupDetail || 'חלון הקליטה נשאר פתוח', 'פתח את חלון הקליטה ידנית, קרא את הודעת השגיאה ותקן את השורה');
+      return mk(ABSORB_STATUS.NOT_COMPLETED, errs.join(' | ') || popupDetail || 'חלון הקליטה נשאר פתוח', 'פתח את חלון הקליטה ידנית באתר, קרא את ההודעה, תקן את השורה ולחץ "תקן והרץ שוב"');
     }
     checkStop('before-verify', gen);
 
@@ -3239,7 +3465,6 @@ function continueOtherInstituteFromPanel() {
 // ברירת-המחדל נשארת: לא מאשרים לבד → "נחסם". רק כשבעל-המערכת סימן בפאנל "אשר המשך" בתחילת הריצה,
 // לוחצים "המשך", ממתינים ל-postback, וקוראים את ההודעה הבאה (באתר: "הצלחה מעבר תלמיד הצליח").
 // כל חלונית אחרת עם "המשך" (טקסט שונה) נשארת "נחסם" גם כשהאפשרות מסומנת.
-const OTHER_INSTITUTE_RE = /רשום כבר במוסד אחר/;
 async function absorbAfterConfirmPopup(gen) {
   const pop = readMessagePopup();
   if (!pop) return { pop: null, blocked: false };
@@ -3368,7 +3593,7 @@ async function runQueue() {
   while (S.curIdx < S.queue.length) {
     if (absorbIsStopped()) {
       log('⛔ נעצר — ממלאים את שארית התור');
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
     const taskIdx = S.curIdx;
@@ -3380,8 +3605,8 @@ async function runQueue() {
       result = await processStudentSafe(task);
     } catch (stopErr) {
       log(`⛔ נעצר באמצע עיבוד: ${stopErr && stopErr.message}`);
-      recordResult(makeAbsorbResult(task, ABSORB_STATUS.STOPPED, 'נעצר באמצע עיבוד', 'בדוק את מצב התלמיד באתר והרץ שוב את השורה'), null, taskIdx);
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      recordResult(makeAbsorbResult(task, ABSORB_STATUS.STOPPED, 'נעצר באמצע עיבוד', 'בדוק את מצב התלמיד באתר, ואז "תקן והרץ שוב"'), null, taskIdx);
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
 
@@ -3477,7 +3702,7 @@ async function absorbResumeIfPending(opts) {
     S.curIdx = st.curIdx || 0;
     S.lastRecordedIdx = S.curIdx - 1;
     S.startedAt = st.startedAt || null;
-    fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+    fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
     finishRun();
     return false;
   }
@@ -3543,7 +3768,7 @@ function absorbStop() {
   navigating = false;
   if (!S.running) {
     if (S.queue.length && S.curIdx < S.queue.length) {
-      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'הרץ שוב את השורות שנותרו');
+      fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       finishRun();
     } else {
       clearAbsorbState();
@@ -3554,36 +3779,48 @@ function absorbStop() {
 }
 
 // ─── src/tools/absorb-ui.js ───
-// לשונית "קליטת תלמידים" בחלונית המאוחדת. הזרימה ב-absorb-flow.js; כאן הממשק:
-// טבלת-הזנה (שורה לתלמיד, בחירה מרשימות: סניף, סוג לימוד, ארץ; שדות לפי סוג המזהה), הדבקה מאקסל
-// שממלאת את הטבלה, טעינת/הורדת אקסל, אימות לכל שורה, התחל/עצור, תוצאות, דוח "מה נשאר".
-// מסלול-פרסור אחד: הטבלה → טקסט עם כותרת → parseAbsorbInput (כמו הדבקה). אין גישה ל-document ברמת המודול.
+// לשונית "קליטת תלמידים" בחלונית המאוחדת. הזרימה ב-absorb-flow.js; כאן הממשק (שכבת-הבהירות 1.11.2026):
+// שני אזורים, "את מי קולטים" (הטבלה היא כלי-ההזנה היחיד: הדבקה ישירות לתוכה, קובץ אקסל, או מילוי ביד; רשימות-בחירה
+// מהנתונים האמיתיים; עמודת "סוג מזהה"; שורת-פרטים לתלמיד חדש; תגיות-מצב שמסננות; הודעה מתחת לכל שורה בעייתית)
+// ו"תוצאות" (תגיות-סיכום, "מה לעשות" מתחת לכל שורה, "תקן והרץ שוב"). סרגל-שלבים ושורת-מצב מחושבים מחדש
+// מכל שינוי. מסלול-פרסור אחד: הטבלה → טקסט עם כותרת → parseAbsorbInput (כמו הדבקה). אין גישה ל-document ברמת המודול.
 
 
 const P = 'tt-absorb';
+const CONTINUE_KEY = 'tt.absorb.continueOther'; // '0' = בעל-המערכת ביטל את "אשר המשך" (ברירת-המחדל: מסומן, הכרעה ט)
 const COUNTRY_NAMES = COUNTRIES.map((c) => c.he).sort((a, b) => a.localeCompare(b, 'he'));
+const COUNTRY_BY_VALUE = new Map(COUNTRIES.map((c) => [c.value, c.he]));
 // סוגי-לימוד מוכרים (מהאתר, סניף 00) לרשימת-הבחירה כשאין גריד סוגי-לימוד בדף
 const COMMON_STUDY_TYPES = ['300', '600', '605', '700', '705', '708', '720', '725', '728'];
 const GENDERS = [['', ''], ['זכר', 'זכר'], ['נקבה', 'נקבה']];
 const FAMILY = [['', ''], ['רווק', 'רווק'], ['נשוי', 'נשוי'], ['גרוש', 'גרוש'], ['אלמן', 'אלמן']];
+const ID_TYPES = [['tz', 'ת.ז.'], ['passport', 'דרכון']];
+const NEW_FIELDS = ['firstName', 'lastName', 'gender', 'familyStatus'];
+const ABSORB_STEPS = ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת'];
+const PASSPORT_WARNING = 'תלמיד עם דרכון חייב להיות מסומן "דרכון". דרכון שנקלט כת.ז. קשה לתקן אחר-כך.';
 
 let ui = null;
-let rows = []; // [{ fields: {...} }] - מקור-האמת להרצה
+let pageRef = null;
+let rows = []; // [{ fields: {...}, newOpen }] - מקור-האמת להרצה
 let results = [];
 let total = 0;
 let awaitingErrorConfirm = false;
-let showExtra = false; // עמודות תלמיד-חדש (שם, משפחה, מגדר, מצב)
+let fixMode = false; // אחרי "תקן והרץ שוב": השלב "תיקון והרצה חוזרת"
+let rowFilter = 'all'; // all | ready | warn | bad (תגיות מעל הטבלה)
+let lastValidation = null;
 
 const RESULT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
   { key: 'studyType', label: 'סוג', center: true, width: '44px' },
-  { key: 'identity', label: 'ת.ז./דרכון', mono: true },
-  { key: 'status', label: 'סטטוס' },
+  { key: 'identity', label: 'מספר', mono: true },
+  { key: 'status', label: 'מה קרה' },
 ];
 
-function emptyRow() {
-  return { fields: { branch: '', studyType: '', identifier: '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' } };
+function emptyFields() {
+  return { branch: '', studyType: '', idType: '', identifier: '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' };
 }
+function emptyRow() { return { fields: emptyFields(), newOpen: false }; }
+function rowFrom(fields) { return { fields: Object.assign(emptyFields(), fields || {}), newOpen: false }; }
 
 // ─── רשימות-בחירה: מהדף בלבד (עץ-הצד, גריד סוגי-הלימוד), בלי מפות נלמדות ───────────────
 function knownBranches(page) {
@@ -3592,14 +3829,21 @@ function knownBranches(page) {
   return Array.from(set).sort();
 }
 
+// סוגי-הלימוד של סניף: ידועים רק כשהדף הוא דף המוסד של אותו סניף (הגריד). אחרת null = לא ידוע (לא מאמתים).
+function knownStudyTypesFor(branch, page) {
+  if (!(page && page.kind === 'institute' && page.branch && page.branch === branch)) return null;
+  try {
+    const table = document.querySelector('table[id$="gvStudyType"]');
+    if (!table) return null;
+    // גריד מחולק לעמודים (ממצא ב-8: פייג'ר כטבלה מקוננת / קישורי Page$): רואים רק חלק מהרשימה, ולכן לא מאמתים לפיה
+    if (table.querySelector('table, a[href*="Page$"]')) return null;
+    const list = gridStudyTypes(gridToRows(table)).map((st) => st.code);
+    return list.length ? list : null;
+  } catch (e) { return null; }
+}
+
 function knownStudyTypes(branch, page) {
-  const set = new Set();
-  if (page && page.kind === 'institute' && (!branch || page.branch === branch)) {
-    try {
-      const table = document.querySelector('table[id$="gvStudyType"]');
-      if (table) for (const st of gridStudyTypes(gridToRows(table))) set.add(st.code);
-    } catch (e) { /* לא קריטי */ }
-  }
+  const set = new Set(knownStudyTypesFor(branch || (page && page.branch), page) || []);
   if (page && page.studyType && (!branch || page.branch === branch)) set.add(page.studyType);
   if (!set.size) for (const c of COMMON_STUDY_TYPES) set.add(c);
   return Array.from(set).sort((a, b) => Number(a) - Number(b));
@@ -3612,121 +3856,364 @@ function datalistsHtml(page) {
     <datalist id="${P}-dl-countries">${COUNTRY_NAMES.map(opt).join('')}</datalist>`;
 }
 
-// ─── הטבלה ─────────────────────────────────────────────────────────────────
+// ─── סוג המזהה (הכרעות ג, 1ב) ─────────────────────────────────────────────────
+// ניחוש: אותיות = דרכון; ספרות + ארץ (שאינה ישראל) = דרכון; אחרת ת.ז. הבחירה הידנית (fields.idType) גוברת.
+function absorbAutoIdType(f) {
+  const id = String((f && f.identifier) || '').trim();
+  if (!id) return 'tz';
+  const det = detectIdType(id);
+  if (det.type === 'passport') return 'passport';
+  if (/^(tz|ת\.?ז\.?)\s*[:=]/i.test(id)) return 'tz';
+  const country = String((f && f.country) || '').trim();
+  return country && !isIsraelCountry(country) ? 'passport' : 'tz';
+}
+function absorbEffectiveIdType(f) {
+  return (f && (f.idType === 'tz' || f.idType === 'passport')) ? f.idType : absorbAutoIdType(f);
+}
+
+// הטבלה → טקסט לפרסור: בחירה ידנית ששונה מהניחוש נכתבת כקידומת מפורשת ("דרכון:" / "ת.ז.:") שהפרסור מכיר.
+function absorbRowsToText(list) {
+  return absorbFieldRowsToText((list || []).map((r) => {
+    const f = Object.assign({}, r.fields);
+    const auto = absorbAutoIdType(f);
+    const eff = absorbEffectiveIdType(f);
+    const bare = String(f.identifier || '').trim();
+    if (eff !== auto && bare && !/^(דרכון|passport|tz|ת\.?ז\.?)\s*[:=]/i.test(bare)) {
+      f.identifier = (eff === 'passport' ? 'דרכון:' : 'ת.ז.:') + bare;
+    }
+    return { fields: f };
+  }));
+}
+
+// שם-ארץ קנוני לתא (כינוי או שם באנגלית → השם ברשימת האתר); לא-מוכר נשאר כמו שהוקלד (ויסומן).
+function absorbCanonicalCountry(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s || isIsraelCountry(s)) return s;
+  const v = resolveCountry(s);
+  return v && COUNTRY_BY_VALUE.has(v) ? COUNTRY_BY_VALUE.get(v) : s;
+}
+
+// ─── אימות הטבלה (טהור ככל האפשר; ctx = רשימות ידועות) ─────────────────────────
 function rowIsBlank(r) { return ABSORB_FIELD_ORDER.every((k) => !String(r.fields[k] || '').trim()); }
+function rowHasNewFields(r) { return NEW_FIELDS.some((k) => String(r.fields[k] || '').trim()); }
+
+// הודעת-פרסור → נוסח לשורה (בלי מספרי-דוגמה, בלי שמות פנימיים)
+function absorbFriendlyError(reason, f) {
+  const s = String(reason || '');
+  if (/חסרים שדות חובה/.test(s)) {
+    const miss = [];
+    if (!String(f.branch || '').trim()) miss.push('סניף');
+    if (!String(f.studyType || '').trim()) miss.push('סוג לימוד');
+    if (!String(f.identifier || '').trim()) miss.push('מספר');
+    return `חסר: ${miss.join(', ') || 'סניף, סוג לימוד או מספר'}`;
+  }
+  if (/סניף לא מספרי/.test(s)) return 'מספר סניף לא תקין. בחר סניף מהרשימה';
+  if (/סוג לימוד לא מספרי/.test(s)) return 'סוג לימוד לא תקין (ספרות בלבד)';
+  if (/תאריך לא תקין/.test(s)) return 'תאריך לידה לא תקין (יום/חודש/שנה)';
+  if (/ארץ לא מוכרת/.test(s)) return 'ארץ לא ברשימה. בחר מהרשימה שנפתחת בתא';
+  if (/מגדר לא ידוע/.test(s)) return 'מגדר: זכר או נקבה';
+  if (/מצב משפחתי לא ידוע/.test(s)) return 'מצב משפחתי: רווק, נשוי, גרוש או אלמן';
+  if (/ישראל אינה ארץ-דרכון/.test(s)) return 'ישראל אינה ארץ-דרכון. אם זו ת.ז., בחר "ת.ז."';
+  return s;
+}
+
+// לכל שורה מלאה: {level: ''|'warn'|'bad', msg}. ctx: {branches: [..]|null, studyTypesFor(branch) → [..]|null}.
+// אדום = לא ירוץ; צהוב = ירוץ עם אזהרה (ספרת-ביקורת, כפילות). מחזיר גם את המשימות שירוצו.
+function absorbValidateRows(list, ctx) {
+  const filled = (list || []).filter((r) => !rowIsBlank(r));
+  const parsed = parseAbsorbInput(absorbRowsToText(filled));
+  const errorByIdx = new Map();
+  for (const e of parsed.errors) errorByIdx.set(e.line - 2, e.reason); // מספר השורה בפרסור = אינדקס+2 (הכותרת היא 1)
+  const issues = [];
+  const seen = new Map();
+  const counts = { all: filled.length, ready: 0, warn: 0, bad: 0 };
+  filled.forEach((r, i) => {
+    const f = r.fields;
+    const eff = absorbEffectiveIdType(f);
+    let level = '';
+    let msg = '';
+    const bare = String(f.identifier || '').trim();
+    const parseErr = errorByIdx.get(i);
+    if (parseErr) { level = 'bad'; msg = absorbFriendlyError(parseErr, f); }
+    else if (eff === 'passport' && (!String(f.birthDate || '').trim() || !String(f.country || '').trim())) {
+      const miss = [];
+      if (!String(f.birthDate || '').trim()) miss.push('תאריך לידה');
+      if (!String(f.country || '').trim()) miss.push('ארץ');
+      level = 'bad'; msg = `דרכון: חסרים ${miss.join(', ')}`;
+    } else if (ctx && Array.isArray(ctx.branches) && ctx.branches.length && !ctx.branches.includes(String(f.branch).trim().padStart(2, '0'))) {
+      level = 'bad'; msg = 'סניף לא נמצא בעץ של האתר';
+    } else {
+      const known = ctx && typeof ctx.studyTypesFor === 'function' ? ctx.studyTypesFor(String(f.branch).trim().padStart(2, '0')) : null;
+      if (Array.isArray(known) && known.length && !known.includes(String(f.studyType).trim())) { level = 'bad'; msg = 'סוג לימוד לא נמצא בסניף הזה'; }
+    }
+    if (!level) {
+      const key = `${String(f.branch).trim().padStart(2, '0')}|${String(f.studyType).trim()}|${absorbNormalizeId(bare.replace(/^(דרכון|passport|tz|ת\.?ז\.?)\s*[:=]\s*/i, ''))}`;
+      if (seen.has(key)) { level = 'warn'; msg = `כפול של שורה ${seen.get(key) + 1}`; }
+      else {
+        seen.set(key, i);
+        const digits = bare.replace(/^(tz|ת\.?ז\.?)\s*[:=]\s*/i, '');
+        if (eff === 'tz' && /^\d+$/.test(digits) && !isValidIsraeliId(digits)) {
+          level = 'warn'; msg = 'ת.ז. לא תקינה (ספרת ביקורת). אם זה דרכון: בחר "דרכון" ומלא תאריך לידה וארץ';
+        }
+      }
+    }
+    issues.push({ level, msg });
+    counts[level === 'bad' ? 'bad' : (level === 'warn' ? 'warn' : 'ready')]++;
+  });
+  const tasks = parsed.tasks.filter((t) => { const iss = issues[t.line - 2]; return !(iss && iss.level === 'bad'); });
+  return { filled, issues, tasks, counts };
+}
+
+function validationCtx() {
+  const branches = knownBranches(pageRef);
+  return { branches: branches.length ? branches : null, studyTypesFor: (b) => knownStudyTypesFor(b, pageRef) };
+}
 
 function validateRows() {
-  const filled = rows.filter((r) => !rowIsBlank(r));
-  const parsed = parseAbsorbInput(absorbFieldRowsToText(filled));
-  // מספר השורה בפרסור = אינדקס+2 (שורת הכותרת היא 1)
-  const errorByIdx = new Map();
-  for (const e of parsed.errors) errorByIdx.set(e.line - 2, e.reason);
-  return { tasks: parsed.tasks, errors: parsed.errors, errorByIdx, filled };
+  lastValidation = absorbValidateRows(rows, validationCtx());
+  return lastValidation;
 }
 
-function cellInput(i, key, value, { list, placeholder = '', disabled = false, mono = false, width } = {}) {
-  return `<input type="text" class="tt-input${mono ? ' tt-mono' : ''}" data-i="${i}" data-k="${key}" value="${esc(value)}"${list ? ` list="${list}"` : ''}
-    placeholder="${esc(placeholder)}"${disabled ? ' disabled' : ''}${width ? ` style="width:${width}"` : ''} autocomplete="off">`;
+// ─── תאי הטבלה ─────────────────────────────────────────────────────────────
+function cellInput(i, key, value, { list, placeholder = '', mono = false, width, cls = '' } = {}) {
+  return `<input type="text" class="tt-input${mono ? ' tt-mono' : ''}${cls ? ' ' + cls : ''}" data-i="${i}" data-k="${key}" value="${esc(value)}"${list ? ` list="${list}"` : ''}
+    placeholder="${esc(placeholder)}"${width ? ` style="width:${width}"` : ''} autocomplete="off">`;
 }
 
-function cellSelect(i, key, value, options) {
-  return `<select class="tt-select" data-i="${i}" data-k="${key}">${options.map(([v, l]) => `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+function cellSelect(i, key, value, options, { width } = {}) {
+  const opts = options.slice();
+  if (value !== '' && !opts.some(([v]) => v === value)) opts.push([value, value]);
+  return `<select class="tt-select" data-i="${i}" data-k="${key}"${width ? ` style="width:${width}"` : ''}>${opts.map(([v, l]) => `<option value="${esc(v)}"${v === value ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
 }
 
-function rowState(r) {
+// סניף: רשימה מהעץ כשיש; בלי עץ (דף אחר) תא טקסט
+function branchCell(i, value) {
+  const branches = knownBranches(pageRef);
+  if (!branches.length) return cellInput(i, 'branch', value, { list: `${P}-dl-branches`, placeholder: 'סניף', mono: true, width: '56px' });
+  return cellSelect(i, 'branch', value, [['', '']].concat(branches.map((b) => [b, b])), { width: '58px' });
+}
+
+function rowHtml(i, r) {
   const f = r.fields;
   const blank = rowIsBlank(r);
-  // דרכון: אותיות במזהה, או (31.10.2026) מזהה ספרתי עם ארץ מלאה (דרכון שכולו ספרות; תא הארץ פתוח להקלדה תמיד)
-  const passport = !!f.identifier && (detectIdType(f.identifier).type === 'passport' || (!!String(f.country || '').trim() && !/^(tz|ת\.?ז\.?)\s*[:=]/i.test(f.identifier)));
-  const needBirth = passport || !!(f.firstName || f.lastName);
-  return { blank, passport, needBirth };
-}
-
-function rowHtml(i, r, err) {
-  const f = r.fields;
-  const { blank, passport, needBirth } = rowState(r);
-  return `<tr class="${err ? 'tt-r-bad' : ''}" data-i="${i}"${err ? ` title="${esc(err)}"` : ''}>
-    <td class="tt-center tt-hint tt-rownum">${blank ? '' : i + 1}</td>
-    <td>${cellInput(i, 'branch', f.branch, { list: `${P}-dl-branches`, placeholder: '00', mono: true, width: '52px' })}</td>
-    <td>${cellInput(i, 'studyType', f.studyType, { list: `${P}-dl-studytypes`, placeholder: '600', mono: true, width: '60px' })}</td>
-    <td class="tt-center tt-hint tt-type-label" style="white-space:nowrap">${blank ? '' : (passport ? 'דרכון' : 'ת.ז.')}</td>
-    <td>${cellInput(i, 'identifier', f.identifier, { placeholder: 'ת.ז. או דרכון', mono: true, width: '110px' })}</td>
-    <td class="tt-cell-birth${needBirth ? '' : ' tt-cell-off'}">${cellInput(i, 'birthDate', f.birthDate, { placeholder: needBirth ? 'DD/MM/YYYY' : '', mono: true, width: '92px' })}</td>
-    <td class="tt-cell-country${passport ? '' : ' tt-cell-off'}">${cellInput(i, 'country', f.country, { list: `${P}-dl-countries`, placeholder: passport ? 'בחר ארץ' : '', width: '110px' })}</td>
-    ${showExtra ? `<td>${cellInput(i, 'firstName', f.firstName, { width: '80px' })}</td><td>${cellInput(i, 'lastName', f.lastName, { width: '80px' })}</td>
-    <td>${cellSelect(i, 'gender', f.gender, GENDERS)}</td><td>${cellSelect(i, 'familyStatus', f.familyStatus, FAMILY)}</td>` : ''}
+  const eff = absorbEffectiveIdType(f);
+  const passport = eff === 'passport';
+  const needBirth = passport || rowHasNewFields(r) || r.newOpen;
+  const newOn = rowHasNewFields(r);
+  const subOpen = !blank && (r.newOpen || newOn);
+  return `<tr class="tt-r-main" data-i="${i}">
+    <td class="tt-rownum">${blank ? '' : i + 1}</td>
+    <td>${branchCell(i, f.branch)}</td>
+    <td>${cellInput(i, 'studyType', f.studyType, { list: `${P}-dl-studytypes`, placeholder: 'סוג', mono: true, width: '56px' })}</td>
+    <td>${cellSelect(i, 'idType', blank ? 'tz' : eff, ID_TYPES, { width: '66px' })}</td>
+    <td>${cellInput(i, 'identifier', f.identifier, { placeholder: 'מספר', mono: true, width: '100px' })}</td>
+    <td class="tt-cell-birth${needBirth ? '' : ' tt-cell-off'}">${cellInput(i, 'birthDate', f.birthDate, { placeholder: needBirth ? 'יום/חודש/שנה' : '', mono: true, width: '90px' })}</td>
+    <td class="tt-cell-country${passport ? '' : ' tt-cell-off'}">${cellInput(i, 'country', f.country, { list: `${P}-dl-countries`, placeholder: passport ? 'בחר ארץ' : '', width: '96px' })}</td>
+    <td class="tt-cell-new">${blank ? '' : `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm tt-newbtn${newOn ? ' tt-newbtn-on' : ''}" data-newbtn="${i}" title="פרטים לתלמיד שהאתר לא מכיר: שם, משפחה, מגדר, מצב משפחתי">${newOn ? '✓ פרטים' : 'פרטים'}</button>`}</td>
     <td class="tt-cell-del">${blank ? '' : `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-del="${i}" title="מחק שורה">×</button>`}</td>
-  </tr>`;
+  </tr>
+  <tr class="tt-sub" data-sub="${i}"${subOpen ? '' : ' hidden'}><td colspan="9"><div class="tt-sub-row">
+    <span>פרטי תלמיד חדש:</span>
+    <span>שם פרטי</span>${cellInput(i, 'firstName', f.firstName, { width: '84px' })}
+    <span>שם משפחה</span>${cellInput(i, 'lastName', f.lastName, { width: '84px' })}
+    <span>מגדר</span>${cellSelect(i, 'gender', f.gender, GENDERS)}
+    <span>מצב משפחתי</span>${cellSelect(i, 'familyStatus', f.familyStatus, FAMILY)}
+    <button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-newclear="${i}" title="מוחק את פרטי התלמיד החדש וסוגר את השורה">הסר</button>
+  </div></td></tr>
+  <tr class="tt-rowmsg" data-msg="${i}" hidden><td colspan="9"></td></tr>`;
 }
 
-// אימות + סיכום + סימון שורות, בלי לבנות מחדש את השדות (השדה שבפוקוס נשאר בפוקוס).
+function rowVisible(i, iss, blank) {
+  if (rowFilter === 'all') return true;
+  if (blank) return false;
+  const level = iss ? iss.level : '';
+  if (rowFilter === 'bad') return level === 'bad';
+  if (rowFilter === 'warn') return level === 'warn';
+  return level === '';
+}
+
+// אימות + סימון שורות + תגיות + שורת-מצב, בלי לבנות מחדש את השדות (השדה שבפוקוס נשאר בפוקוס).
 function refreshMarks() {
   const v = validateRows();
   let filledIdx = -1;
   rows.forEach((r, i) => {
-    const tr = document.querySelector(`#${P}-grid tr[data-i="${i}"]`);
+    const tr = document.querySelector(`#${P}-grid tr.tt-r-main[data-i="${i}"]`);
+    const sub = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${i}"]`);
+    const msg = document.querySelector(`#${P}-grid tr.tt-rowmsg[data-msg="${i}"]`);
     if (!tr) return;
-    const { blank, passport, needBirth } = rowState(r);
+    const f = r.fields;
+    const blank = rowIsBlank(r);
     if (!blank) filledIdx++;
-    const err = blank ? '' : (v.errorByIdx.get(filledIdx) || '');
-    tr.classList.toggle('tt-r-bad', !!err);
-    if (err) tr.setAttribute('title', err); else tr.removeAttribute('title');
+    const iss = blank ? null : v.issues[filledIdx];
+    const level = iss ? iss.level : '';
+    const eff = absorbEffectiveIdType(f);
+    const passport = eff === 'passport';
+    const newOn = rowHasNewFields(r);
+    const needBirth = passport || newOn || r.newOpen;
+    for (const el of [tr, msg]) { if (el) { el.classList.toggle('tt-r-bad', level === 'bad'); el.classList.toggle('tt-r-warn', level === 'warn'); } }
+    if (msg) { msg.hidden = !iss || !iss.msg; msg.firstElementChild.textContent = iss ? iss.msg : ''; }
+    if (sub) sub.hidden = blank || !(r.newOpen || newOn);
     const num = tr.querySelector('.tt-rownum'); if (num) num.textContent = blank ? '' : String(i + 1);
-    const type = tr.querySelector('.tt-type-label'); if (type) type.textContent = blank ? '' : (passport ? 'דרכון' : 'ת.ז.');
-    const birth = tr.querySelector('.tt-cell-birth'); if (birth) { birth.classList.toggle('tt-cell-off', !needBirth); const inp = birth.querySelector('input'); if (inp) inp.placeholder = needBirth ? 'DD/MM/YYYY' : ''; }
-    const country = tr.querySelector('.tt-cell-country'); if (country) { country.classList.toggle('tt-cell-off', !passport); const inp = country.querySelector('input'); if (inp) inp.placeholder = passport ? 'בחר ארץ' : ''; }
-    const del = tr.querySelector('.tt-cell-del'); if (del && !blank && !del.firstChild) del.innerHTML = `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-del="${i}" title="מחק שורה">×</button>`;
+    const type = tr.querySelector('select[data-k="idType"]'); if (type && type.value !== (blank ? 'tz' : eff)) type.value = blank ? 'tz' : eff;
+    const birth = tr.querySelector('.tt-cell-birth'); if (birth) { birth.classList.toggle('tt-cell-off', !needBirth); const inp = birth.querySelector('input'); if (inp) { inp.placeholder = needBirth ? 'יום/חודש/שנה' : ''; inp.classList.toggle('tt-need', passport && !String(f.birthDate || '').trim()); } }
+    const country = tr.querySelector('.tt-cell-country'); if (country) { country.classList.toggle('tt-cell-off', !passport); const inp = country.querySelector('input'); if (inp) { inp.placeholder = passport ? 'בחר ארץ' : ''; inp.classList.toggle('tt-need', passport && !String(f.country || '').trim()); } }
+    const nb = tr.querySelector('.tt-newbtn'); if (nb) { nb.classList.toggle('tt-newbtn-on', newOn); nb.textContent = newOn ? '✓ פרטים' : 'פרטים'; }
+    if (sub) {
+      // תלמיד חדש: שדות-חובה ריקים מסומנים (שם פרטי, שם משפחה; הלידה בשורה הראשית)
+      const open = r.newOpen || newOn;
+      for (const k of ['firstName', 'lastName']) { const inp = sub.querySelector(`input[data-k="${k}"]`); if (inp) inp.classList.toggle('tt-need', open && !String(f[k] || '').trim()); }
+    }
+    const visible = rowVisible(i, iss, blank);
+    tr.hidden = !visible;
+    if (msg && !visible) msg.hidden = true;
+    if (sub && !visible) sub.hidden = true;
   });
-  const problems = v.errors.length;
-  setText(`${P}-grid-summary`, v.filled.length
-    ? `${v.tasks.length} שורות מוכנות להרצה${problems ? ` · ${problems} שורות עם שגיאה (מסומנות באדום; העמד את העכבר על השורה לפירוט)` : ''}`
-    : 'אין שורות. הדבק מאקסל, טען קובץ, או מלא שורה בטבלה');
-  renderErrors(problems ? v.errors : [], v.tasks.length);
+  renderTags(v);
+  refreshStartButton(v);
+  refreshStatus(v);
   return v;
 }
 
 function renderTable() {
   if (!rows.length || !rowIsBlank(rows[rows.length - 1])) rows.push(emptyRow());
-  const head = `<tr><th style="width:26px"></th><th>סניף</th><th>סוג לימוד</th><th>סוג מזהה</th><th>ת.ז./דרכון</th>
-    <th>תאריך לידה</th><th>ארץ</th>${showExtra ? '<th>שם פרטי</th><th>שם משפחה</th><th>מגדר</th><th>מצב משפחתי</th>' : ''}<th style="width:22px"></th></tr>`;
-  setHtml(`${P}-grid`, `<table class="tt-grid-input"><thead>${head}</thead><tbody>${rows.map((r, i) => rowHtml(i, r, '')).join('')}</tbody></table>`);
+  const head = `<tr><th style="width:22px"></th><th>סניף</th><th>סוג לימוד</th><th>סוג מזהה</th><th>מספר</th><th>תאריך לידה</th><th>ארץ</th><th>תלמיד חדש</th><th style="width:22px"></th></tr>`;
+  setHtml(`${P}-grid`, `<table class="tt-grid-input"><thead>${head}</thead><tbody>${rows.map((r, i) => rowHtml(i, r)).join('')}</tbody></table>`);
   return refreshMarks();
 }
 
+// ─── תגיות-מצב מעל הטבלה (מסננות) ─────────────────────────────────────────────
+function renderTags(v) {
+  const c = v.counts;
+  if (!c.all) {
+    setHtml(`${P}-tags`, `<span class="tt-hint">${results.length ? 'הטבלה התרוקנה בטעינת-הדף. "תקן והרץ שוב" (למטה) מחזיר את מי שדורש טיפול; להרצה חדשה: הדבק מאקסל או מלא שורה.' : 'אין שורות עדיין. הדבק מאקסל (Ctrl+V בתא) או מלא שורה.'}</span>`);
+    return;
+  }
+  const tag = (filter, label, kind, n) => tagHtml({ label: `${label} ${n}`, kind, button: true, filter, active: rowFilter === filter, disabled: filter !== 'all' && n === 0, title: filter === 'all' ? 'כל השורות' : 'הצג רק את השורות האלה' });
+  setHtml(`${P}-tags`, `${tag('all', 'הכל', 'info', c.all)}${tag('ready', 'מוכנות', 'ok', c.ready)}${tag('warn', 'אזהרות', 'warn', c.warn)}${tag('bad', 'לא ירוצו', 'bad', c.bad)}
+    <span class="tt-tags-spacer"></span>${buttonHtml({ id: `${P}-sort`, label: 'מיין לפי מצב', kind: 'subtle', size: 'small', title: 'השורות האדומות למעלה, אחריהן הצהובות', disabled: !(c.bad || c.warn) })}`);
+}
+
+function onTagsClick(e) {
+  const t = e.target && e.target.closest ? e.target.closest('[data-filter]') : null;
+  if (t) { rowFilter = t.getAttribute('data-filter') || 'all'; refreshMarks(); return; }
+  if (e.target && e.target.id === `${P}-sort`) sortByState();
+}
+
+function sortByState() {
+  const v = validateRows();
+  const rank = { bad: 0, warn: 1, '': 2 };
+  const filled = v.filled.map((r, i) => ({ r, k: rank[v.issues[i].level], i }));
+  filled.sort((a, b) => (a.k - b.k) || (a.i - b.i));
+  rows = filled.map((x) => x.r);
+  renderTable();
+}
+
+// ─── שורת-המצב וסרגל-השלבים: מחושבים מהמצב, אחרי כל שינוי ───────────────────
+function currentStep() {
+  if (absorbIsBusy()) return 1;
+  if (fixMode) return 3;
+  if (results.length) return 2;
+  return 0;
+}
+
+function plural(n, one, many) { return n === 1 ? one : many.replace('N', String(n)); }
+
+function refreshStatus(v) {
+  ui.step(currentStep());
+  if (absorbIsBusy()) return; // בזמן ריצה הזרימה מדווחת
+  const c = v.counts;
+  let msg;
+  if (!c.all) msg = results.length ? 'הטבלה ריקה. "תקן והרץ שוב" מחזיר אליה את מי שדורש טיפול' : 'אין שורות עדיין. מלא את הטבלה או הדבק מאקסל';
+  else {
+    // "מוכנים" = מי שירוץ (גם עם אזהרה צהובה); האדומות לא
+    const parts = [plural(v.tasks.length, 'תלמיד אחד מוכן', 'N תלמידים מוכנים')];
+    if (c.bad) parts.push(plural(c.bad, 'שורה אחת לא תרוץ (אדום)', 'N שורות לא ירוצו (אדום)'));
+    if (c.warn) parts.push(plural(c.warn, 'אזהרה אחת (צהוב)', 'N אזהרות (צהוב)'));
+    msg = (fixMode ? 'תיקון: ' : '') + parts.join(' · ');
+    if (results.length && !fixMode) msg += '. התוצאות למטה הן מהריצה הקודמת';
+  }
+  ui.status(msg);
+  const zoneIn = $el(`${P}-zone-in`); if (zoneIn) zoneIn.classList.remove('tt-zone-dim');
+}
+
+function refreshStartButton(v) {
+  if (awaitingErrorConfirm) return;
+  const n = v.tasks.length;
+  setText(`${P}-start`, n ? `התחל קליטה: ${plural(n, 'תלמיד אחד', 'N תלמידים')}` : 'התחל קליטה');
+}
+
+function resetStartButton() {
+  awaitingErrorConfirm = false;
+  if (lastValidation) refreshStartButton(lastValidation);
+}
+
+// ─── אירועי הטבלה ───────────────────────────────────────────────────────────
 function onCellInput(e) {
   const el = e.target;
   if (!el || el.dataset == null || el.dataset.k === undefined) return;
   const i = Number(el.dataset.i);
   if (!rows[i]) return;
-  rows[i].fields[el.dataset.k] = el.value;
+  const k = el.dataset.k;
+  if (k === 'country' && e.type === 'change') el.value = absorbCanonicalCountry(el.value); // כינוי → השם ברשימה
+  rows[i].fields[k] = el.value;
+  if (k === 'idType' && rowIsBlank(rows[i])) rows[i].fields.idType = '';
   if (awaitingErrorConfirm) resetStartButton();
   // השורה האחרונה התמלאה → מוסיפים שורה ריקה חדשה בסוף (בלי לבנות מחדש את הקיימות)
   if (i === rows.length - 1 && !rowIsBlank(rows[i])) {
     rows.push(emptyRow());
     const tbody = document.querySelector(`#${P}-grid tbody`);
-    if (tbody) tbody.insertAdjacentHTML('beforeend', rowHtml(rows.length - 1, rows[rows.length - 1], ''));
+    if (tbody) tbody.insertAdjacentHTML('beforeend', rowHtml(rows.length - 1, rows[rows.length - 1]));
   }
   refreshMarks();
 }
 
 function onGridClick(e) {
-  const del = e.target && e.target.closest ? e.target.closest('[data-del]') : null;
-  if (!del) return;
-  rows.splice(Number(del.getAttribute('data-del')), 1);
+  const t = e.target;
+  const del = t && t.closest ? t.closest('[data-del]') : null;
+  if (del) { rows.splice(Number(del.getAttribute('data-del')), 1); renderTable(); return; }
+  const nb = t && t.closest ? t.closest('[data-newbtn]') : null;
+  if (nb) {
+    const r = rows[Number(nb.getAttribute('data-newbtn'))];
+    if (r) { r.newOpen = !(r.newOpen || rowHasNewFields(r)); if (!r.newOpen && !rowHasNewFields(r)) r.newOpen = false; refreshMarks(); const inp = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${nb.getAttribute('data-newbtn')}"] input[data-k="firstName"]`); if (inp && r.newOpen) inp.focus(); }
+    return;
+  }
+  const nc = t && t.closest ? t.closest('[data-newclear]') : null;
+  if (nc) {
+    const r = rows[Number(nc.getAttribute('data-newclear'))];
+    if (r) { for (const k of NEW_FIELDS) r.fields[k] = ''; r.newOpen = false; renderTable(); }
+  }
+}
+
+// הדבקה ישירות לתוך הטבלה (סבב 2): טקסט עם כמה תאים/שורות ממלא מהשורה שבה עומדים; טבלה ריקה מתמלאת כולה.
+function onGridPaste(e) {
+  const cd = e.clipboardData;
+  const text = cd ? cd.getData('text/plain') : '';
+  if (!text || !/[\t\r\n]/.test(text.trim())) return; // ערך בודד: הדבקה רגילה לתא
+  const parsedRows = absorbTextToFieldRows(text).map((r) => rowFrom(r.fields));
+  if (!parsedRows.length) return;
+  e.preventDefault();
+  const target = e.target && e.target.dataset ? Number(e.target.dataset.i) : NaN;
+  const allBlank = rows.every(rowIsBlank);
+  if (allBlank || Number.isNaN(target)) rows = parsedRows;
+  else rows.splice(target, parsedRows.length, ...parsedRows);
+  fixMode = false;
   renderTable();
+  afterFill('הדבקה', parsedRows.length);
 }
 
 let lastInputLogLine = '';
 let inputLogTimer = null;
-function fillFromText(text, sourceLabel, opts) {
-  const parsedRows = absorbTextToFieldRows(text);
-  rows = parsedRows.map((r) => ({ fields: r.fields }));
-  const anyExtra = rows.some((r) => r.fields.firstName || r.fields.lastName || r.fields.gender || r.fields.familyStatus);
-  if (anyExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
-  const v = renderTable();
-  ui.status(`${sourceLabel}: ${v.filled.length} שורות נטענו לטבלה${v.errors.length ? `, ${v.errors.length} עם שגיאה` : ''}. בדוק ולחץ "התחל קליטה"`);
-  lastInputLogLine = `[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.errors.length} שגויות`;
+function afterFill(sourceLabel, n, opts) {
+  const v = lastValidation || validateRows();
+  lastInputLogLine = `[קלט] ${sourceLabel}: ${v.filled.length} שורות · ${v.counts.bad} לא ירוצו · ${v.counts.warn} אזהרות`;
   if (!(opts && opts.quiet)) log(lastInputLogLine);
+}
+
+function fillFromText(text, sourceLabel, opts) {
+  rows = absorbTextToFieldRows(text).map((r) => rowFrom(r.fields));
+  fixMode = false;
+  renderTable();
+  afterFill(sourceLabel, rows.length, opts);
 }
 
 function scheduleInputLog() {
@@ -3734,71 +4221,67 @@ function scheduleInputLog() {
   inputLogTimer = setTimeout(() => { if (lastInputLogLine) log(lastInputLogLine); }, 600);
 }
 
-// ─── תוצאות / דוח / תור שמור ────────────────────────────────────────────────
+// ─── תוצאות / סיכום / תור שמור ──────────────────────────────────────────────
 function classify(r) {
-  const key = absorbStatusKey(r.status);
-  if (isAbsorbSuccess(r.status)) return 'ok';
-  if (key === 'נעצר' || key === 'דולג') return 'warn';
-  return 'bad';
+  const k = absorbResultKind(r.status);
+  return k === 'ok' ? 'ok' : (k === 'bad' ? 'bad' : 'warn');
 }
+
+function continueChecked() { const el = $el(`${P}-continue-other`); return !!(el && el.checked); }
 
 function renderResults() {
-  setHtml(`${P}-results`, resultsTableHtml({ columns: RESULT_COLUMNS, rows: results, classify }));
-  show(`${P}-results-wrap`, results.length > 0);
+  const zone = $el(`${P}-zone-out`);
+  if (zone) zone.classList.toggle('tt-zone-dim', !results.length);
+  setHtml(`${P}-results`, resultsTableHtml({ columns: RESULT_COLUMNS, rows: results, classify, actionKey: 'action' }));
+  show(`${P}-results`, results.length > 0);
   const attention = results.filter((r) => !isAbsorbSuccess(r.status)).length;
   setDisabled(`${P}-keep-attention`, attention === 0);
-  setText(`${P}-keep-attention`, attention ? `השאר בטבלה רק ${attention} שורות שדורשות טיפול` : 'השאר בטבלה רק שורות שדורשות טיפול');
+  setText(`${P}-keep-attention`, attention ? `תקן והרץ שוב: ${plural(attention, 'תלמיד אחד', 'N תלמידים')}` : 'תקן והרץ שוב');
+  const blocked = results.filter(absorbIsOtherInstituteBlock).length;
+  const showContinue = blocked > 0 && !continueChecked() && !absorbIsBusy();
+  show(`${P}-continue-rerun`, showContinue);
+  if (showContinue) setText(`${P}-continue-rerun`, `סמן "אשר המשך" והרץ שוב ${plural(blocked, 'תלמיד אחד שנחסם', 'N תלמידים שנחסמו')}`);
+  for (const id of ['tsv', 'csv']) setDisabled(`${P}-${id}`, results.length === 0);
 }
 
-// זרימת-התיקון (31.10.2026): אחרי ריצה, הטבלה עדיין מציגה את כל השורות. הכפתור משאיר רק את אלה שלא הצליחו
-// (לפי התוצאות), פותח את עמודות תלמיד-חדש כשצריך, ובעל-המערכת משלים/מתקן ולוחץ "התחל קליטה" שוב.
-function keepRowsNeedingAttention() {
-  // סבב רטוב 1.11.2026: ריצה שנגמרה אחרי טעינת-דף משאירה טבלה ריקה בדף האחרון (השורות לא שורדות טעינה).
-  // אז בונים את השורות מהתוצאות עצמן (סניף, סוג, מזהה); את שאר הפרטים בעל-המערכת ממילא משלים.
-  const source = rows.some((r) => !rowIsBlank(r))
-    ? rows
-    : results.map((r) => ({ fields: { branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', firstName: '', lastName: '', birthDate: '', country: '', gender: '', familyStatus: '' } }));
-  const { rows: kept, needsExtra } = absorbRowsNeedingAttention(source, results);
-  rows = kept.map((r) => ({ fields: Object.assign({}, r.fields) }));
-  if (needsExtra) { showExtra = true; const cb = $el(`${P}-extra`); if (cb) cb.checked = true; }
-  renderTable();
-  ui.status(rows.filter((r) => !rowIsBlank(r)).length
-    ? `${rows.filter((r) => !rowIsBlank(r)).length} שורות בטבלה. השלם או תקן לפי עמודת "מה לעשות" בתוצאות, ולחץ "התחל קליטה"`
-    : 'אין שורות שדורשות טיפול');
-  log(`[קלט] נשארו בטבלה ${rows.filter((r) => !rowIsBlank(r)).length} שורות שדורשות טיפול`);
-}
-
-function renderErrors(errors, validCount) {
-  if (!errors || !errors.length) { show(`${P}-errors`, false); setHtml(`${P}-errors`, ''); return; }
-  const items = errors.slice(0, 25).map((e) => `<li>שורה ${esc(e.line - 1)}: ${esc(e.reason)}</li>`).join('');
-  setHtml(`${P}-errors`, `<b>${errors.length} שורות לא יורצו</b> (${validCount} תקינות):<ul>${items}${errors.length > 25 ? `<li>ועוד ${errors.length - 25}</li>` : ''}</ul>`);
-  show(`${P}-errors`, true);
-}
-
+// הסיכום (תגיות + משפט) מוצג כשהריצה הסתיימה; בזמן ריצה התוצאות מצטברות בלי סיכום.
 function renderReport(report) {
-  if (!report) { show(`${P}-report`, false); setHtml(`${P}-report`, ''); return; }
-  setHtml(`${P}-report`, reportBoxHtml(report));
+  if (!report) { show(`${P}-report`, false); setHtml(`${P}-report`, ''); setText(`${P}-zone-out-note`, ''); return; }
+  const c = absorbSummarizeKinds(results);
+  const ok = c.absorbed + c.exists;
+  const tags = [
+    c.absorbed ? tagHtml({ label: `נקלטו ${c.absorbed}`, kind: 'ok' }) : '',
+    c.exists ? tagHtml({ label: `כבר קיימים ${c.exists}`, kind: 'ok' }) : '',
+    c.verify ? tagHtml({ label: `לבדוק ${c.verify}`, kind: 'warn' }) : '',
+    c.bad ? tagHtml({ label: `דורשים טיפול ${c.bad}`, kind: 'bad' }) : '',
+    c.stopped ? tagHtml({ label: `לא רצו ${c.stopped}`, kind: 'warn' }) : '',
+  ].filter(Boolean).join('');
+  const sentence = report.stopped || c.stopped
+    ? `נעצר. ${plural(c.stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}`
+    : `הסתיים: ${ok} מתוך ${results.length} הצליחו.${c.bad || c.verify ? ` ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
+  setHtml(`${P}-report`, `<div class="tt-tags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
   show(`${P}-report`, true);
+  setText(`${P}-zone-out-note`, `ריצה מ-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
 
-// תיבת "תור פתוח": ישן (ממצא ישן) או דף זר (ממצא 11). "המשך" מכריח המשך; "נקה" מוחק.
+// תיבת "הריצה נקטעה": תור ישן (מעל 30 דקות) או דף זר (ממצא 11). "המשך" מכריח המשך; "בטל" מסמן את השאר "נעצר".
 function renderStaleQueue(info) {
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
-  const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
+  const done = info.curIdx || 0;
   const startedMs = Date.parse(info.startedAt);
   const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
   const why = info.reason === 'foreign-page'
-    ? 'הדף הזה אינו חלק מהקליטה, ולכן לא ממשיכים לבד. "המשך" ינווט לדף סוג-הלימוד של השורה הבאה.'
-    : 'התור ישן מדי להמשך אוטומטי.';
-  setHtml(`${P}-stale`, `<b>יש תור פתוח (${esc(left)} שורות)${ageMin === null ? '' : `, מלפני ${esc(ageMin)} דקות`}</b>: ${esc(info.curIdx || 0)} מתוך ${esc(info.total || 0)} הושלמו. ${why}
+    ? 'הדף הזה אינו חלק מהקליטה, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף סוג-הלימוד של התלמיד הבא.'
+    : 'עבר זמן רב, ולכן הכלי לא ממשיך לבד.';
+  setHtml(`${P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. ${esc(why)}
     ${buttonsRowHtml([
-      { id: `${P}-stale-go`, label: 'המשך את התור', kind: 'primary', size: 'small' },
-      { id: `${P}-stale-clear`, label: 'נקה את התור', kind: 'danger', size: 'small' },
-    ])}`);
+      { id: `${P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },
+      { id: `${P}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
+    ], 'tt-row-wrap')}`);
   show(`${P}-stale`, true);
   $el(`${P}-stale-go`).addEventListener('click', () => {
     renderStaleQueue(null);
-    ui.status('ממשיך את התור השמור…');
+    ui.status('ממשיך את הריצה שנקטעה…');
     setRunning(true);
     Promise.resolve().then(() => absorbResumeIfPending({ force: true })).then((ran) => { if (ran === false && !absorbIsBusy()) setRunning(false); })
       .catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
@@ -3807,39 +4290,47 @@ function renderStaleQueue(info) {
     absorbDiscardSavedQueue();
     renderStaleQueue(null);
     setRunning(false);
-    ui.status('התור השמור נמחק. אפשר להתחיל ריצה חדשה');
+    ui.status('הריצה שנקטעה בוטלה. אפשר להתחיל ריצה חדשה');
+    refreshMarks();
   });
 }
 
 function setRunning(on) {
   setDisabled(`${P}-start`, !!on);
+  show(`${P}-stop`, !!on);
+  const zoneIn = $el(`${P}-zone-in`); if (zoneIn) zoneIn.classList.toggle('tt-zone-dim', !!on);
+  const grid = $el(`${P}-grid`); if (grid) grid.style.pointerEvents = on ? 'none' : '';
   ui.running(!!on);
+  ui.step(currentStep());
+  if (!on && lastValidation) refreshStatusKeep();
 }
+
+// אחרי ריצה שורת-המצב של הזרימה ("הסתיים...") נשארת; השינוי הבא בטבלה מחשב אותה מחדש.
+function refreshStatusKeep() { ui.step(currentStep()); }
 
 function startDate() {
   const el = $el(`${P}-start-date`);
   return el ? String(el.value || '').trim() : '';
 }
 
-function resetStartButton() {
-  awaitingErrorConfirm = false;
-  setText(`${P}-start`, 'התחל קליטה');
-}
-
 // ─── פעולות ─────────────────────────────────────────────────────────────────
 async function start() {
   if (absorbIsBusy()) { ui.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
-  if (absorbHasSavedQueue()) { ui.status('יש תור שמור שממתין להמשך. לחץ "המשך" או "נקה" למעלה, או "עצור"'); return; }
-  const v = renderTable();
+  if (absorbHasSavedQueue()) { ui.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
+  const v = refreshMarks();
   if (!v.filled.length) { ui.status('אין שורות להרצה. הדבק מאקסל, טען קובץ, או מלא שורה בטבלה'); return; }
-  if (v.errors.length && !awaitingErrorConfirm) {
+  if (v.counts.bad && !awaitingErrorConfirm) {
     awaitingErrorConfirm = true;
-    setText(`${P}-start`, v.tasks.length ? `הרץ בכל זאת את ${v.tasks.length} התקינות` : 'התחל קליטה');
-    ui.status(`${v.errors.length} שורות בעייתיות (מסומנות באדום). תקן אותן, או לחץ שוב כדי להריץ רק את התקינות`);
+    setText(`${P}-start`, v.tasks.length ? `כן, התחל בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
+    ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
+    rowFilter = 'bad';
+    refreshMarksKeepButton();
     return;
   }
-  if (!v.tasks.length) { ui.status('אין שורות תקינות להרצה'); return; }
-  resetStartButton();
+  if (!v.tasks.length) { ui.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
+  awaitingErrorConfirm = false;
+  fixMode = false;
+  rowFilter = 'all';
   renderReport(null);
   renderStaleQueue(null);
   results = [];
@@ -3847,11 +4338,14 @@ async function start() {
   clearAbsorbStop();
   setRunning(true);
   ui.progress(0, v.tasks.length);
-  ui.status(`מריץ ${v.tasks.length} תלמידים…`);
-  log(`[התחלה] ${v.tasks.length} תלמידים · תאריך תחילת לימודים "${startDate() || '(ברירת המחדל של האתר)'}"`);
+  ui.status(`מתחיל: ${plural(v.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
+  log(`[התחלה] ${v.tasks.length} תלמידים · תאריך קליטה "${startDate() || '(היום)'}"`);
   const started = await absorbStartRun(v.tasks);
   if (started === false) setRunning(false); // ממצא 5: לשונית אחרת רצה; ההודעה הוצגה דרך onLocked
 }
+
+// כמו refreshMarks אבל בלי לדרוס את תווית-האישור של "התחל"
+function refreshMarksKeepButton() { const keep = awaitingErrorConfirm; refreshMarks(); awaitingErrorConfirm = keep; }
 
 function stop() {
   ui.status('עוצר…');
@@ -3860,24 +4354,69 @@ function stop() {
   setRunning(false);
 }
 
+// זרימת-התיקון: משאיר בטבלה רק את מי שדורש טיפול, פותח שורת-פרטים למי שהאתר אמר עליו "תלמיד חדש", וגולל לטבלה.
+// כשהטבלה ריקה (אחרי טעינות-דף) בונה אותה מהתוצאות (סבב רטוב 1.11.2026).
+function fixAndRerun() {
+  const source = rows.some((r) => !rowIsBlank(r))
+    ? rows
+    : results.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' }));
+  const { rows: kept } = absorbRowsNeedingAttention(source, results);
+  const byKey = new Map(results.map((r) => [`${String(r.branch || '').trim().padStart(2, '0')}|${String(r.studyType || '').trim()}|${absorbNormalizeId(r.identity)}`, r]));
+  rows = kept.map((r) => {
+    const f = Object.assign(emptyFields(), r.fields);
+    const row = { fields: f, newOpen: !!r.newOpen };
+    const res = byKey.get(`${String(f.branch || '').trim().padStart(2, '0')}|${String(f.studyType || '').trim()}|${absorbNormalizeId(f.identifier)}`);
+    if (res && absorbStatusKey(res.status).startsWith('תלמיד חדש')) row.newOpen = true;
+    return row;
+  });
+  fixMode = rows.length > 0;
+  rowFilter = 'all';
+  awaitingErrorConfirm = false;
+  renderTable();
+  const n = rows.filter((r) => !rowIsBlank(r)).length;
+  const missing = rows.filter((r) => r.newOpen && !rowHasNewFields(r)).length;
+  ui.status(n
+    ? (missing ? `תיקון: ${plural(missing, 'תלמיד אחד ממתין להשלמה', 'N תלמידים ממתינים להשלמה')}: שם פרטי, שם משפחה ותאריך לידה. אחר-כך "התחל קליטה"` : `תיקון: ${plural(n, 'תלמיד אחד בטבלה', 'N תלמידים בטבלה')}. תקן לפי "מה לעשות" בתוצאות ולחץ "התחל קליטה"`)
+    : 'אין מי שדורש טיפול');
+  log(`[קלט] תקן והרץ שוב: ${n} תלמידים בטבלה`);
+  const grid = $el(`${P}-grid`);
+  if (grid && grid.scrollIntoView) { try { grid.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (e) { /* noop */ } }
+}
+
+// הכרעה ט: "נחסם: רשום במוסד אחר" בלי "אשר המשך" → לחיצה אחת מסמנת ומריצה שוב רק את מי שנחסם.
+function continueAndRerun() {
+  const cb = $el(`${P}-continue-other`);
+  if (cb) { cb.checked = true; saveContinue(true); }
+  const blocked = results.filter(absorbIsOtherInstituteBlock);
+  if (!blocked.length) return;
+  rows = blocked.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' }));
+  fixMode = true;
+  renderTable();
+  log(`[קלט] "אשר המשך" סומן; מריצים שוב ${blocked.length} שנחסמו`);
+  Promise.resolve().then(start).catch((e) => { log('[התחלה] ההרצה נכשלה: ' + (e && e.message)); setRunning(false); });
+}
+
+function saveContinue(on) { try { localStorage.setItem(CONTINUE_KEY, on ? '1' : '0'); } catch (e) { /* noop */ } }
+function loadContinue() { try { return localStorage.getItem(CONTINUE_KEY) !== '0'; } catch (e) { return true; } }
+
 function copyTsv() {
   const list = absorbGetResults().length ? absorbGetResults() : results;
   if (!list.length) { ui.status('אין תוצאות להעתקה'); return; }
   copyTextToClipboard(buildResultsTsv(list)).then((ok) => {
     flash(`${P}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק תוצאות לאקסל');
-    ui.status(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן. השתמש בייצוא CSV');
+    ui.status(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן. השתמש ב"הורד קובץ"');
   });
 }
 
 function exportCsv() {
   const list = absorbGetResults().length ? absorbGetResults() : results;
-  if (!list.length) { ui.status('אין תוצאות לייצוא'); return; }
+  if (!list.length) { ui.status('אין תוצאות להורדה'); return; }
   const name = `absorptions_${new Date().toISOString().slice(0, 10)}.csv`;
-  ui.status(downloadCsv(name, buildResultsCsvRows(list)) ? `הורד ${name}` : 'הייצוא נכשל');
+  ui.status(downloadCsv(name, buildResultsCsvRows(list)) ? `הורד ${name}` : 'ההורדה נכשלה');
 }
 
 function downloadTemplate() {
-  ui.status(downloadCsv('תבנית-קליטת-תלמידים.csv', [ABSORB_TEMPLATE_HEADER.slice()]) ? 'התבנית הורדה. מלא באקסל, ואז הדבק את הטורים כאן או טען את הקובץ' : 'הורדת התבנית נכשלה');
+  ui.status(downloadCsv('תבנית-קליטת-תלמידים.csv', [ABSORB_TEMPLATE_HEADER.slice()]) ? 'התבנית הורדה. מלא באקסל, ואז הדבק לטבלה או טען את הקובץ' : 'הורדת התבנית נכשלה');
 }
 
 function handleXlsx(ev) {
@@ -3903,51 +4442,64 @@ function copyInputAsTsv() {
 }
 
 // ─── mount ──────────────────────────────────────────────────────────────────
+const ABSORB_PAGES = ['institute', 'studyType', 'newStudent'];
+
 function mount(container, panelUi, page) {
   ui = panelUi;
+  pageRef = page;
+  const fits = !!(page && ABSORB_PAGES.includes(page.kind));
+  const last = absorbLastResults();
+  const pasteOpen = !rows.some((r) => !rowIsBlank(r)) && !absorbGetResults().length && !(last && last.results && last.results.length);
   container.innerHTML = `
     ${datalistsHtml(page)}
-    <details class="tt-paste" ${rows.length ? '' : 'open'}>
-      <summary class="tt-hint" style="cursor:pointer">הדבקה מאקסל (טורים: סניף, סוג לימוד, ת.ז./דרכון, שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי; עם כותרת או בלי)</summary>
-      <textarea id="${P}-input" class="tt-textarea" placeholder="01&#9;300&#9;123456789&#10;12&#9;600&#9;AB1234567&#9;&#9;&#9;15/03/1995&#9;צרפת"></textarea>
-      ${buttonsRowHtml([
-        { id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' },
-        { id: `${P}-template`, label: 'הורד תבנית לאקסל', kind: 'ghost', size: 'small' },
-        { id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' },
-      ])}
+    ${zoneHtml({ id: `${P}-zone-in`, title: 'את מי קולטים', inner: `
+      <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים בטבלה, או מדביקים מאקסל ישר לתוכה, או טוענים קובץ. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+      <div class="tt-box tt-box-warn" style="margin:4px 0 6px">${esc(PASSPORT_WARNING)}</div>
+      <div class="tt-tags" id="${P}-tags"></div>
+      <div class="tt-row tt-row-wrap tt-row-tight">
+        ${buttonHtml({ id: `${P}-paste-btn`, label: 'הדבק מאקסל', kind: 'ghost', size: 'small', title: 'פותח תיבה להדבקה. אפשר גם לעמוד בתא בטבלה וללחוץ Ctrl+V' })}
+        ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
+        ${buttonHtml({ id: `${P}-template`, label: 'הורד תבנית', kind: 'ghost', size: 'small' })}
+        ${buttonHtml({ id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' })}
+        <span class="tt-hint">או: עמוד בתא ולחץ Ctrl+V</span>
+      </div>
       <input id="${P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
-    </details>
-    <div class="tt-row" style="justify-content:space-between">
-      <span id="${P}-grid-summary" class="tt-hint"></span>
-      <label class="tt-hint" style="cursor:pointer"><input type="checkbox" id="${P}-extra"${showExtra ? ' checked' : ''}> עמודות תלמיד חדש (שם, משפחה, מגדר, מצב)</label>
-    </div>
-    <label class="tt-hint" style="cursor:pointer;display:block;margin:2px 0 6px" title="האתר מזהיר כשהתלמיד רשום במוסד אחר ומבקש אישור. בלי הסימון השורה מסומנת &quot;נחסם&quot; ואתה מחליט ידנית."><input type="checkbox" id="${P}-continue-other"> אשר "המשך" כשהאתר מזהיר שהתלמיד רשום במוסד אחר (לימודיו שם יסתיימו מהיום)</label>
-    <div id="${P}-grid" class="tt-scroll" style="max-height:260px"></div>
-    <div id="${P}-errors" class="tt-box tt-box-error" hidden></div>
-    <div id="${P}-stale" class="tt-box tt-box-warn" hidden></div>
-    <div class="tt-row">
-      ${fieldHtml('תאריך תחילת לימודים (ריק = ברירת המחדל של האתר)', `<input id="${P}-start-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}" style="max-width:140px">`)}
-    </div>
-    ${buttonsRowHtml([
-      { id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' },
-      { id: `${P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
-    ])}
-    <div id="${P}-results-wrap" hidden>
-      <div class="tt-row" style="justify-content:space-between"><b>תוצאות</b>
-        <span>${buttonHtml({ id: `${P}-keep-attention`, label: 'השאר בטבלה רק שורות שדורשות טיפול', kind: 'ghost', size: 'small', disabled: true, title: 'מסיר מהטבלה את השורות שהצליחו; משלימים פרטים ומריצים שוב' })} ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small' })} ${buttonHtml({ id: `${P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' })}</span></div>
-      <div id="${P}-results" class="tt-scroll"></div>
-    </div>
-    <div id="${P}-report" class="tt-box tt-box-warn" hidden></div>`;
+      <details class="tt-section" id="${P}-paste"${pasteOpen ? ' open' : ''}>
+        <summary>תיבת הדבקה (טורים: סניף, סוג לימוד, מספר, שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי; עם כותרת או בלי)</summary>
+        <textarea id="${P}-input" class="tt-textarea tt-textarea-sm" placeholder="01&#9;300&#9;123456789&#10;12&#9;600&#9;AB1234567&#9;&#9;&#9;15/03/1995&#9;צרפת"></textarea>
+      </details>
+      <div id="${P}-grid" class="tt-scroll" style="max-height:300px"></div>
+      <div id="${P}-stale" class="tt-box tt-box-warn" hidden></div>
+      <div class="tt-row tt-row-wrap">
+        ${fieldHtml('תאריך קליטה (ריק = היום)', `<input id="${P}-start-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}" style="max-width:130px">`)}
+        <label class="tt-check" title="האתר מזהיר כשהתלמיד רשום במוסד אחר ומבקש אישור. מסומן: הכלי מאשר; לא מסומן: השורה מסומנת &quot;נחסם&quot; ואתה מחליט"><input type="checkbox" id="${P}-continue-other"${loadContinue() ? ' checked' : ''}> תלמיד שרשום במוסד אחר: אשר "המשך" (לימודיו שם יסתיימו היום)</label>
+      </div>
+      <div class="tt-row tt-row-wrap">
+        ${buttonHtml({ id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' })}
+        ${buttonHtml({ id: `${P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
+        <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
+      </div>` })}
+    ${zoneHtml({ id: `${P}-zone-out`, title: 'תוצאות', dim: true, inner: `
+      <div id="${P}-report" hidden></div>
+      <div class="tt-row tt-row-wrap tt-row-tight">
+        ${buttonHtml({ id: `${P}-keep-attention`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'משאיר בטבלה רק את מי שדורש טיפול, כדי להשלים ולהתחיל שוב' })}
+        ${buttonHtml({ id: `${P}-continue-rerun`, label: 'סמן "אשר המשך" והרץ שוב', kind: 'ghost', size: 'small', attrs: 'hidden' })}
+        ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט או בדיווח-באג' })}
+        ${buttonHtml({ id: `${P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true, title: 'קובץ CSV עם כל העמודות, כולל "פירוט". מכיל מזהים מלאים' })}
+      </div>
+      <div id="${P}-results" class="tt-scroll" hidden></div>` })}`;
 
   bindDateMask(`${P}-start-date`);
-  // הטבלה מתעדכנת בכל הקשה; שורת היומן "[קלט] הדבקה" נכתבת פעם אחת אחרי שההקלדה נרגעה (סבב רטוב 31.10.2026:
-  // 20 שורות-יומן על שתי שורות שהוקלדו).
+  // הטבלה מתעדכנת בכל הקשה; שורת היומן "[קלט] הדבקה" נכתבת פעם אחת אחרי שההקלדה נרגעה (סבב רטוב 31.10.2026)
   $el(`${P}-input`).addEventListener('input', function () { fillFromText(this.value, 'הדבקה', { quiet: true }); scheduleInputLog(); });
+  $el(`${P}-paste-btn`).addEventListener('click', () => { const d = $el(`${P}-paste`); if (d) { d.open = true; } const ta = $el(`${P}-input`); if (ta) ta.focus(); });
   const grid = $el(`${P}-grid`);
   grid.addEventListener('input', onCellInput);
   grid.addEventListener('change', onCellInput);
   grid.addEventListener('click', onGridClick);
-  $el(`${P}-extra`).addEventListener('change', function () { showExtra = this.checked; renderTable(); });
+  grid.addEventListener('paste', onGridPaste);
+  $el(`${P}-tags`).addEventListener('click', onTagsClick);
+  $el(`${P}-continue-other`).addEventListener('change', function () { saveContinue(this.checked); renderResults(); });
   $el(`${P}-start`).addEventListener('click', () => {
     Promise.resolve().then(start).catch((e) => {
       log('[התחלה] ההרצה נכשלה: ' + (e && e.message));
@@ -3958,7 +4510,8 @@ function mount(container, panelUi, page) {
   $el(`${P}-stop`).addEventListener('click', stop, true);
   $el(`${P}-tsv`).addEventListener('click', copyTsv);
   $el(`${P}-csv`).addEventListener('click', exportCsv);
-  $el(`${P}-keep-attention`).addEventListener('click', keepRowsNeedingAttention);
+  $el(`${P}-keep-attention`).addEventListener('click', fixAndRerun);
+  $el(`${P}-continue-rerun`).addEventListener('click', continueAndRerun);
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
@@ -3966,32 +4519,36 @@ function mount(container, panelUi, page) {
 
   absorbSetHooks({
     getStartDate: startDate,
-    getContinueOtherInstitute: () => { const el = $el(`${P}-continue-other`); return !!(el && el.checked); },
+    getContinueOtherInstitute: continueChecked,
     onStart: (queue, idx) => { total = queue.length; ui.progress(idx, total); setRunning(true); },
     onResume: (queue, res, idx) => {
       total = queue.length; results = res.slice(); renderResults(); ui.progress(idx, total); setRunning(true);
       // הטבלה מציגה את התור שרץ
-      rows = queue.map((t) => ({ fields: {
-        branch: t.branch, studyType: t.studyType, identifier: t.identity, firstName: (t.newStudent || {}).firstName || '', lastName: (t.newStudent || {}).lastName || '',
-        birthDate: t.birthDate || '', country: t.country || '', gender: '', familyStatus: '',
-      } }));
+      rows = queue.map((t) => rowFrom({
+        branch: t.branch, studyType: t.studyType, identifier: t.identity, idType: t.idType === 'passport' ? 'passport' : '',
+        firstName: (t.newStudent || {}).firstName || '', lastName: (t.newStudent || {}).lastName || '',
+        birthDate: t.birthDate || '', country: t.country || '',
+      }));
       renderTable();
+      setRunning(true);
       ui.status(`ממשיך אחרי טעינת דף: ${idx + 1} מתוך ${total}`);
       ui.open();
     },
-    onProgress: (idx, tot, task) => { total = tot; ui.progress(idx, tot); ui.status(`מעבד ${idx + 1}/${tot}: סניף ${task.branch} · סוג ${task.studyType} · ${task.identity}`); },
+    onProgress: (idx, tot, task) => { total = tot; ui.progress(idx, tot); ui.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch} · סוג ${task.studyType} · ${task.idType === 'passport' ? 'דרכון' : 'ת.ז.'}`); },
     onResult: (result, all) => { results = all.slice(); renderResults(); ui.progress(all.length, Math.max(total, all.length)); },
-    onNavigating: () => { ui.status('ממתין לטעינת דף…'); },
+    onNavigating: () => { ui.status('עובר לדף הנכון באתר… ממתין לטעינה'); },
     onStaleQueue: (info) => {
       setRunning(false);
-      ui.status(info && info.reason === 'foreign-page' ? 'יש תור פתוח, אך הדף הזה אינו חלק מהקליטה. בחר "המשך" או "נקה"' : 'יש תור שמור ישן. בחר "המשך" או "נקה"');
+      ui.status(info && info.reason === 'foreign-page' ? 'יש ריצה שנקטעה, אך הדף הזה אינו חלק מהקליטה. בחר "המשך" או "בטל"' : 'יש ריצה שנקטעה. בחר "המשך" או "בטל"');
       renderStaleQueue(info);
       ui.open();
     },
     onLocked: (msg) => { setRunning(false); ui.status(msg); ui.open(); },
     onDone: (all, report) => {
-      results = all.slice(); renderResults(); renderReport(report); setRunning(false); ui.progress(all.length, all.length);
-      ui.status(report.lines.length ? `הסתיים. ${report.lines.length} שורות דורשות טיפול (ראה "מה נשאר")` : 'הסתיים. הכול טופל');
+      results = all.slice(); fixMode = false; renderResults(); renderReport(report); setRunning(false); ui.progress(all.length, all.length);
+      const c = absorbSummarizeKinds(results);
+      ui.status(c.stopped ? `נעצר. ${plural(c.stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}. "תקן והרץ שוב" מריץ את מי שנותר`
+        : (c.bad || c.verify ? `הסתיים: ${c.absorbed + c.exists} מתוך ${results.length} הצליחו. ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}: ראה "מה לעשות" בתוצאות` : `הסתיים: ${results.length} מתוך ${results.length} הצליחו. הכול טופל`));
     },
   });
 
@@ -4000,15 +4557,16 @@ function mount(container, panelUi, page) {
   results = absorbGetResults();
   renderResults();
   const saved = absorbSavedQueueInfo();
-  if (absorbHasSavedQueue()) ui.status(saved && saved.stale ? 'נמצא תור שמור ישן. בודק…' : 'נמצא תור פתוח. ממשיך…');
+  if (absorbHasSavedQueue()) ui.status(saved && saved.stale ? 'נמצאה ריצה שנקטעה. בודק…' : 'נמצאה ריצה פתוחה. ממשיך…');
   else if (!results.length) {
-    // ממצא 6: הריצה האחרונה הסתיימה בזמן טעינת-דף (למשל "עצור"): מציגים את התוצאות והדוח שלה
+    // ממצא 6: הריצה האחרונה הסתיימה בזמן טעינת-דף (למשל "עצור"): מציגים את התוצאות והסיכום שלה
     const last = absorbLastResults();
     if (last && last.results.length) {
       results = last.results.slice();
       renderResults();
       renderReport(last.report);
-      ui.status(`תוצאות הריצה האחרונה (${results.length} שורות)`);
+      ui.step(currentStep());
+      ui.status(`תוצאות הריצה האחרונה (${results.length} תלמידים)`);
     }
   }
   Promise.resolve().then(() => absorbResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); setRunning(false); });
@@ -4017,7 +4575,9 @@ function mount(container, panelUi, page) {
 const absorbTool = {
   id: 'absorb',
   title: 'קליטת תלמידים',
-  pages: ['institute', 'studyType', 'newStudent'],
+  pages: ['*'], // הכרעה ח2: בכל דף; הלשונית אומרת כשהדף לא מתאים
+  fits: (page) => !!(page && ABSORB_PAGES.includes(page.kind)),
+  steps: ABSORB_STEPS,
   hasPendingRun: absorbHasSavedQueue,
   isRunning: absorbIsBusy,
   onStop: stop,
@@ -4905,21 +5465,25 @@ function departStop() {
 }
 
 // ─── src/tools/depart-ui.js ───
-// לשונית "עזיבת תלמידים" בחלונית המאוחדת. הזרימה עצמה ב-depart.js; כאן רק הממשק:
-// קלט (טורים סניף · ת.ז.), שגיאות-פרסור, תאריך וסיבת עזיבה, התחל/עצור, תוצאות, דוח "מה נשאר".
+// לשונית "עזיבת תלמידים" בחלונית המאוחדת. הזרימה עצמה ב-depart.js; כאן רק הממשק (שכבת-הבהירות 1.11.2026):
+// אזור "למי מדווחים עזיבה" (קלט: טורים סניף · ת.ז., תאריך וסיבת עזיבה, התחל/עצור), אזור "תוצאות" (סיכום, "מה לעשות"
+// מתחת לכל שורה, "תקן והרץ שוב"), סרגל-שלבים ושורת-מצב שמחושבים מכל שינוי.
 // כל השמות ברמה-עליונה בקידומת depart (סקופ משותף בבאנדל). אין גישה ל-document ברמת המודול.
 
 
 const DEPART_P = 'tt-depart';
+const DEPART_STEPS = ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת'];
 let departUi = null;
 let departAwaitingErrorConfirm = false;
 let departResults = [];
 let departTotal = 0;
+let departFixMode = false;
+let departRunDone = false;
 
 const DEPART_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
   { key: 'identity', label: 'ת.ז.', mono: true },
-  { key: 'status', label: 'סטטוס' },
+  { key: 'status', label: 'מה קרה' },
 ];
 
 function departClassify(r) {
@@ -4929,37 +5493,50 @@ function departClassify(r) {
   return 'bad';
 }
 
+function departPlural(n, one, many) { return n === 1 ? one : many.replace('N', String(n)); }
+
 function departRenderResults() {
-  setHtml(`${DEPART_P}-results`, resultsTableHtml({ columns: DEPART_COLUMNS, rows: departResults, classify: departClassify }));
+  const zone = $el(`${DEPART_P}-zone-out`);
+  if (zone) zone.classList.toggle('tt-zone-dim', !departResults.length);
+  setHtml(`${DEPART_P}-results`, resultsTableHtml({ columns: DEPART_COLUMNS, rows: departResults, classify: departClassify, actionKey: 'action' }));
+  show(`${DEPART_P}-results`, departResults.length > 0);
+  const attention = departResults.filter((r) => !isDepartSuccess(r.status)).length;
+  setDisabled(`${DEPART_P}-fix`, attention === 0);
+  setText(`${DEPART_P}-fix`, attention ? `תקן והרץ שוב: ${departPlural(attention, 'תלמיד אחד', 'N תלמידים')}` : 'תקן והרץ שוב');
+  for (const id of ['tsv', 'csv']) setDisabled(`${DEPART_P}-${id}`, departResults.length === 0);
 }
 
 function departRenderErrors(errors, validCount) {
   if (!errors || !errors.length) { show(`${DEPART_P}-errors`, false); setHtml(`${DEPART_P}-errors`, ''); return; }
   const items = errors.slice(0, 25).map((e) => `<li>שורה ${esc(e.line)}: ${esc(e.reason)}</li>`).join('');
-  setHtml(`${DEPART_P}-errors`, `<b>${errors.length} שורות לא יורצו</b> (${validCount} תקינות):<ul>${items}${errors.length > 25 ? `<li>ועוד ${errors.length - 25}</li>` : ''}</ul>`);
+  setHtml(`${DEPART_P}-errors`, `<b>${departPlural(errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')}</b> (${validCount} מוכנות):<ul>${items}${errors.length > 25 ? `<li>ועוד ${errors.length - 25}</li>` : ''}</ul>`);
   show(`${DEPART_P}-errors`, true);
 }
 
 function departRenderReport(report) {
   if (!report) { show(`${DEPART_P}-report`, false); setHtml(`${DEPART_P}-report`, ''); return; }
-  setHtml(`${DEPART_P}-report`, reportBoxHtml(report));
+  const ok = departResults.filter((r) => isDepartSuccess(r.status)).length;
+  const warn = departResults.filter((r) => departClassify(r) === 'warn').length;
+  const bad = departResults.filter((r) => departClassify(r) === 'bad').length;
+  const tags = [ok ? tagHtml({ label: `הצליחו ${ok}`, kind: 'ok' }) : '', warn ? tagHtml({ label: `לבדוק ${warn}`, kind: 'warn' }) : '', bad ? tagHtml({ label: `דורשים טיפול ${bad}`, kind: 'bad' }) : ''].filter(Boolean).join('');
+  setHtml(`${DEPART_P}-report`, `<div class="tt-tags">${tags}</div>${reportBoxHtml(report, { idsWarning: false })}`);
   show(`${DEPART_P}-report`, true);
 }
 
 function departRenderStaleQueue(info) {
   if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
-  const left = Math.max(0, (info.total || 0) - (info.curIdx || 0));
+  const done = info.curIdx || 0;
   const startedMs = Date.parse(info.startedAt);
   const ageMin = Number.isNaN(startedMs) ? null : Math.round((Date.now() - startedMs) / 60000);
-  setHtml(`${DEPART_P}-stale`, `<b>נמצא תור עזיבה שמור${ageMin === null ? '' : ` מלפני ${esc(ageMin)} דקות`}</b>: ${esc(left)} שורות טרם עובדו (${esc(info.curIdx || 0)} מתוך ${esc(info.total || 0)} הושלמו). התור ישן מדי להמשך אוטומטי.
+  setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. עבר זמן רב, ולכן הכלי לא ממשיך לבד.
     ${buttonsRowHtml([
-      { id: `${DEPART_P}-stale-go`, label: 'המשך את התור', kind: 'primary', size: 'small' },
-      { id: `${DEPART_P}-stale-clear`, label: 'נקה את התור', kind: 'danger', size: 'small' },
-    ])}`);
+      { id: `${DEPART_P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },
+      { id: `${DEPART_P}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
+    ], 'tt-row-wrap')}`);
   show(`${DEPART_P}-stale`, true);
   $el(`${DEPART_P}-stale-go`).addEventListener('click', () => {
     departRenderStaleQueue(null);
-    departUi.status('ממשיך את התור השמור…');
+    departUi.status('ממשיך את הריצה שנקטעה…');
     departSetRunning(true);
     Promise.resolve().then(() => departResumeIfPending({ allowStale: true })).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
   });
@@ -4967,13 +5544,36 @@ function departRenderStaleQueue(info) {
     departDiscardSavedQueue();
     departRenderStaleQueue(null);
     departSetRunning(false);
-    departUi.status('התור השמור נמחק. אפשר להתחיל ריצה חדשה');
+    departUi.status('הריצה שנקטעה בוטלה. אפשר להתחיל ריצה חדשה');
   });
+}
+
+function departStep() {
+  if (departIsRunning()) return 1;
+  if (departFixMode) return 3;
+  if (departResults.length && departRunDone) return 2;
+  return 0;
+}
+
+// שורת-המצב מהקלט (מחושבת מכל הקשה)
+function departRefreshStatus() {
+  departUi.step(departStep());
+  if (departIsRunning()) return;
+  const text = (($el(`${DEPART_P}-input`) || {}).value || '').trim();
+  if (!text) { departUi.status(departResults.length ? 'התיבה ריקה. "תקן והרץ שוב" מחזיר אליה את מי שדורש טיפול' : 'אין שורות עדיין. הדבק מאקסל: סניף ות.ז. בכל שורה'); setText(`${DEPART_P}-start`, 'התחל עזיבה'); return; }
+  const parsed = parseDepartInput(text);
+  const parts = [departPlural(parsed.tasks.length, 'תלמיד אחד מוכן', 'N תלמידים מוכנים')];
+  if (parsed.errors.length) parts.push(departPlural(parsed.errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו'));
+  departUi.status((departFixMode ? 'תיקון: ' : '') + parts.join(' · ') + (departResults.length && !departFixMode ? '. התוצאות למטה הן מהריצה הקודמת' : ''));
+  if (!departAwaitingErrorConfirm) setText(`${DEPART_P}-start`, parsed.tasks.length ? `התחל עזיבה: ${departPlural(parsed.tasks.length, 'תלמיד אחד', 'N תלמידים')}` : 'התחל עזיבה');
 }
 
 function departSetRunning(on) {
   setDisabled(`${DEPART_P}-start`, !!on);
+  show(`${DEPART_P}-stop`, !!on);
+  const zoneIn = $el(`${DEPART_P}-zone-in`); if (zoneIn) zoneIn.classList.toggle('tt-zone-dim', !!on);
   departUi.running(!!on);
+  departUi.step(departStep());
 }
 
 function departReadSettings() {
@@ -4995,8 +5595,8 @@ function departApplySettings(settings) {
 
 function departResetStartButton() {
   departAwaitingErrorConfirm = false;
-  setText(`${DEPART_P}-start`, 'התחל עזיבה');
   departRenderErrors([], 0);
+  departRefreshStatus();
 }
 
 async function departStart() {
@@ -5005,27 +5605,30 @@ async function departStart() {
   if (!text) { departUi.status('הדבק רשימה: סניף ות.ז. בכל שורה (טורים מאקסל)'); return; }
   const settings = departReadSettings();
   if (settings.leaveDate && !departIsValidDate(settings.leaveDate)) {
-    departUi.status('תאריך העזיבה לא תקין. הפורמט: DD/MM/YYYY, או השאר ריק (= היום)');
+    departUi.status('תאריך העזיבה לא תקין. הפורמט: יום/חודש/שנה, או השאר ריק (= היום)');
     return;
   }
   const parsed = parseDepartInput(text);
   if (parsed.errors.length && !departAwaitingErrorConfirm) {
     departRenderErrors(parsed.errors, parsed.tasks.length);
     departAwaitingErrorConfirm = true;
-    setText(`${DEPART_P}-start`, parsed.tasks.length ? `הרץ בכל זאת את ${parsed.tasks.length} התקינות` : 'התחל עזיבה');
-    departUi.status(`${parsed.errors.length} שורות בעייתיות. תקן אותן, או לחץ שוב כדי להריץ רק את התקינות`);
+    setText(`${DEPART_P}-start`, parsed.tasks.length ? `כן, התחל בלי ${departPlural(parsed.errors.length, 'השורה השגויה', 'N השורות השגויות')}` : 'התחל עזיבה');
+    departUi.status(`${departPlural(parsed.errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')}. תקן אותן, או לחץ שוב כדי להתחיל בלי השגויות`);
     log(`[עזיבה] פרסור: ${parsed.tasks.length} תקינות · ${parsed.errors.length} שגויות`);
     return;
   }
-  if (!parsed.tasks.length) { departRenderErrors(parsed.errors, 0); departUi.status('אין שורות תקינות להרצה'); return; }
-  departResetStartButton();
+  if (!parsed.tasks.length) { departRenderErrors(parsed.errors, 0); departUi.status('אין תלמידים שיכולים לרוץ. תקן את השורות השגויות'); return; }
+  departAwaitingErrorConfirm = false;
+  departRenderErrors([], 0);
+  departFixMode = false;
+  departRunDone = false;
   departRenderReport(null);
   departRenderStaleQueue(null);
   departResults = [];
   departRenderResults();
   departSetRunning(true);
   departUi.progress(0, parsed.tasks.length);
-  departUi.status(`מריץ עזיבה ל-${parsed.tasks.length} תלמידים…`);
+  departUi.status(`מתחיל: ${departPlural(parsed.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
   log(`[עזיבה] התחלה: ${parsed.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
   await departStartRun(parsed.tasks, settings);
 }
@@ -5042,49 +5645,63 @@ function departCurrentRows() {
   return live.length ? live : departResults;
 }
 
+// זרימת-התיקון: משאיר בתיבה רק את מי שדורש טיפול
+function departFixAndRerun() {
+  const left = departCurrentRows().filter((r) => !isDepartSuccess(r.status));
+  const ta = $el(`${DEPART_P}-input`);
+  if (ta) ta.value = left.map((r) => `${r.branch}\t${r.identity}`).join('\n');
+  departFixMode = left.length > 0;
+  departAwaitingErrorConfirm = false;
+  departRenderErrors([], 0);
+  departRefreshStatus();
+  if (left.length) departUi.status(`תיקון: ${departPlural(left.length, 'תלמיד אחד בתיבה', 'N תלמידים בתיבה')}. תקן לפי "מה לעשות" בתוצאות ולחץ "התחל עזיבה"`);
+  log(`[עזיבה] תקן והרץ שוב: ${left.length} תלמידים בתיבה`);
+}
+
 function departCopyTsv() {
   const rows = departCurrentRows();
   if (!rows.length) { departUi.status('אין תוצאות להעתקה'); return; }
   copyTextToClipboard(buildDepartTsv(rows)).then((ok) => {
-    flash(`${DEPART_P}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק לאקסל');
-    departUi.status(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן. השתמש בייצוא CSV');
+    flash(`${DEPART_P}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק תוצאות לאקסל');
+    departUi.status(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן. השתמש ב"הורד קובץ"');
   });
 }
 
 function departExportCsv() {
   const rows = departCurrentRows();
-  if (!rows.length) { departUi.status('אין תוצאות לייצוא'); return; }
+  if (!rows.length) { departUi.status('אין תוצאות להורדה'); return; }
   const name = `departures_${new Date().toISOString().slice(0, 10)}.csv`;
-  departUi.status(downloadCsv(name, buildDepartCsvRows(rows)) ? `הורד ${name}` : 'הייצוא נכשל');
+  departUi.status(downloadCsv(name, buildDepartCsvRows(rows)) ? `הורד ${name}` : 'ההורדה נכשלה');
 }
 
 function departMount(container, panelUi, page) {
   departUi = panelUi;
+  const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
-    <div class="tt-box tt-box-info">
-      <b>טורים כמו באקסל</b> (טאבים, פסיקים או רווחים; שורת כותרת אופציונלית; שורה שמתחילה ב-# מדולגת): סניף · ת.ז.
-      התלמיד מחופש בלשונית "תלמידים למוסד" של הסניף; מי שכבר עזב מדווח ולא נוגעים בו.
-    </div>
-    <textarea id="${DEPART_P}-input" class="tt-textarea" placeholder="00&#9;012345678&#10;16&#9;023456789"></textarea>
-    <div id="${DEPART_P}-errors" class="tt-box tt-box-error" hidden></div>
-    <div id="${DEPART_P}-stale" class="tt-box tt-box-warn" hidden></div>
-    <div class="tt-row">
-      ${fieldHtml('תאריך עזיבה (ריק = היום)', `<input id="${DEPART_P}-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}">`)}
-      ${fieldHtml('סיבת עזיבה', selectHtml({ id: `${DEPART_P}-reason`, options: DEPART_REASONS, value: DEPART_DEFAULT_REASON }))}
-    </div>
-    ${buttonsRowHtml([
-      { id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' },
-      { id: `${DEPART_P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
-    ])}
-    ${buttonsRowHtml([
-      { id: `${DEPART_P}-tsv`, label: 'העתק לאקסל', kind: 'ghost', size: 'small' },
-      { id: `${DEPART_P}-csv`, label: 'ייצוא CSV', kind: 'ghost', size: 'small' },
-    ])}
-    <div id="${DEPART_P}-results" class="tt-scroll"></div>
-    <div id="${DEPART_P}-report" class="tt-box tt-box-warn" hidden></div>`;
+    ${zoneHtml({ id: `${DEPART_P}-zone-in`, title: 'למי מדווחים עזיבה', inner: `
+      <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מדביקים מאקסל שתי עמודות, סניף ות.ז. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+      <textarea id="${DEPART_P}-input" class="tt-textarea" placeholder="00&#9;012345678&#10;16&#9;023456789"></textarea>
+      <div id="${DEPART_P}-errors" class="tt-box tt-box-error" hidden></div>
+      <div id="${DEPART_P}-stale" class="tt-box tt-box-warn" hidden></div>
+      <div class="tt-row">
+        ${fieldHtml('תאריך עזיבה (ריק = היום)', `<input id="${DEPART_P}-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}">`)}
+        ${fieldHtml('סיבת עזיבה', selectHtml({ id: `${DEPART_P}-reason`, options: DEPART_REASONS, value: DEPART_DEFAULT_REASON }))}
+      </div>
+      <div class="tt-row tt-row-wrap">
+        ${buttonHtml({ id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' })}
+        ${buttonHtml({ id: `${DEPART_P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
+      </div>` })}
+    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', dim: true, inner: `
+      <div id="${DEPART_P}-report" class="tt-box tt-box-warn" hidden></div>
+      <div class="tt-row tt-row-wrap tt-row-tight">
+        ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'משאיר בתיבה רק את מי שדורש טיפול' })}
+        ${buttonHtml({ id: `${DEPART_P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט' })}
+        ${buttonHtml({ id: `${DEPART_P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true })}
+      </div>
+      <div id="${DEPART_P}-results" class="tt-scroll" hidden></div>` })}`;
 
   bindDateMask(`${DEPART_P}-date`);
-  $el(`${DEPART_P}-input`).addEventListener('input', () => { if (departAwaitingErrorConfirm) departResetStartButton(); });
+  $el(`${DEPART_P}-input`).addEventListener('input', () => { if (departAwaitingErrorConfirm) departResetStartButton(); else departRefreshStatus(); });
   $el(`${DEPART_P}-start`).addEventListener('click', () => {
     Promise.resolve().then(departStart).catch((e) => {
       log('[עזיבה] ההרצה נכשלה: ' + (e && e.message));
@@ -5093,6 +5710,7 @@ function departMount(container, panelUi, page) {
     });
   });
   $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
+  $el(`${DEPART_P}-fix`).addEventListener('click', departFixAndRerun);
   $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
   $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
 
@@ -5106,28 +5724,32 @@ function departMount(container, panelUi, page) {
       departUi.status(`ממשיך אחרי טעינת דף: ${idx + 1} מתוך ${departTotal}`);
       departUi.open();
     },
-    onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); departUi.status(`מעבד ${idx + 1}/${tot}: סניף ${task.branch} · ${task.identity}`); },
+    onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); departUi.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch}`); },
     onResult: (result, all) => { departResults = all.slice(); departRenderResults(); departUi.progress(all.length, Math.max(departTotal, all.length)); },
-    onNavigating: (branch) => { departUi.status(`מנווט לסניף ${branch}… ממתין לטעינת דף`); },
-    onStaleQueue: (info) => { departSetRunning(false); departUi.status('יש תור עזיבה שמור ישן. בחר "המשך" או "נקה"'); departRenderStaleQueue(info); departUi.open(); },
+    onNavigating: (branch) => { departUi.status(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
+    onStaleQueue: (info) => { departSetRunning(false); departUi.status('יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"'); departRenderStaleQueue(info); departUi.open(); },
     onDone: (all, report) => {
-      departResults = all.slice(); departRenderResults(); departRenderReport(report); departSetRunning(false); departUi.progress(all.length, all.length);
-      departUi.status(report.lines.length ? `הסתיים. ${report.lines.length} שורות דורשות טיפול (ראה "מה נשאר")` : 'הסתיים. הכול טופל');
+      departResults = all.slice(); departRunDone = true; departFixMode = false; departRenderResults(); departRenderReport(report); departSetRunning(false); departUi.progress(all.length, all.length);
+      const bad = all.filter((r) => !isDepartSuccess(r.status)).length;
+      departUi.status(bad ? `הסתיים: ${all.length - bad} מתוך ${all.length} הצליחו. ${departPlural(bad, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}: ראה "מה לעשות" בתוצאות` : `הסתיים: ${all.length} מתוך ${all.length} הצליחו. הכול טופל`);
     },
   });
 
   log(`[עזיבה] דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}`);
   departResults = departGetResults();
   departRenderResults();
+  departRefreshStatus();
   const saved = departSavedQueueInfo();
-  if (departHasSavedQueue()) departUi.status(saved && saved.stale ? 'נמצא תור עזיבה שמור ישן. בודק…' : 'נמצא תור עזיבה פתוח. ממשיך…');
+  if (departHasSavedQueue()) departUi.status(saved && saved.stale ? 'נמצאה ריצת עזיבה שנקטעה. בודק…' : 'נמצאה ריצת עזיבה פתוחה. ממשיך…');
   Promise.resolve().then(() => departResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
 }
 
 const departTool = {
   id: 'depart',
   title: 'עזיבת תלמידים',
-  pages: ['institute'],
+  pages: ['*'], // הכרעה ח2: בכל דף; הזרימה מנווטת לדף המוסד בעצמה
+  fits: (page) => !!(page && page.kind === 'institute'),
+  steps: DEPART_STEPS,
   hasPendingRun: departHasSavedQueue,
   isRunning: departIsRunning,
   onStop: departStopClick,
@@ -5575,21 +6197,24 @@ async function reportResumeIfPending() {
 }
 
 // ─── src/tools/report-ui.js ───
-// לשונית "דיווח חודשי" בחלונית המאוחדת. הזרימה ב-report.js; כאן רק הממשק: רשימת הסניפים שנמצאו,
-// התחל/עצור, טבלת תוצאות (סניף, סטטוס, פירוט), "העתק לאקסל", סיכום "מה נשאר", וחיווי
-// "אם נתקע, רענן את הדף" אחרי 20 שניות בלי צעד. אין גישה ל-document ברמת המודול.
+// לשונית "דיווח חודשי" בחלונית המאוחדת. הזרימה ב-report.js; כאן רק הממשק (שכבת-הבהירות 1.11.2026): אזור
+// "לאילו סניפים מדווחים" (רשימת הסניפים מהעץ, התחל/עצור; בדף בלי עץ: הסבר וכפתור לדף המוסדות), אזור "תוצאות"
+// (סניף, מה קרה, פירוט, העתק לאקסל, סיכום), סרגל-שלבים, וחיווי "אם נתקע, רענן את הדף" אחרי 20 שניות בלי צעד.
+// אין גישה ל-document ברמת המודול.
 
 
 const RP = 'tt-report';
+const REPORT_STEPS = ['הכנה', 'ריצה', 'תוצאות'];
 let reportUi = null;
 let reportRows = [];
 let reportBaseStatus = 'מוכן';
 let reportStuckTimer = null;
 let reportTotal = 0;
+let reportDone = false;
 
 const REPORT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '52px' },
-  { key: 'status', label: 'סטטוס', width: '130px' },
+  { key: 'status', label: 'מה קרה', width: '130px' },
   { key: 'detail', label: 'פירוט' },
 ];
 
@@ -5599,8 +6224,18 @@ function reportClassify(r) {
   return 'bad';
 }
 
+function reportStep() {
+  if (reportIsRunning()) return 1;
+  if (reportRows.length && reportDone) return 2;
+  return 0;
+}
+
 function reportRenderRows() {
+  const zone = $el(`${RP}-zone-out`);
+  if (zone) zone.classList.toggle('tt-zone-dim', !reportRows.length);
   setHtml(`${RP}-results`, resultsTableHtml({ columns: REPORT_COLUMNS, rows: reportRows, classify: reportClassify }));
+  show(`${RP}-results`, reportRows.length > 0);
+  setDisabled(`${RP}-tsv`, reportRows.length === 0);
 }
 
 function reportRenderSummary(summary) {
@@ -5615,6 +6250,7 @@ function reportRenderStatus() {
   let stuck = false;
   try { stuck = reportIsRunning() && reportIsStuck(reportLastStepAt(), Date.now()); } catch (e) { stuck = false; }
   reportUi.status(stuck ? `${reportBaseStatus} · אם נתקע, רענן את הדף` : reportBaseStatus);
+  reportUi.step(reportStep());
 }
 
 function reportSetStatus(msg) {
@@ -5624,7 +6260,8 @@ function reportSetStatus(msg) {
 
 function reportSetRunning(on) {
   setDisabled(`${RP}-start`, !!on);
-  if (reportUi) reportUi.running(!!on);
+  show(`${RP}-stop`, !!on);
+  if (reportUi) { reportUi.running(!!on); reportUi.step(reportStep()); }
   if (on) {
     if (!reportStuckTimer) reportStuckTimer = setInterval(reportRenderStatus, 1000);
   } else if (reportStuckTimer) {
@@ -5636,6 +6273,7 @@ function reportSetRunning(on) {
 async function reportUiStart() {
   if (reportIsRunning()) { reportSetStatus('ריצה כבר פעילה'); return; }
   reportRows = [];
+  reportDone = false;
   reportRenderRows();
   reportRenderSummary(null);
   reportSetRunning(true);
@@ -5657,7 +6295,7 @@ function reportCopyTsv() {
   const rows = reportRows.length ? reportRows : reportGetResults();
   if (!rows.length) { reportSetStatus('אין תוצאות להעתקה'); return; }
   copyTextToClipboard(reportBuildTsv(rows)).then((ok) => {
-    flash(`${RP}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק לאקסל');
+    flash(`${RP}-tsv`, ok ? 'הועתק' : 'ההעתקה נכשלה', 'העתק תוצאות לאקסל');
     reportSetStatus(ok ? 'התוצאות הועתקו. הדבק באקסל (Ctrl+V)' : 'ההעתקה נחסמה בדפדפן');
   });
 }
@@ -5665,21 +6303,20 @@ function reportCopyTsv() {
 function reportUiMount(container, panelUi, page) {
   reportUi = panelUi;
   const branches = page && page.kind === 'institute' ? readBranchesFromTree() : [];
+  const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
-    <div class="tt-box tt-box-info">
-      שולח דיווח חודשי לכל הסניפים שבעץ-הצד, סניף אחרי סניף. סניף שכפתור הדיווח שלו מנוטרל (כבר דווח) מדולג.
-      הריצה עוברת בין דפי-מוסד; "עצור" נכנס לתוקף לפני הסניף הבא, לא באמצע שליחה.
-    </div>
-    <div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים בעץ-הצד של הדף הזה'}</div>
-    ${buttonsRowHtml([
-      { id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length },
-      { id: `${RP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
-    ])}
-    ${buttonsRowHtml([
-      { id: `${RP}-tsv`, label: 'העתק לאקסל', kind: 'ghost', size: 'small' },
-    ])}
-    <div id="${RP}-results" class="tt-scroll"></div>
-    <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>`;
+    ${zoneHtml({ id: `${RP}-zone-in`, title: 'לאילו סניפים מדווחים', inner: `
+      <p class="tt-zone-lead">שולח דיווח חודשי לכל הסניפים שבעץ, אחד אחרי השני. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
+      ${fits ? `<div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים בעץ של הדף הזה'}</div>`
+    : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח רץ מדף מוסד (שם יש את עץ-הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' })}
+      <div class="tt-row tt-row-wrap">
+        ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
+        ${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
+      </div>` })}
+    ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', dim: true, inner: `
+      <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
+      <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${RP}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true })}</div>
+      <div id="${RP}-results" class="tt-scroll" hidden></div>` })}`;
 
   $el(`${RP}-start`).addEventListener('click', () => {
     Promise.resolve().then(reportUiStart).catch((e) => {
@@ -5690,6 +6327,8 @@ function reportUiMount(container, panelUi, page) {
   });
   $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
   $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+  const goto = $el(`${RP}-goto`);
+  if (goto) goto.addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
 
   reportSetHooks({
     onStart: (list, idx) => { reportTotal = list.length; reportSetRunning(true); reportUi.progress(idx, reportTotal); },
@@ -5702,11 +6341,12 @@ function reportUiMount(container, panelUi, page) {
       reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${reportTotal}`);
       reportUi.open();
     },
-    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1}/${total})`); },
-    onNavigating: (branch) => { reportSetStatus(`ממתין לטעינת דף המוסד של סניף ${branch}…`); },
+    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
+    onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {
       reportRows = all.slice();
+      reportDone = true;
       reportRenderRows();
       reportRenderSummary(summary);
       reportSetRunning(false);
@@ -5716,8 +6356,10 @@ function reportUiMount(container, panelUi, page) {
   });
 
   reportRows = reportGetResults();
+  reportDone = reportRows.length > 0;
   reportRenderRows();
   if (reportHasPendingRun()) { reportSetStatus('נמצאה ריצה פתוחה. ממשיך…'); reportSetRunning(true); }
+  else reportSetStatus(fits ? (branches.length ? 'מוכן. "התחל" מדווח לכל הסניפים שבעץ' : 'אין סניפים בעץ של הדף הזה') : 'הדיווח רץ מדף מוסד');
   Promise.resolve().then(() => reportResumeIfPending()).catch((e) => {
     log('[דיווח] ההמשך נכשל: ' + (e && e.message));
     reportSetRunning(false);
@@ -5728,7 +6370,9 @@ function reportUiMount(container, panelUi, page) {
 const reportTool = {
   id: 'report',
   title: 'דיווח חודשי',
-  pages: ['institute'],
+  pages: ['*'], // הכרעה ח2: בכל דף; בלי עץ הלשונית מציעה לעבור לדף המוסדות
+  fits: (page) => !!(page && page.kind === 'institute'),
+  steps: REPORT_STEPS,
   hasPendingRun: reportHasPendingRun,
   isRunning: reportIsRunning,
   onStop: reportUiStop,
@@ -6548,6 +7192,8 @@ function messagesDownloadXlsx(list) {
 
 
 const MP = 'tt-messages';
+const MESSAGES_STEPS = ['סריקה', 'סקירה', 'ביצוע', 'תוצאות'];
+const MESSAGES_PAGE_PATH = '/Association/Default.aspx';
 let msgUi = null;
 let msgMode = 'table';
 let msgPending = []; // מסלול האקסל: הרשומות שנטענו מהטקסט המודבק
@@ -6820,7 +7466,10 @@ function messagesMount(container, panelUi, page) {
   msgUi = panelUi;
   const url = (page && page.url) || (typeof location !== 'undefined' ? location.href : '');
   if (!messagesIsMessagesUrl(url)) {
-    container.innerHTML = '<div class="tt-box tt-box-info">הכלי עובד בדף ההודעות בלבד.</div>';
+    // הכרעה ח (1.11.2026): הלשונית מופיעה בכל דף; מחוץ לדף ההודעות היא מסבירה ומציעה לעבור
+    container.innerHTML = fitBoxHtml({ id: `${MP}-fit`, text: 'כאן מטפלים בהודעות שנשלחו אליכם (בקשות-מעבר ועדכונים). הכלי עובד מתוך דף ההודעות של האתר.', buttonId: `${MP}-goto`, buttonLabel: 'עבור לדף ההודעות' });
+    msgUi.status('הכלי עובד מתוך דף ההודעות');
+    $el(`${MP}-goto`).addEventListener('click', () => { msgUi.status('עובר לדף ההודעות…'); location.href = (typeof location !== 'undefined' ? location.origin : '') + MESSAGES_PAGE_PATH; });
     return;
   }
   const panel = $el('tt-panel');
@@ -6842,13 +7491,12 @@ function messagesMount(container, panelUi, page) {
       ${buttonsRowHtml([{ id: `${MP}-bulk-run`, label: 'הפעל מצב גורף', kind: 'primary' }])}
     </div>
     <div id="${MP}-table">
-      <div class="tt-box tt-box-info">
-        "סרוק" אוסף את כל ההודעות במצב "נשלחה" לטבלה אחת (כפילויות ממוזגות). בחר החלטה לכל שורה
-        (ברירת-המחדל: בקשת מעבר → אישור, אחרת → טופל), ואז "בצע לפי הטבלה". "דלג" לא נוגע בהודעה.
-        בקשת מעבר = מוסד אחר מבקש תלמיד שלנו. הדבקת מצבת מאקסל מסמנת על כל בקשה: "ממתין" כשהתלמיד עדיין
-        במצבת (לאשר או לדחות), "כנראה בוצע" כשאינו במצבת. זה רמז לבדיקה, ההחלטה לא משתנה מעצמה;
-        "כל 'כנראה בוצע': סמן כטופל" מחיל אותה.
-      </div>
+      <p class="tt-zone-lead">"סרוק" אוסף את כל ההודעות הפתוחות לטבלה אחת. בוחרים החלטה לכל שורה, ואז "בצע לפי הטבלה".</p>
+      <details class="tt-section"><summary>איך זה עובד, בפירוט</summary><div class="tt-box tt-box-info">
+        כפילויות ממוזגות לשורה אחת. ברירת-המחדל להחלטה: בקשת מעבר (מוסד אחר מבקש תלמיד שלנו) → אישור מעבר; כל הודעה אחרת → טופל.
+        "דלג" לא נוגע בהודעה. הדבקת מצבת מאקסל מסמנת על כל בקשת-מעבר: "ממתין" כשהתלמיד עדיין במצבת (לאשר או לדחות),
+        "כנראה בוצע" כשאינו במצבת. זה רמז לבדיקה, ההחלטה לא משתנה מעצמה; "כל 'כנראה בוצע': סמן כטופל" מחיל אותה.
+      </div></details>
       ${buttonsRowHtml([{ id: `${MP}-scan`, label: 'סרוק', kind: 'primary' }])}
       <div id="${MP}-scan-status" class="tt-hint">לא בוצעה סריקה.</div>
       <details class="tt-section" id="${MP}-roster">
@@ -6914,6 +7562,7 @@ function messagesMount(container, panelUi, page) {
   messagesSetHooks({
     onStart: (mode) => {
       messagesSetRunning(true);
+      msgUi.step(mode === 'scan' ? 0 : 2);
       if (mode !== 'scan') { msgResults = []; messagesRenderResults(); messagesRenderReport(null); }
       msgUi.progress(0, 0);
       msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי הטבלה…');
@@ -6928,6 +7577,7 @@ function messagesMount(container, panelUi, page) {
       const merged = msgRows.length;
       setText(`${MP}-scan-status`, `✓ נסרקו ${info.total} הודעות מ-${info.pages} עמודים${merged < info.total ? ` (${merged} שורות אחרי מיזוג כפילויות)` : ''}${info.stopped ? ' (נעצר)' : ''}.`);
       messagesSetRunning(false);
+      msgUi.step(merged ? 1 : 0);
       const done = msgRows.filter((r) => r.probablyDone).length;
       msgUi.status(merged
         ? `${merged} שורות לסקירה. עבור על עמודת "החלטה" ואז "בצע לפי הטבלה"${done ? ` (${MESSAGES_DONE_HINT(done)})` : ''}`
@@ -6938,6 +7588,7 @@ function messagesMount(container, panelUi, page) {
       messagesRenderResults();
       messagesRenderReport(report);
       messagesSetRunning(false);
+      msgUi.step(3);
       msgUi.progress(0, 0);
       msgUi.status(`${report.stopped ? 'נעצר' : 'הסתיים'}. ${report.summary}${report.lines.length ? ' (ראה "מה נשאר")' : ''}. סרוק שוב לרענון הטבלה`);
     },
@@ -6948,14 +7599,16 @@ function messagesMount(container, panelUi, page) {
   messagesRenderResults();
   messagesRebuildRows();
   log('[הודעות] דף ההודעות זוהה');
-  msgUi.status('מוכן. "סרוק" לטבלת סקירה, או "מצב גורף"');
+  msgUi.step(msgRows.length ? 1 : 0);
+  msgUi.status('מוכן. "סרוק" אוסף את כל ההודעות הפתוחות לטבלה אחת');
 }
 
 const messagesTool = {
   id: 'messages',
   title: 'הודעות',
-  pages: [], // רק דף ההודעות, לפי הכתובת (לא כל דף "אחר" באתר; נצפה ברטוב 30.10: החלונית צצה גם בדף הכניסה)
-  matches: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
+  pages: ['*'], // הכרעה ח (1.11.2026): בכל דף; מחוץ לדף ההודעות הלשונית מציעה לעבור אליו. דף הכניסה מסונן ב-main.
+  fits: (page) => messagesIsMessagesUrl((page && page.url) || (typeof location !== 'undefined' ? location.href : '')),
+  steps: MESSAGES_STEPS,
   hasPendingRun: () => false,
   isRunning: messagesIsRunning,
   onStop: messagesStop,

@@ -38,11 +38,55 @@ export function selectHtml({ id, options, value = '', placeholder = '', cls = ''
   return `<select id="${esc(id)}" class="tt-select ${cls}">${opts.join('')}</select>`;
 }
 
+// סרגל-שלבים (שכבת-הבהירות 1.11.2026): "איפה אוחזים". labels = שמות השלבים; השלב הפעיל נקבע ב-setStep.
+export function stepsHtml(id, labels) {
+  return `<div class="tt-steps" id="${esc(id)}" aria-label="שלבים">${(labels || []).map((l, i) => `<div class="tt-step" data-step="${i}">${esc(l)}</div>`).join('')}</div>`;
+}
+
+// טהורה: אילו מחלקות מקבל כל שלב כשהשלב current פעיל (לפניו: done; הוא: on; אחריו: כלום).
+export function stepClasses(count, current) {
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(i < current ? 'tt-step-done' : (i === current ? 'tt-step-on' : ''));
+  return out;
+}
+
+export function setStep(id, current) {
+  const el = $el(id);
+  if (!el) return;
+  const steps = Array.from(el.querySelectorAll('.tt-step'));
+  const classes = stepClasses(steps.length, current);
+  steps.forEach((s, i) => {
+    s.classList.toggle('tt-step-done', classes[i] === 'tt-step-done');
+    s.classList.toggle('tt-step-on', classes[i] === 'tt-step-on');
+    if (classes[i] === 'tt-step-on') s.setAttribute('aria-current', 'step'); else s.removeAttribute('aria-current');
+  });
+}
+
+// תגית-מצב (ספירה). kind: info | ok | warn | bad. ‏button=true → תגית לחיצה (סינון), עם data-filter.
+export function tagHtml({ label, kind = 'info', id = '', button = false, filter = '', active = false, disabled = false, title = '' }) {
+  const cls = `tt-tag tt-tag-${kind}${active ? ' tt-tag-active' : ''}`;
+  if (button) return `<button type="button" class="${cls}"${id ? ` id="${esc(id)}"` : ''} data-filter="${esc(filter)}"${disabled ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</button>`;
+  return `<span class="${cls}"${id ? ` id="${esc(id)}"` : ''}${title ? ` title="${esc(title)}"` : ''}>${esc(label)}</span>`;
+}
+
+// אזור ("הכנה" / "תוצאות"): כותרת, הערה קטנה, ותוכן. dim=true כשהאזור עוד לא רלוונטי.
+export function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false }) {
+  return `<section class="tt-zone${dim ? ' tt-zone-dim' : ''}" id="${esc(id)}"${hidden ? ' hidden' : ''}>
+    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span></div>${inner}</section>`;
+}
+
+// הכרעה ח2: תיבה קצרה כשהדף לא מתאים ללשונית, עם כפתור מעבר (אופציונלי).
+export function fitBoxHtml({ id, text, buttonId = '', buttonLabel = '' }) {
+  return `<div class="tt-box tt-box-info tt-fit" id="${esc(id)}">${esc(text)}${buttonId ? ` <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: buttonId, label: buttonLabel, kind: 'primary', size: 'small' })}</div>` : ''}</div>`;
+}
+
 // טבלת תוצאות. columns: [{key, label, mono?, center?, width?}]. classify(row) → 'ok' | 'warn' | 'bad' | ''
-export function resultsTableHtml({ columns, rows, classify, emptyText = '' }) {
+// ‏actionKey (שכבת-הבהירות): לשורה שאינה 'ok' עם ערך בשדה הזה נוספת שורת "מה לעשות" מתחתיה (tr.tt-act).
+// שורות-התוצאה עצמן מסומנות data-row, כדי שקוראים (בדיקות) יספרו רק אותן.
+export function resultsTableHtml({ columns, rows, classify, emptyText = '', actionKey = '' }) {
   if (!rows || !rows.length) return emptyText ? `<div class="tt-empty">${esc(emptyText)}</div>` : '';
   const head = columns.map((c) => `<th${c.width ? ` style="width:${c.width}"` : ''}>${esc(c.label)}</th>`).join('');
-  const body = rows.map((r) => {
+  const body = rows.map((r, i) => {
     const cls = classify ? classify(r) : '';
     const cells = columns.map((c) => {
       const v = r[c.key];
@@ -50,7 +94,8 @@ export function resultsTableHtml({ columns, rows, classify, emptyText = '' }) {
       return `<td class="${classes}">${esc(v)}</td>`;
     }).join('');
     const title = r.detail ? ` title="${esc(r.detail)}"` : '';
-    return `<tr class="tt-r-${cls || 'none'}"${title}>${cells}</tr>`;
+    const action = actionKey && cls !== 'ok' && r[actionKey] ? `<tr class="tt-act tt-r-${cls || 'none'}"><td colspan="${columns.length}">${esc(r[actionKey])}</td></tr>` : '';
+    return `<tr class="tt-r-${cls || 'none'}" data-row="${i}"${title}>${cells}</tr>${action}`;
   }).join('');
   return `<table class="tt-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }

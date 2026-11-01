@@ -23,7 +23,8 @@ test('smoke: depart-ui.js נטען ב-Node ומייצא departTool לפי חוז
   const mod = await import('../src/tools/depart-ui.js');
   const t = mod.departTool;
   assert.equal(t.id, 'depart');
-  assert.deepEqual(t.pages, ['institute']);
+  assert.deepEqual(t.pages, ['*']); // הכרעה ח2 (1.11.2026): בכל דף
+  assert.deepEqual(t.steps, ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת']);
   for (const k of ['hasPendingRun', 'isRunning', 'onStop', 'mount']) assert.equal(typeof t[k], 'function', k);
 });
 

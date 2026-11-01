@@ -35,7 +35,7 @@ async function waitForDepartDone(page, timeoutMs = 90000) {
 }
 
 async function readDepartResults(page) {
-  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.results} table tbody tr`)).map((tr) => {
+  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.results} table tbody tr[data-row]`)).map((tr) => {
     const c = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
     return { branch: c[0], identity: c[1], status: c[2], detail: tr.getAttribute('title') || '' };
   }), SEL);

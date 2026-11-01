@@ -243,15 +243,19 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('4 דף אחר (לא הודעות, לא מוסד): החלונית לא עולה בכלל (הלשונית מוגבלת לכתובת דף ההודעות)', async () => {
+  test('4 דף אחר (לא הודעות, לא מוסד): החלונית עולה (הכרעה ח2), לשונית ההודעות מציעה לעבור לדף ההודעות, והכפתור מעביר', async () => {
     const { context, page } = await openSession(browser, { script });
     try {
       await page.goto(`${SITE}/`);
-      await sleep(1500); // האתחול מחכה 600 מ"ש אחרי הטעינה
-      const panel = await page.$(SEL.panel);
-      assert.equal(panel, null, 'בדף שאינו הודעות/מוסד/סוג-לימוד אסור שתעלה חלונית');
-      const fab = await page.$('#tt-fab');
-      assert.equal(fab, null, 'גם הכפתור הצף לא');
+      await page.waitForSelector(SEL.panel, { timeout: 5000 });
+      assert.ok(await page.$('#tt-fab'), 'הכפתור הצף מוצג בכל דף');
+      await page.click(SEL.tab);
+      const fit = await page.textContent('#tt-messages-fit');
+      assert.match(fit, /דף ההודעות/);
+      assert.equal(await page.$(SEL.scan), null, 'בדף אחר אין "סרוק"');
+      await page.click('#tt-messages-goto');
+      await page.waitForURL(/Association\/Default\.aspx/, { timeout: 5000 });
+      await page.waitForSelector(SEL.scan, { timeout: 5000 });
     } finally { await context.close(); }
   });
 

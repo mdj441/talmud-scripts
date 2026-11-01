@@ -68,8 +68,8 @@ test('analyzeGrid (ממצא 10): שורה יחידה עם מזהה אחר → ל
   assert.deepEqual(analyzeGrid(rows, '337386692', 2), { found: false, matchType: null });
 });
 
-test('ABSORB_STATUS.VERIFY (ממצא 10): "לאמת ידנית" קיים ואינו הצלחה', () => {
-  assert.equal(ABSORB_STATUS.VERIFY, 'לאמת ידנית');
+test('ABSORB_STATUS.VERIFY (ממצא 10): "לבדוק ברשימה" קיים ואינו הצלחה', () => {
+  assert.equal(ABSORB_STATUS.VERIFY, 'לבדוק ברשימה');
   assert.equal(isAbsorbSuccess(ABSORB_STATUS.VERIFY), false);
 });
 

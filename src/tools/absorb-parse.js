@@ -1,4 +1,4 @@
-import { detectIdType, resolveCountry } from '../core/identity.js';
+import { detectIdType, resolveCountry, isIsraelCountry } from '../core/identity.js';
 
 // מרכאות עוטפות: ASCII " ' · גרשיים ״ (U+05F4) · גרש ׳ (U+05F3) · מסולסלות “ ” ‘ ’
 const ABSORB_WRAP_QUOTES = /^["'״׳“”‘’]+|["'״׳“”‘’]+$/g;
@@ -204,6 +204,10 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
   let idType = idInfo.type;
   let identityNorm = idInfo.identifier;
   const explicitTz = /^(tz|ת\.?ז\.?)\s*[:=]/i.test(identity);
+  // "ישראל" אינה ארץ-דרכון (הכרעה 1ב, סבב 2): ת.ז. עם ארץ ישראל נשארת ת.ז. והארץ מתעלמת; דרכון עם ישראל = שגיאה.
+  const israel = isIsraelCountry(countryRaw);
+  if (idType === 'passport' && israel) return err('ישראל אינה ארץ-דרכון. אם זו ת.ז., בחר "ת.ז."');
+  if (israel) countryRaw = undefined;
   // בלי כותרת הארץ חייבת להיות מוכרת (אחרת "01,300,ת.ז.,ישראל,כהן" היה נקרא כדרכון); עם כותרת, עמודת "ארץ" מלאה מספיקה.
   const countryDecides = !!countryRaw && !explicitTz && (columnMap ? true : resolveCountry(countryRaw) !== null);
   if (idType === 'tz' && countryDecides) {

@@ -50,7 +50,7 @@ async function waitForReportDone(page, timeoutMs = 90000) {
 }
 
 async function readReportRows(page) {
-  return evalPatient(page, (s) => Array.from(document.querySelectorAll(`${s.results} table tbody tr`)).map((tr) => {
+  return evalPatient(page, (s) => Array.from(document.querySelectorAll(`${s.results} table tbody tr[data-row]`)).map((tr) => {
     const c = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
     return { branch: c[0], status: c[1], detail: c[2] };
   }), SEL);
@@ -60,7 +60,7 @@ async function waitForRows(page, n, timeoutMs = 60000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     try {
-      const count = await page.evaluate((s) => document.querySelectorAll(`${s.results} table tbody tr`).length, SEL);
+      const count = await page.evaluate((s) => document.querySelectorAll(`${s.results} table tbody tr[data-row]`).length, SEL);
       if (count >= n) return count;
     } catch (e) { /* ניווט באמצע */ }
     await sleep(100);

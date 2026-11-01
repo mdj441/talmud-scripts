@@ -131,12 +131,15 @@ export async function waitForRunDone(page, sel = ABSORB_SEL, timeoutMs = 90000) 
   throw new Error(`waitForRunDone: timeout after ${timeoutMs}ms`);
 }
 
+// שורות-התוצאה מסומנות data-row; שורת "מה לעשות" (tr.tt-act) שמתחת לשורה שדורשת טיפול נקראת כ-action.
 export async function readResults(page, sel = ABSORB_SEL) {
   return evalRetry(page, (s) => {
-    const rows = Array.from(document.querySelectorAll(`${s.results} table tbody tr`));
+    const rows = Array.from(document.querySelectorAll(`${s.results} table tbody tr[data-row]`));
     return rows.map((tr) => {
       const c = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
-      return { branch: c[0], studyType: c[1], identity: c[2], status: c[3], detail: tr.getAttribute('title') || '' };
+      const next = tr.nextElementSibling;
+      const action = next && next.classList.contains('tt-act') ? next.textContent.trim() : '';
+      return { branch: c[0], studyType: c[1], identity: c[2], status: c[3], detail: tr.getAttribute('title') || '', action };
     });
   }, sel);
 }
@@ -149,10 +152,11 @@ export async function readReport(page, sel = ABSORB_SEL) {
   return evalRetry(page, (s) => { const el = document.querySelector(s.report); return el ? el.innerText : ''; }, sel);
 }
 
-// זרימה שלמה: הדבקה → התחל → המתנה לסיום → תוצאות.
-export async function runAbsorb(page, text, { startUrl, startDate = '', sel = ABSORB_SEL, timeoutMs = 90000 } = {}) {
+// זרימה שלמה: הדבקה → התחל → המתנה לסיום → תוצאות. continueOther=false מבטל את "אשר המשך" (מסומן כברירת-מחדל, הכרעה ט).
+export async function runAbsorb(page, text, { startUrl, startDate = '', sel = ABSORB_SEL, timeoutMs = 90000, continueOther } = {}) {
   if (startUrl) await page.goto(startUrl);
   await waitForPanel(page, sel);
+  if (continueOther === false) await page.uncheck('#tt-absorb-continue-other');
   await page.fill(sel.input, text);
   if (startDate) await page.fill(sel.startDate, startDate);
   await page.click(sel.start);

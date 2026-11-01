@@ -4,22 +4,65 @@
 import { padId9 } from '../core/identity.js';
 import { parsePostbackHref } from '../core/navigate.js';
 
+// הנוסחים (שכבת-הבהירות 1.11.2026): קצרים, בלי מקף ארוך, "לבדוק" = צהוב (לא תקלה), השאר אדום.
 export const ABSORB_STATUS = {
   OK: 'נקלט',
   OK_NEW: 'נקלט (תלמיד חדש)',
   EXISTS: 'כבר קיים',
-  SAVED_UNVERIFIED: 'נשמר — לאמת ידנית',
-  VERIFY: 'לאמת ידנית', // ממצא 10: ברשימה שורה יחידה עם מזהה אחר: לא הצלחה, המשתמש מאמת
-  UNVERIFIED: 'לא אומת בגריד',
-  NOT_COMPLETED: 'קליטה לא הושלמה',
+  SAVED_UNVERIFIED: 'נשמר, לבדוק ברשימה',
+  VERIFY: 'לבדוק ברשימה', // ממצא 10: ברשימה שורה יחידה עם מזהה אחר: לא הצלחה, המשתמש בודק
+  UNVERIFIED: 'לא נמצא ברשימה אחרי הקליטה',
+  NOT_COMPLETED: 'הקליטה לא הושלמה',
   BLOCKED: 'נחסם',
-  NEW_STUDENT_MISSING: 'תלמיד חדש — נדרשים שם פרטי, שם משפחה ותאריך לידה',
+  NEW_STUDENT_MISSING: 'תלמיד חדש: חסרים פרטים',
   ERROR: 'שגיאה',
   SKIPPED: 'דולג',
   STOPPED: 'נעצר',
 };
 
 const ABSORB_SUCCESS_KEYS = [ABSORB_STATUS.OK, ABSORB_STATUS.OK_NEW, ABSORB_STATUS.EXISTS];
+const ABSORB_VERIFY_KEYS = [ABSORB_STATUS.SAVED_UNVERIFIED, ABSORB_STATUS.VERIFY, ABSORB_STATUS.UNVERIFIED];
+const ABSORB_STOPPED_KEYS = [ABSORB_STATUS.STOPPED, ABSORB_STATUS.SKIPPED];
+
+// אזהרת "רשום כבר במוסד אחר" של האתר (המקרה השכיח של "נחסם"); משמשת גם את הזרימה וגם את הממשק.
+export const OTHER_INSTITUTE_RE = /רשום כבר במוסד אחר/;
+
+// סוג התוצאה לצבע ולתגיות: 'ok' (ירוק) | 'verify' (צהוב, לבדוק) | 'stopped' (צהוב, לא רץ) | 'bad' (אדום, דורש טיפול).
+export function absorbResultKind(status) {
+  const key = absorbStatusKey(status);
+  if (ABSORB_SUCCESS_KEYS.indexOf(key) !== -1) return 'ok';
+  if (ABSORB_VERIFY_KEYS.indexOf(key) !== -1) return 'verify';
+  if (ABSORB_STOPPED_KEYS.indexOf(key) !== -1) return 'stopped';
+  return 'bad';
+}
+
+// ספירות לתגיות-הסיכום: נקלטו (נקלט + תלמיד חדש), כבר קיימים, לבדוק, דורשים טיפול, נעצרו.
+export function absorbSummarizeKinds(results) {
+  const c = { absorbed: 0, exists: 0, verify: 0, bad: 0, stopped: 0 };
+  for (const r of Array.isArray(results) ? results : []) {
+    const key = absorbStatusKey(r && r.status);
+    if (key === ABSORB_STATUS.EXISTS) c.exists++;
+    else {
+      const k = absorbResultKind(r && r.status);
+      if (k === 'ok') c.absorbed++; else c[k]++;
+    }
+  }
+  return c;
+}
+
+// "נחסם" / "שגיאה" עם הודעת האתר: הסטטוס מקבל נוסח קצר; ההודעה המלאה נשארת ב"פירוט".
+export function absorbShortStatus(kind, text) {
+  const t = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  if (kind === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(t)) return `${kind}: רשום במוסד אחר`;
+  if (!t) return kind;
+  const short = t.length > 48 ? t.slice(0, 46).trim() + '…' : t;
+  return `${kind}: ${short}`;
+}
+
+// האם תוצאת "נחסם" היא אזהרת "רשום במוסד אחר" (שמסומנת "אשר המשך" פותרת).
+export function absorbIsOtherInstituteBlock(result) {
+  return !!result && absorbStatusKey(result.status) === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(String(result.detail || result.status || ''));
+}
 
 export const ABSORB_TSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'מה לעשות'];
 export const ABSORB_CSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'פירוט', 'מה לעשות'];
@@ -213,5 +256,5 @@ export function absorbUnreadableGridDetail(count) {
 
 // הוראה אופרטיבית לניווט ידני לסוג-לימוד (משותפת לכמה סטטוסים).
 export function manualStudyTypeAction(branch, code) {
-  return `פתח את דף המוסד של סניף ${branch}, לחץ על הלשונית "סוגי לימוד למוסד", לחץ על השורה של סוג ${code} ואז על "עריכה". כשדף סוג-הלימוד פתוח, הרץ שוב את השורה הזו`;
+  return `פתח את דף המוסד של סניף ${branch}, לחץ על הלשונית "סוגי לימוד למוסד", לחץ על השורה של סוג ${code} ואז על "עריכה". כשדף סוג-הלימוד פתוח, לחץ "תקן והרץ שוב" והתחל`;
 }

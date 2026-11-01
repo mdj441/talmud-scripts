@@ -13,7 +13,8 @@ import { reportTool } from '../src/tools/report-ui.js';
 test('reportTool: חוזה הלשונית (id, title, pages, פונקציות)', () => {
   assert.equal(reportTool.id, 'report');
   assert.equal(typeof reportTool.title, 'string');
-  assert.deepEqual(reportTool.pages, ['institute']);
+  assert.deepEqual(reportTool.pages, ['*']); // הכרעה ח2 (1.11.2026): בכל דף
+  assert.deepEqual(reportTool.steps, ['הכנה', 'ריצה', 'תוצאות']);
   for (const fn of ['hasPendingRun', 'isRunning', 'onStop', 'mount']) assert.equal(typeof reportTool[fn], 'function', fn);
   // ב-Node אין sessionStorage: הפונקציות לא זורקות ומחזירות false
   assert.equal(reportTool.hasPendingRun(), false);
