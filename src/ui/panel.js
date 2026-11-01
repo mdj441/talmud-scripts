@@ -286,15 +286,14 @@ function toolsForPage(page) {
 
 function toolById(id) { return tools.find((t) => t.id === id) || null; }
 
-// הלשונית הראשונה שנפתחת: תור פתוח גובר; אחרת הלשונית שנזכרה אם היא מתאימה לדף (fits); אחרת הראשונה שמתאימה;
-// אחרת הנזכרה; אחרת הראשונה. טהורה לבדיקה.
+// הלשונית הראשונה שנפתחת: תור פתוח גובר (ב-mount); אחרת הלשונית שנזכרה אם היא מתאימה לדף (fits); אחרת תמיד הראשונה
+// ברשימה ("קליטת תלמידים", שיודעת להתחיל מכל דף). בקשת בעל-המערכת 1.11.2026 אחרי הפרסום: דף ההודעות הוא דף-הבית אחרי
+// הכניסה, ושם נפתחה "הודעות" במקום קליטה. טהורה לבדיקה.
 export function initialTabFor(list, page, savedId) {
   const fits = (t) => { try { return typeof t.fits === 'function' ? !!t.fits(page) : true; } catch (e) { return false; } };
   const saved = list.find((t) => t.id === savedId);
   if (saved && fits(saved)) return saved.id;
-  const fitting = list.find(fits);
-  if (fitting) return fitting.id;
-  return saved ? saved.id : list[0].id;
+  return list[0].id;
 }
 
 function makeUi(tool) {

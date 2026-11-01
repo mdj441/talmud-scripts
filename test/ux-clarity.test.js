@@ -12,15 +12,19 @@ import { departTool } from '../src/tools/depart-ui.js';
 import { reportTool } from '../src/tools/report-ui.js';
 import { absorbTool } from '../src/tools/absorb-ui.js';
 
-test('initialTabFor: הלשונית הראשונה לפי התאמה לדף; הנזכרת גוברת כשהיא מתאימה', () => {
+// בקשת בעל-המערכת 1.11.2026 (אחרי הפרסום): ברירת-המחדל היא תמיד "קליטת תלמידים" (גם בדף ההודעות, שהוא דף-הבית אחרי
+// הכניסה); הלשונית שנזכרה גוברת רק כשהיא מתאימה לדף.
+test('initialTabFor: ברירת-המחדל קליטה בכל דף; הנזכרת גוברת רק כשהיא מתאימה לדף', () => {
   const list = [absorbTool, departTool, reportTool, messagesTool];
   const inst = { kind: 'institute', url: 'https://talmud.edu.gov.il/Institutes/InstitutesDetails.aspx' };
   const msgs = { kind: 'other', url: 'https://talmud.edu.gov.il/Association/Default.aspx' };
   const home = { kind: 'other', url: 'https://talmud.edu.gov.il/' };
   assert.equal(initialTabFor(list, inst, null), 'absorb');
   assert.equal(initialTabFor(list, inst, 'report'), 'report', 'הנזכרת מתאימה לדף מוסד');
-  assert.equal(initialTabFor(list, msgs, 'report'), 'messages', 'בדף ההודעות: הודעות, גם כשנזכרה אחרת');
-  assert.equal(initialTabFor(list, home, 'depart'), 'depart', 'בדף שאף לשונית לא מתאימה לו: הנזכרת');
+  assert.equal(initialTabFor(list, msgs, null), 'absorb', 'בדף ההודעות בלי זיכרון: קליטה, לא הודעות');
+  assert.equal(initialTabFor(list, msgs, 'report'), 'absorb', 'בדף ההודעות עם נזכרת שלא מתאימה: קליטה');
+  assert.equal(initialTabFor(list, msgs, 'messages'), 'messages', 'מי שבחר הודעות בדף ההודעות מקבל אותה שוב');
+  assert.equal(initialTabFor(list, home, 'depart'), 'absorb', 'בדף שאף לשונית לא מתאימה לו: קליטה');
   assert.equal(initialTabFor(list, home, null), 'absorb');
 });
 import { LOGO_DATA_URI } from '../src/ui/logo.js';
