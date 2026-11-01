@@ -28,7 +28,8 @@ async function evalPatient(page, fn, arg, timeoutMs = 10000) {
   throw last || new Error('evalPatient: timeout');
 }
 
-// ממתין לסיכום (#tt-report-report לא hidden ולא ריק), חוצה ניווטים מלאים.
+// ממתין לסיום (שורת-המצב "הסתיים. …"), חוצה ניווטים מלאים. סבב רטוב 1.11.2026: תיבת "מה נשאר" (#tt-report-report)
+// מוצגת רק כשיש שגיאות או נעצרים, ולכן הסיום נקבע לפי שורת-המצב ולא לפי התיבה.
 async function waitForReportDone(page, timeoutMs = 90000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -37,8 +38,9 @@ async function waitForReportDone(page, timeoutMs = 90000) {
         const rep = document.querySelector(s.report);
         const status = document.querySelector(s.status);
         return {
-          done: !!rep && !rep.hidden && rep.innerHTML.trim() !== '',
-          reportText: rep ? rep.innerText : '',
+          done: !!status && /^הסתיים/.test(status.textContent),
+          reportText: rep && !rep.hidden ? rep.innerText : '',
+          reportHidden: !rep || rep.hidden,
           status: status ? status.textContent : '',
         };
       }, SEL);
@@ -93,9 +95,12 @@ describe('דיווח חודשי: סביבת דמה', () => {
       const rows = await readReportRows(page);
       const logText = await readLog(page);
       assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'נשלח'], ['16', 'דולג (כבר דווח)']], logText);
-      assert.match(done.reportText, /נשלחו 2, דולגו 1, שגיאות 0/);
-      assert.match(done.reportText, /הכול טופל/);
-      assert.match(done.status, /הסתיים/);
+      assert.match(done.status, /הסתיים\. נשלחו 2, דולגו 1, שגיאות 0/);
+      // הערת בעל-המערכת 1.11.2026: הסיכום בתיבה הצהובה כפל את שורת-המצב ואת הטבלה; בלי שגיאות ונעצרים אין תיבה
+      assert.equal(done.reportHidden, true, 'תיבת "מה נשאר" מוצגת למרות שאין שגיאות או נעצרים: ' + done.reportText);
+      // סבב רטוב 1.11.2026: קו-החיבור של השלב האחרון גלש מעבר לסרגל ויצר גלילה אופקית בחלונית
+      const steps = await page.$eval('#tt-report-steps', (el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+      assert.ok(steps.scroll <= steps.client + 1, `סרגל-השלבים גולש: scrollWidth ${steps.scroll} > clientWidth ${steps.client}`);
 
       const db = await readMockDb(page);
       assert.equal(db.reported['491'], true, 'סניף 00 (491) לא סומן כדווח');
@@ -147,7 +152,9 @@ describe('דיווח חודשי: סביבת דמה', () => {
       const rows = await readReportRows(page);
       const logText = await readLog(page);
       assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'נעצר'], ['16', 'נעצר']], logText);
-      assert.match(done.reportText, /נשלחו 1, דולגו 0, שגיאות 0, נעצרו 2/);
+      assert.match(done.status, /נשלחו 1, דולגו 0, שגיאות 0, נעצרו 2/);
+      assert.match(done.reportText, /מה נשאר לעשות/, 'כשיש נעצרים מוצגת תיבת "מה נשאר": ' + done.reportText);
+      assert.doesNotMatch(done.reportText, /סיכום:/, 'שורת "סיכום:" בתיבה כופלת את שורת-המצב');
       assert.match(done.reportText, /סניף 05/);
       assert.match(done.reportText, /סניף 16/);
 
@@ -166,7 +173,7 @@ describe('דיווח חודשי: סביבת דמה', () => {
       const done = await waitForReportDone(page);
       const rows = await readReportRows(page);
       assert.deepEqual(rows.map((r) => r.status), ['דולג (כבר דווח)', 'דולג (כבר דווח)', 'דולג (כבר דווח)']);
-      assert.match(done.reportText, /נשלחו 0, דולגו 3, שגיאות 0/);
+      assert.match(done.status, /נשלחו 0, דולגו 3, שגיאות 0/);
       const db = await readMockDb(page);
       assert.equal(db.log.filter((l) => /monthly report sent/.test(l)).length, 0, 'נשלח דיווח לסניף שכבר דווח');
     } finally { await context.close(); }
@@ -180,9 +187,26 @@ describe('דיווח חודשי: סביבת דמה', () => {
       const rows = await readReportRows(page);
       const logText = await readLog(page);
       assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'נשלח'], ['16', 'נשלח']], logText);
-      assert.match(done.reportText, /נשלחו 3, דולגו 0, שגיאות 0/);
+      assert.match(done.status, /נשלחו 3, דולגו 0, שגיאות 0/);
       const db = await readMockDb(page);
       assert.deepEqual([db.reported['491'], db.reported['4200'], db.reported['4159']], [true, true, true]);
+    } finally { await context.close(); }
+  });
+
+  // סבב רטוב 1.11.2026: 14 סניפים אמיתיים קיבלו "דולג (כבר דווח)" כשבאתר כתוב "מצב תמיכה במוסד: לא מאושר לדיווח".
+  test('5. סניף "לא מאושר לדיווח" (05) → "דולג (לא מאושר לדיווח)" עם הסיבה מהאתר, לא "כבר דווח"; הסיכום מבחין', async () => {
+    const { context, page } = await openSession(browser, { scenario: { notApproved: { '4200': true }, reported: { '4159': true } }, script });
+    try {
+      await startReport(page, URLS.institute(491));
+      const done = await waitForReportDone(page);
+      const rows = await readReportRows(page);
+      const logText = await readLog(page);
+      assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'דולג (לא מאושר לדיווח)'], ['16', 'דולג (כבר דווח)']], logText);
+      assert.match(rows[1].detail, /לא מאושר לדיווח/, rows[1].detail);
+      assert.match(done.status, /נשלחו 1, דולגו 2, שגיאות 0.*לא מאושר/);
+      assert.match(logText, /סניף 05: .*לא מאושר לדיווח/, logText);
+      const db = await readMockDb(page);
+      assert.notEqual(db.reported['4200'], true, 'סניף 05 לא היה אמור להישלח');
     } finally { await context.close(); }
   });
 });

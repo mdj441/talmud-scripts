@@ -7,7 +7,7 @@ import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { readBranchesFromTree, institutesPageUrl } from '../core/navigate.js';
-import { esc, buttonHtml, resultsTableHtml, reportBoxHtml, zoneHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, resultsTableHtml, zoneHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import {
   REPORT_STATUS, reportSetHooks, reportStart, reportResumeIfPending, reportRequestStop, reportHasPendingRun,
   reportIsRunning, reportGetResults, reportBuildTsv, reportIsStuck, reportLastStepAt, reportClearState,
@@ -30,7 +30,7 @@ const REPORT_COLUMNS = [
 
 function reportClassify(r) {
   if (r.status === REPORT_STATUS.SENT) return 'ok';
-  if (r.status === REPORT_STATUS.SKIPPED || r.status === REPORT_STATUS.STOPPED) return 'warn';
+  if (r.status === REPORT_STATUS.SKIPPED || r.status === REPORT_STATUS.NOT_APPROVED || r.status === REPORT_STATUS.STOPPED) return 'warn';
   return 'bad';
 }
 
@@ -71,9 +71,12 @@ function reportNewRun() {
   log('[דיווח] דיווח חדש: התוצאות נוקו');
 }
 
+// הערת בעל-המערכת (סבב רטוב 1.11.2026): "סיכום: נשלחו…" בתיבה כפל את שורת-המצב ("הסתיים. נשלחו…") ואת הטבלה.
+// עכשיו התיבה מוצגת רק כשיש "מה נשאר לעשות" (שגיאות או נעצרים), ובלי שורת-הסיכום.
 function reportRenderSummary(summary) {
-  if (!summary) { show(`${RP}-report`, false); setHtml(`${RP}-report`, ''); return; }
-  setHtml(`${RP}-report`, reportBoxHtml({ summary: summary.summary, lines: summary.lines }, { idsWarning: false }));
+  const lines = summary && Array.isArray(summary.lines) ? summary.lines : [];
+  if (!lines.length) { show(`${RP}-report`, false); setHtml(`${RP}-report`, ''); return; }
+  setHtml(`${RP}-report`, `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`);
   show(`${RP}-report`, true);
 }
 

@@ -16,6 +16,9 @@ export const REPORT_STATE_KEY = 'talmud.report.state';
 export const REPORT_STATUS = {
   SENT: 'נשלח',
   SKIPPED: 'דולג (כבר דווח)',
+  // סבב רטוב 1.11.2026: באתר יש סניפים שכפתור הדיווח שלהם מנוטרל כי "מצב תמיכה במוסד: לא מאושר לדיווח" (14 מ-27),
+  // לא כי כבר דווחו. הנוסח "כבר דווח" הטעה; עכשיו קוראים את התווית ומבחינים.
+  NOT_APPROVED: 'דולג (לא מאושר לדיווח)',
   ERROR: 'שגיאה',
   STOPPED: 'נעצר',
 };
@@ -25,6 +28,7 @@ export const REPORT_IDS = {
   button: 'ContentPlaceHolder1_btnReport',
   supportTab: '__tab_ContentPlaceHolder1_tabInstituteDetails_TabInstituteEntitlement',
   popupContinue: 'ucMessagePopUp_btnMOK',
+  entitlementStatus: 'ContentPlaceHolder1_lblInsEntitelmentStatus', // "מאושר לתמיכה" / "לא מאושר לדיווח" (בראש דף המוסד)
 };
 const REPORT_TSV_HEADER = ['סניף', 'סטטוס', 'פירוט', 'מה לעשות'];
 const REPORT_PAGE_WAIT_MS = 15000; // כמו הישן: המתנה ל-h1 ולכפתור
@@ -62,15 +66,17 @@ export function reportSummary(results) {
   const list = Array.isArray(results) ? results.filter((r) => r && typeof r === 'object') : [];
   const count = (status) => list.filter((r) => r.status === status).length;
   const sent = count(REPORT_STATUS.SENT);
-  const skipped = count(REPORT_STATUS.SKIPPED);
+  const notApproved = count(REPORT_STATUS.NOT_APPROVED);
+  const skipped = count(REPORT_STATUS.SKIPPED) + notApproved;
   const errors = count(REPORT_STATUS.ERROR);
   const stopped = count(REPORT_STATUS.STOPPED);
   let summary = `נשלחו ${sent}, דולגו ${skipped}, שגיאות ${errors}`;
   if (stopped) summary += `, נעצרו ${stopped}`;
+  if (notApproved) summary += `; מהדולגים ${notApproved} לא מאושרים לדיווח`;
   const lines = list
     .filter((r) => r.status === REPORT_STATUS.ERROR || r.status === REPORT_STATUS.STOPPED)
     .map((r) => [`סניף ${r.branch}`, r.status, r.detail, r.action].map(reportFlatCell).filter(Boolean).join(' · '));
-  return { sent, skipped, errors, stopped, total: list.length, summary, lines };
+  return { sent, skipped, notApproved, errors, stopped, total: list.length, summary, lines };
 }
 
 // TSV להדבקה באקסל (עם כותרת).
@@ -302,6 +308,12 @@ async function reportProcessBranch(state, idx, branch) {
   }
 
   if (!reportIsButtonEnabled(btn)) {
+    const statusEl = $el(REPORT_IDS.entitlementStatus);
+    const statusText = statusEl ? String(statusEl.textContent || '').trim() : '';
+    if (/לא מאושר/.test(statusText)) {
+      log(`[דיווח] סניף ${branch}: כפתור הדיווח מנוטרל, מצב תמיכה במוסד "${statusText}" (לא מאושר לדיווח)`);
+      return mk(REPORT_STATUS.NOT_APPROVED, `האתר: מצב תמיכה במוסד "${statusText}"`, 'אין מה לשלוח. אם זה מפתיע, בדוק את מצב התמיכה של הסניף בדף המוסד');
+    }
     log(`[דיווח] סניף ${branch}: כפתור הדיווח מנוטרל, כבר דווח`);
     return mk(REPORT_STATUS.SKIPPED, 'כפתור הדיווח מנוטרל');
   }

@@ -206,7 +206,8 @@ export function createGrid(cfg) {
     st.filter = 'all';
     st.sort = null;
     render();
-    if (cfg.onFilled) cfg.onFilled(label, rows.length);
+    // סבב רטוב 1.11.2026: סופרים רק שורות ממולאות (הטבלה מוסיפה שורת-קלט ריקה; היומן אמר "3 שורות" על 2 תלמידים)
+    if (cfg.onFilled) cfg.onFilled(label, rows.filter((r) => !isBlank(r)).length);
     return true;
   }
 

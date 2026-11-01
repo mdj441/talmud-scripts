@@ -32,9 +32,14 @@
     const panel = document.getElementById(`${ctx.tabId}_TabInstituteEntitlement`);
     if (!panel) return;
     const reported = reportedOf(ctx.db)[String(ctx.instituteId)] === true;
+    // סבב רטוב 1.11.2026: באתר יש סניפים "לא מאושר לדיווח" (תווית lblInsEntitelmentStatus) שהכפתור שלהם מנוטרל
+    // בלי שדווחו. זריעה: scenario.notApproved = { '4200': true }.
+    const notApproved = !!((ctx.db.notApproved || (window.__mockScenario || {}).notApproved || {})[String(ctx.instituteId)]);
+    const off = reported || notApproved;
+    const statusText = notApproved ? 'לא מאושר לדיווח' : 'מאושר לתמיכה';
     panel.innerHTML = `
-      <p>מצב תמיכה במוסד · סניף ${C.esc(ctx.inst.branch)}</p>
-      <a id="${BTN_ID}" class="btn${reported ? ' disabled' : ''}"${reported ? ' disabled="true"' : ''}
+      <p>מצב תמיכה במוסד · סניף ${C.esc(ctx.inst.branch)} · <span id="ContentPlaceHolder1_lblInsEntitelmentStatus">${statusText}</span></p>
+      <a id="${BTN_ID}" class="btn${off ? ' disabled' : ''}"${off ? ' disabled="true"' : ''}
          href="javascript:__doPostBack('${BTN_TARGET}','')">שליחת דיווח חודשי</a>
       <span id="mock-report-hint" style="font-size:12px;color:#666;margin-right:8px">${reported ? 'הדיווח לחודש זה כבר נשלח' : ''}</span>`;
     wrapOnContinue();

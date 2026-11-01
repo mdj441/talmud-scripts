@@ -161,3 +161,20 @@ test('reportNextIndexToRun: מצב שמור → האינדקס הבא; מצב ל
   assert.equal(reportNextIndexToRun(null), -1);
   assert.equal(reportNextIndexToRun({ branches: ['00'], curIdx: 'x' }), 0);
 });
+
+// ─── סבב רטוב 1.11.2026: "לא מאושר לדיווח" ──────────────────────────────────
+// באתר 14 סניפים קיבלו "דולג (כבר דווח)" כשבאמת "מצב תמיכה במוסד: לא מאושר לדיווח". הסטטוס החדש נספר
+// בין הדולגים, והסיכום אומר כמה מהם לא מאושרים.
+test('reportSummary: "דולג (לא מאושר לדיווח)" נספר בין הדולגים ומצוין בסיכום', () => {
+  assert.equal(REPORT_STATUS.NOT_APPROVED, 'דולג (לא מאושר לדיווח)');
+  const s = reportSummary([
+    reportMakeResult('00', REPORT_STATUS.SENT, 'הדיווח התקבל בהצלחה'),
+    reportMakeResult('03', REPORT_STATUS.NOT_APPROVED, 'האתר: מצב תמיכה במוסד "לא מאושר לדיווח"'),
+    reportMakeResult('16', REPORT_STATUS.SKIPPED, 'כפתור הדיווח מנוטרל'),
+  ]);
+  assert.equal(s.skipped, 2);
+  assert.equal(s.notApproved, 1);
+  assert.equal(s.summary, 'נשלחו 1, דולגו 2, שגיאות 0; מהדולגים 1 לא מאושרים לדיווח');
+  assert.deepEqual(s.lines, [], 'לא מאושר לדיווח אינו "מה נשאר": אין מה לשלוח');
+  assert.equal(reportSummary([reportMakeResult('00', REPORT_STATUS.SENT, 'x')]).summary, 'נשלחו 1, דולגו 0, שגיאות 0');
+});

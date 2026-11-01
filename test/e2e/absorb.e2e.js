@@ -101,6 +101,8 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       const results = await readResults(page);
       const log = await readLog(page);
       assert.equal(results[0].status, 'נקלט', log);
+      // סבב רטוב 1.11.2026: היומן ספר גם את שורת-הקלט הריקה שהטבלה מוסיפה ("3 שורות" על 2 תלמידים)
+      assert.match(log, /הדבקה[^:\n]*: 1 שורות/, 'היומן סופר רק שורות ממולאות: ' + log);
       assert.match(log, /"אשר המשך" מסומן/, 'היומן מספר שההמשך אושר על-ידי בעל-המערכת');
       assert.match(log, /הצלחה מעבר תלמיד הצליח/, 'הודעת האתר אחרי "המשך" ביומן');
       const db = await readMockDb(page);

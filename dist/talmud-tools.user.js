@@ -1068,7 +1068,7 @@ const PANEL_CSS = `
 .tt-step{flex:1;position:relative;text-align:center;font-size:12px;color:var(--tt-muted);padding:2px 0 0}
 .tt-step::before{counter-increment:tt-s;content:counter(tt-s);position:relative;z-index:1;display:block;width:20px;height:20px;line-height:18px;border-radius:50%;
   border:1px solid var(--tt-line);background:var(--tt-field);margin:0 auto 2px;font-weight:600;font-size:11px}
-.tt-step::after{content:"";position:absolute;top:10px;right:50%;width:100%;height:1px;background:var(--tt-line)}
+.tt-step::after{content:"";position:absolute;top:10px;left:50%;width:100%;height:1px;background:var(--tt-line)}
 .tt-step:first-child::after{display:none}
 .tt-step-on{color:var(--tt-accent);font-weight:700}
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
@@ -4086,7 +4086,8 @@ function createGrid(cfg) {
     st.filter = 'all';
     st.sort = null;
     render();
-    if (cfg.onFilled) cfg.onFilled(label, rows.length);
+    // סבב רטוב 1.11.2026: סופרים רק שורות ממולאות (הטבלה מוסיפה שורת-קלט ריקה; היומן אמר "3 שורות" על 2 תלמידים)
+    if (cfg.onFilled) cfg.onFilled(label, rows.filter((r) => !isBlank(r)).length);
     return true;
   }
 
@@ -6396,6 +6397,9 @@ const REPORT_STATE_KEY = 'talmud.report.state';
 const REPORT_STATUS = {
   SENT: 'נשלח',
   SKIPPED: 'דולג (כבר דווח)',
+  // סבב רטוב 1.11.2026: באתר יש סניפים שכפתור הדיווח שלהם מנוטרל כי "מצב תמיכה במוסד: לא מאושר לדיווח" (14 מ-27),
+  // לא כי כבר דווחו. הנוסח "כבר דווח" הטעה; עכשיו קוראים את התווית ומבחינים.
+  NOT_APPROVED: 'דולג (לא מאושר לדיווח)',
   ERROR: 'שגיאה',
   STOPPED: 'נעצר',
 };
@@ -6405,6 +6409,7 @@ const REPORT_IDS = {
   button: 'ContentPlaceHolder1_btnReport',
   supportTab: '__tab_ContentPlaceHolder1_tabInstituteDetails_TabInstituteEntitlement',
   popupContinue: 'ucMessagePopUp_btnMOK',
+  entitlementStatus: 'ContentPlaceHolder1_lblInsEntitelmentStatus', // "מאושר לתמיכה" / "לא מאושר לדיווח" (בראש דף המוסד)
 };
 const REPORT_TSV_HEADER = ['סניף', 'סטטוס', 'פירוט', 'מה לעשות'];
 const REPORT_PAGE_WAIT_MS = 15000; // כמו הישן: המתנה ל-h1 ולכפתור
@@ -6442,15 +6447,17 @@ function reportSummary(results) {
   const list = Array.isArray(results) ? results.filter((r) => r && typeof r === 'object') : [];
   const count = (status) => list.filter((r) => r.status === status).length;
   const sent = count(REPORT_STATUS.SENT);
-  const skipped = count(REPORT_STATUS.SKIPPED);
+  const notApproved = count(REPORT_STATUS.NOT_APPROVED);
+  const skipped = count(REPORT_STATUS.SKIPPED) + notApproved;
   const errors = count(REPORT_STATUS.ERROR);
   const stopped = count(REPORT_STATUS.STOPPED);
   let summary = `נשלחו ${sent}, דולגו ${skipped}, שגיאות ${errors}`;
   if (stopped) summary += `, נעצרו ${stopped}`;
+  if (notApproved) summary += `; מהדולגים ${notApproved} לא מאושרים לדיווח`;
   const lines = list
     .filter((r) => r.status === REPORT_STATUS.ERROR || r.status === REPORT_STATUS.STOPPED)
     .map((r) => [`סניף ${r.branch}`, r.status, r.detail, r.action].map(reportFlatCell).filter(Boolean).join(' · '));
-  return { sent, skipped, errors, stopped, total: list.length, summary, lines };
+  return { sent, skipped, notApproved, errors, stopped, total: list.length, summary, lines };
 }
 
 // TSV להדבקה באקסל (עם כותרת).
@@ -6682,6 +6689,12 @@ async function reportProcessBranch(state, idx, branch) {
   }
 
   if (!reportIsButtonEnabled(btn)) {
+    const statusEl = $el(REPORT_IDS.entitlementStatus);
+    const statusText = statusEl ? String(statusEl.textContent || '').trim() : '';
+    if (/לא מאושר/.test(statusText)) {
+      log(`[דיווח] סניף ${branch}: כפתור הדיווח מנוטרל, מצב תמיכה במוסד "${statusText}" (לא מאושר לדיווח)`);
+      return mk(REPORT_STATUS.NOT_APPROVED, `האתר: מצב תמיכה במוסד "${statusText}"`, 'אין מה לשלוח. אם זה מפתיע, בדוק את מצב התמיכה של הסניף בדף המוסד');
+    }
     log(`[דיווח] סניף ${branch}: כפתור הדיווח מנוטרל, כבר דווח`);
     return mk(REPORT_STATUS.SKIPPED, 'כפתור הדיווח מנוטרל');
   }
@@ -6846,7 +6859,7 @@ const REPORT_COLUMNS = [
 
 function reportClassify(r) {
   if (r.status === REPORT_STATUS.SENT) return 'ok';
-  if (r.status === REPORT_STATUS.SKIPPED || r.status === REPORT_STATUS.STOPPED) return 'warn';
+  if (r.status === REPORT_STATUS.SKIPPED || r.status === REPORT_STATUS.NOT_APPROVED || r.status === REPORT_STATUS.STOPPED) return 'warn';
   return 'bad';
 }
 
@@ -6887,9 +6900,12 @@ function reportNewRun() {
   log('[דיווח] דיווח חדש: התוצאות נוקו');
 }
 
+// הערת בעל-המערכת (סבב רטוב 1.11.2026): "סיכום: נשלחו…" בתיבה כפל את שורת-המצב ("הסתיים. נשלחו…") ואת הטבלה.
+// עכשיו התיבה מוצגת רק כשיש "מה נשאר לעשות" (שגיאות או נעצרים), ובלי שורת-הסיכום.
 function reportRenderSummary(summary) {
-  if (!summary) { show(`${RP}-report`, false); setHtml(`${RP}-report`, ''); return; }
-  setHtml(`${RP}-report`, reportBoxHtml({ summary: summary.summary, lines: summary.lines }, { idsWarning: false }));
+  const lines = summary && Array.isArray(summary.lines) ? summary.lines : [];
+  if (!lines.length) { show(`${RP}-report`, false); setHtml(`${RP}-report`, ''); return; }
+  setHtml(`${RP}-report`, `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`);
   show(`${RP}-report`, true);
 }
 

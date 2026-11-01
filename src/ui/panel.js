@@ -90,7 +90,7 @@ export const PANEL_CSS = `
 .tt-step{flex:1;position:relative;text-align:center;font-size:12px;color:var(--tt-muted);padding:2px 0 0}
 .tt-step::before{counter-increment:tt-s;content:counter(tt-s);position:relative;z-index:1;display:block;width:20px;height:20px;line-height:18px;border-radius:50%;
   border:1px solid var(--tt-line);background:var(--tt-field);margin:0 auto 2px;font-weight:600;font-size:11px}
-.tt-step::after{content:"";position:absolute;top:10px;right:50%;width:100%;height:1px;background:var(--tt-line)}
+.tt-step::after{content:"";position:absolute;top:10px;left:50%;width:100%;height:1px;background:var(--tt-line)}
 .tt-step:first-child::after{display:none}
 .tt-step-on{color:var(--tt-accent);font-weight:700}
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
