@@ -129,6 +129,11 @@ export function createGrid(cfg) {
         msg.firstElementChild.innerHTML = parts.join('<br>');
       }
       const num = tr.querySelector('.tt-rownum'); if (num) num.textContent = blank ? '' : String(i + 1);
+      // שורה שמולאה ידנית (הייתה ריקה): תא-הפעולות וכפתור ההסרה נבנים עכשיו, בלי לבנות את כל הטבלה (סבב 5)
+      const act = tr.querySelector('.tt-cell-actions');
+      if (act && cfg.rowActions && (act.innerHTML.trim() !== '') !== !blank) act.innerHTML = blank ? '' : cfg.rowActions(row, i);
+      const del = tr.querySelector('.tt-cell-del');
+      if (del && cfg.allowDelete !== false && (del.innerHTML.trim() !== '') !== !blank) del.innerHTML = blank ? '' : `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-del="${i}" title="הסר שורה">×</button>`;
       const f = row.fields;
       for (const col of columns) {
         const td = tr.querySelector(`.tt-cell-${col.key}`);

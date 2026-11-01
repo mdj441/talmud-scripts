@@ -96,8 +96,9 @@ export const PANEL_CSS = `
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
 .tt-step-done{color:var(--tt-ink-2)}
 .tt-step-done::before{content:"✓";background:var(--tt-accent-soft);border-color:var(--tt-accent);color:var(--tt-accent)}
-.tt-strip-row{display:flex;align-items:baseline;gap:12px;min-height:22px}
-.tt-status{flex:1;font-size:13px;color:var(--tt-ink)}
+.tt-strip-row{display:flex;align-items:center;gap:12px;min-height:22px}
+/* סבב 5 (בקשת בעל-המערכת ק12): שורת-המצב הכללית בתיבה ברורה, לא טקסט רץ */
+.tt-status{flex:1;font-size:13px;color:var(--tt-ink);background:var(--tt-accent-soft);border:1px solid #c6dcd5;border-radius:6px;padding:6px 10px;font-weight:600;line-height:1.4}
 .tt-progress{font-size:12px;color:var(--tt-muted);white-space:nowrap}
 .tt-bar{height:2px;background:var(--tt-line-2);margin-top:6px;overflow:hidden}
 .tt-bar i{display:block;height:100%;width:100%;background:var(--tt-accent);transform:scaleX(0);transform-origin:right;transition:transform .25s ease}
@@ -105,9 +106,13 @@ export const PANEL_CSS = `
 
 .tt-zone{border:1px solid var(--tt-line);border-radius:8px;background:var(--tt-field);margin:8px 0;padding:8px 12px 10px}
 .tt-zone-dim{opacity:.55}
-.tt-zone-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+.tt-zone-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
 .tt-zone-head b{font-size:13.5px}
 .tt-zone-head .tt-zone-note{font-size:12px;color:var(--tt-muted);flex:1}
+.tt-zone-head .tt-zone-actions{margin-inline-start:auto}
+/* סבב 5 (ק14): "רשימה חדשה" / "דיווח חדש" במקום קבוע בכותרת-האזור, בולט */
+.tt-btn-newlist{background:var(--tt-field);border-color:var(--tt-accent);color:var(--tt-accent);font-weight:600}
+.tt-btn-newlist:hover{background:var(--tt-accent-soft);border-color:var(--tt-accent)}
 .tt-zone-lead{font-size:12.5px;color:var(--tt-ink-2);margin:0 0 6px}
 .tt-fit{margin:10px 0}
 
@@ -188,14 +193,14 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 
 .tt-table{width:100%;border-collapse:collapse;font-size:12.5px;margin:4px 0;background:var(--tt-field)}
 .tt-table th{color:var(--tt-ink-2);font-weight:600;padding:6px 8px;text-align:right;border-bottom:1px solid var(--tt-line);position:sticky;top:0;background:var(--tt-field)}
-.tt-table td{padding:5px 8px;border-bottom:1px solid var(--tt-line-2);vertical-align:middle}
+.tt-table td{padding:5px 8px;border-bottom:2px solid var(--tt-line);vertical-align:middle} /* סבב 5 (ק2): קו כהה יותר בין שורות */
 .tt-table td.tt-status-cell{font-weight:600;white-space:nowrap}
 .tt-table td.tt-status-cell::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-inline-end:6px;background:var(--tt-line);vertical-align:1px}
 .tt-table tr.tt-r-ok td.tt-status-cell{color:var(--tt-ok)}.tt-table tr.tt-r-ok td.tt-status-cell::before{background:var(--tt-ok)}
 .tt-table tr.tt-r-warn td.tt-status-cell{color:var(--tt-warn)}.tt-table tr.tt-r-warn td.tt-status-cell::before{background:var(--tt-warn)}
 .tt-table tr.tt-r-bad td.tt-status-cell{color:var(--tt-bad)}.tt-table tr.tt-r-bad td.tt-status-cell::before{background:var(--tt-bad)}
 .tt-table tr.tt-r-bad td,.tt-table tr.tt-r-warn td{border-bottom-color:transparent}
-.tt-table tr.tt-act td{padding:0 8px 7px 24px;font-size:12px;color:var(--tt-ink-2);border-bottom:1px solid var(--tt-line-2);white-space:normal;line-height:1.45}
+.tt-table tr.tt-act td{padding:0 8px 7px 24px;font-size:12px;color:var(--tt-ink-2);border-bottom:2px solid var(--tt-line);white-space:normal;line-height:1.45}
 .tt-table tr.tt-act td::before{content:"←";color:var(--tt-muted);margin-inline-end:6px}
 .tt-scroll{max-height:240px;overflow:auto;border:1px solid var(--tt-line);border-radius:6px;background:var(--tt-field)}
 .tt-scroll-tall{max-height:340px}
@@ -216,7 +221,9 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-grid-input{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--tt-field)}
 .tt-grid-input th{color:var(--tt-ink-2);font-weight:600;padding:6px 4px;text-align:right;border-bottom:1px solid var(--tt-line);white-space:nowrap;position:sticky;top:0;background:var(--tt-field);z-index:1}
 .tt-grid-input td{padding:5px 2px;vertical-align:middle}
-.tt-grid-input tr.tt-r-main td{border-top:1px solid var(--tt-line-2)}
+.tt-grid-input tr.tt-r-main td{border-top:2px solid var(--tt-line)} /* סבב 5 (ק2): בידול בין שורות */
+.tt-grid-input .tt-newcb{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.tt-grid-input .tt-newcb input{width:15px;height:15px;cursor:pointer;accent-color:var(--tt-accent)}
 .tt-grid-input tr.tt-r-main:first-child td{border-top:0}
 .tt-grid-input .tt-input,.tt-grid-input .tt-select{padding:4px 6px;font-size:12.5px;min-width:0}
 .tt-grid-input .tt-select{padding-inline-end:2px}
@@ -243,6 +250,12 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-review-table .tt-select.tt-decision{padding:3px 4px;font-size:12px;width:auto;min-width:118px}
 .tt-review-table tr.tt-r-done{background:var(--tt-warn-bg)}
 .tt-review-table td.tt-roster-cell{font-size:11px;color:var(--tt-ink-2);white-space:normal;min-width:70px}
+/* סבב 5 (ה3): לחיצה על גוף ההודעה פותחת את הטקסט המלא בשורה מתחת */
+.tt-review-table td.tt-body-cell{cursor:pointer}
+.tt-review-table td.tt-body-cell.tt-body-open{color:var(--tt-ink)}
+.tt-review-table tr.tt-body-full td{white-space:normal;line-height:1.45;font-size:12px;color:var(--tt-ink);background:var(--tt-accent-soft);padding:6px 24px 8px 12px;border-bottom:2px solid var(--tt-line)}
+.tt-zone-head .tt-row{margin:0}
+.tt-row[hidden]{display:none}
 
 .tt-foot{padding:8px 16px;border-top:1px solid var(--tt-line);font-size:11px;color:var(--tt-muted);display:flex;gap:12px;align-items:center}
 .tt-foot a{color:var(--tt-accent);text-decoration:none}

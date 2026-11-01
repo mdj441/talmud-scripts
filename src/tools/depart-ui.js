@@ -16,6 +16,7 @@ import {
 } from './depart.js';
 import { esc, buttonHtml, buttonsRowHtml, fieldHtml, selectHtml, resultsTableHtml, zoneHtml, tagHtml, dateFieldHtml, bindDateFields, bindConfirmClick, flash, setHtml, setText, show, setDisabled, bindDateMask, todayDMY } from '../ui/widgets.js';
 import { createGrid, gridSortRows } from '../ui/grid.js';
+import { loadXlsxFile } from './absorb-xlsx.js';
 
 const DEPART_P = 'tt-depart';
 export const DEPART_STEPS = ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת'];
@@ -132,7 +133,7 @@ function departBuildGrid() {
     onChange: (v) => { departRefreshStartButton(); departRefreshStatus(v); },
     onStatus: (msg) => departUi.status(msg),
     onFilled: (label, n) => { const v = departGrid.validation(); log(`[עזיבה] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
-    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז.) או מלא שורה.'),
+    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל.'),
   });
 }
 
@@ -175,7 +176,7 @@ function departClearTable() {
   departGrid.hidePasteBox();
   departAwaitingErrorConfirm = false;
   departGrid.render();
-  departUi.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  departUi.status('הטבלה נוקתה. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל');
   log('[עזיבה] הטבלה נוקתה');
 }
 
@@ -183,7 +184,7 @@ function departRefreshStatus(v) {
   departUi.step(DEPART_STAGE_INDEX[departStage] || 0);
   if (departIsRunning() || departStage === 'run' || departStage === 'results') return;
   const all = v.counts.all;
-  if (!all) { departUi.status(departStage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "עזיבה חדשה"' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז. בכל שורה) או מלא שורה'); return; }
+  if (!all) { departUi.status(departStage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "רשימה חדשה"' : 'אין שורות עדיין. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל'); return; }
   const filtered = departGrid.filter() !== 'all';
   const rv = filtered ? departRunnable() : v;
   const c = rv.counts;
@@ -210,6 +211,7 @@ function departRenderResults() {
   const attention = list.filter((r) => !isDepartSuccess(r.status)).length;
   setDisabled(`${DEPART_P}-fix`, attention === 0);
   setText(`${DEPART_P}-fix`, attention ? `תקן והרץ שוב: ${departPlural(attention, 'תלמיד אחד', 'N תלמידים')}${departResFilter !== 'all' ? ' (המוצגים)' : ''}` : 'תקן והרץ שוב');
+  const fx = $el(`${DEPART_P}-fix`); if (fx) fx.title = attention ? 'פותח טבלה רק עם מי שדורש טיפול' : (departResults.length ? 'אין בין המוצגים מי שדורש טיפול' : '');
   for (const id of ['tsv', 'csv']) setDisabled(`${DEPART_P}-${id}`, departResults.length === 0);
 }
 
@@ -308,8 +310,8 @@ async function departStart() {
   if (v.counts.bad && !departAwaitingErrorConfirm) {
     departAwaitingErrorConfirm = true;
     departAwaitingErrorFilter = departGrid.filter();
-    setText(`${DEPART_P}-start`, v.tasks.length ? `כן, התחל בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
-    departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
+    setText(`${DEPART_P}-start`, v.tasks.length ? `לחץ שוב להתחלה בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
+    departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב על הכפתור כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { departUi.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
@@ -363,7 +365,21 @@ function departNewRun() {
   departRenderReport(null); departRenderResults();
   departGrid.setRows([]); departGrid.setNotes(null); departAwaitingErrorConfirm = false;
   departSetStage('prep'); departGrid.render();
-  log('[עזיבה] עזיבה חדשה: הטבלה והתוצאות נוקו');
+  departUi.status('רשימה חדשה: הטבלה והתוצאות נוקו. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל');
+  log('[עזיבה] רשימה חדשה: הטבלה והתוצאות נוקו');
+}
+
+// סבב 5: טעינת קובץ אקסל גם בעזיבה (כמו בקליטה)
+function departHandleXlsx(ev) {
+  const input = ev && ev.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  departUi.status('טוען קובץ אקסל…');
+  Promise.resolve().then(() => loadXlsxFile(file)).then((text) => {
+    departGrid.applyText(text, `קובץ "${file.name}"`);
+  }).catch((e) => {
+    departUi.status('טעינת האקסל נכשלה: ' + ((e && e.message) || 'שגיאה לא ידועה'));
+  }).finally(() => { if (input) input.value = ''; });
 }
 
 function departCopyTsv() {
@@ -389,13 +405,16 @@ function departMount(container, panelUi, page) {
   const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
     <section class="tt-zone" id="${DEPART_P}-zone-in">
-      <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span></div>
+      <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span>
+        <span class="tt-zone-actions">${buttonHtml({ id: `${DEPART_P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${DEPART_P}-prep-only">
-        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מעתיקים באקסל שתי עמודות (סניף ות.ז.) ולוחצים "הדבק מאקסל", או ממלאים בטבלה. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
-          ${buttonHtml({ id: `${DEPART_P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
+          ${buttonHtml({ id: `${DEPART_P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small', title: 'שתי עמודות: סניף ומספר' })}
+          ${buttonHtml({ id: `${DEPART_P}-clear`, label: 'נקה טבלה', kind: 'danger', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
+        <input id="${DEPART_P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${departGrid.pasteBoxHtml()}
       </div>
       <div id="${DEPART_P}-fix-only" hidden><p class="tt-zone-lead">רק מי שדורש טיפול. תקן לפי ההוראה שמתחת לכל שורה, ולחץ "התחל עזיבה חוזרת".</p></div>
@@ -409,16 +428,14 @@ function departMount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' })}
         ${buttonHtml({ id: `${DEPART_P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${DEPART_P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
     <div class="tt-runline" id="${DEPART_P}-zone-run" hidden><span class="tt-runtext" id="${DEPART_P}-runtext"></span>${buttonHtml({ id: `${DEPART_P}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
-    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', hidden: true, inner: `
+    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${DEPART_P}-new-run`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' }), inner: `
       <div id="${DEPART_P}-report" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight" id="${DEPART_P}-out-actions">
         ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול' })}
-        ${buttonHtml({ id: `${DEPART_P}-new-run`, label: 'עזיבה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${DEPART_P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט' })}
         ${buttonHtml({ id: `${DEPART_P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true })}
       </div>
@@ -439,9 +456,12 @@ function departMount(container, panelUi, page) {
   $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
   $el(`${DEPART_P}-fix`).addEventListener('click', departFixAndRerun);
   // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
-  bindConfirmClick(`${DEPART_P}-new-run`, { label: 'עזיבה חדשה', confirmLabel: 'כן, עזיבה חדשה', onConfirm: departNewRun });
-  bindConfirmClick(`${DEPART_P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: departNewRun });
-  bindConfirmClick(`${DEPART_P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: departClearTable });
+  const departArmNote = (what) => () => { if (departStage !== 'results') departUi.status(`${what} בלחיצה נוספת על הכפתור (6 שניות)`); };
+  bindConfirmClick(`${DEPART_P}-new-run`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: departNewRun, onArm: departArmNote('הטבלה והתוצאות יימחקו'), onDisarm: () => departGrid.refresh() });
+  bindConfirmClick(`${DEPART_P}-restart`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: departNewRun, onArm: departArmNote('הטבלה והתוצאות יימחקו'), onDisarm: () => departGrid.refresh() });
+  bindConfirmClick(`${DEPART_P}-clear`, { label: 'נקה טבלה', confirmLabel: 'לחץ שוב לניקוי הטבלה', onConfirm: departClearTable, onArm: departArmNote('הטבלה תנוקה'), onDisarm: () => departGrid.refresh() });
+  $el(`${DEPART_P}-xlsx`).addEventListener('click', () => $el(`${DEPART_P}-xlsx-file`).click());
+  $el(`${DEPART_P}-xlsx-file`).addEventListener('change', departHandleXlsx);
   $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
   $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
   $el(`${DEPART_P}-report`).addEventListener('click', departOnReportClick);

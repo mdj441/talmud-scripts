@@ -250,45 +250,58 @@ function subRowHtml(row, i) {
     <span>שם משפחה</span>${cellInput(i, 'lastName', f.lastName, '84px')}
     <span>מגדר</span>${cellSelect(i, 'gender', f.gender, GENDERS)}
     <span>מצב משפחתי</span>${cellSelect(i, 'familyStatus', f.familyStatus, FAMILY)}
-    <button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-newclear="${i}" title="מוחק את פרטי התלמיד החדש וסוגר את השורה">הסר</button>
   </div>`;
 }
 
+// סבב 5 (הכרעה א): תיבת-סימון בעמודת "תלמיד חדש"; סימון פותח את שורת-הפרטים, ביטול סוגר ומוחק אותה
+// (כשיש פרטים: ביטול ראשון רק מזהיר, ביטול שני בתוך 6 שניות מוחק)
 function rowActions(row, i) {
-  const on = rowHasNewFields(row);
-  return `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm tt-newbtn${on ? ' tt-newbtn-on' : ''}" data-newbtn="${i}" title="פרטים לתלמיד שהאתר לא מכיר: שם, משפחה, מגדר, מצב משפחתי">${on ? '✓ פרטים' : 'פרטים'}</button>`;
+  const on = row.newOpen || rowHasNewFields(row);
+  return `<label class="tt-newcb" title="סמן אם האתר לא מכיר את התלמיד: נפתחת שורה לשם, משפחה, מגדר ומצב משפחתי"><input type="checkbox" data-newcb="${i}"${on ? ' checked' : ''}></label>`;
 }
 
 function refreshRow(tr, sub, row) {
   const f = row.fields;
   const newOn = rowHasNewFields(row);
-  const nb = tr.querySelector('.tt-newbtn'); if (nb) { nb.classList.toggle('tt-newbtn-on', newOn); nb.textContent = newOn ? '✓ פרטים' : 'פרטים'; }
+  const open = !!(row.newOpen || newOn);
+  const cb = tr.querySelector('input[data-newcb]'); if (cb && cb.checked !== open) cb.checked = open;
   if (sub) {
-    const open = row.newOpen || newOn;
     for (const k of ['firstName', 'lastName']) { const inp = sub.querySelector(`input[data-k="${k}"]`); if (inp) inp.classList.toggle('tt-need', open && !String(f[k] || '').trim()); }
   }
 }
 
+let newClearPending = null; // { i, t }: ביטול-סימון ראשון של שורה עם פרטים
+
 function onGridClick(e, rows) {
   const t = e.target;
-  const nb = t && t.closest ? t.closest('[data-newbtn]') : null;
-  if (nb) {
-    const i = Number(nb.getAttribute('data-newbtn'));
-    const r = rows[i];
-    if (r) {
-      r.newOpen = !(r.newOpen || rowHasNewFields(r));
-      setTimeout(() => { const inp = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${i}"] input[data-k="firstName"]`); if (inp && r.newOpen) inp.focus(); }, 0);
-    }
+  const cb = t && t.closest ? t.closest('input[data-newcb]') : null;
+  if (!cb) return false;
+  const i = Number(cb.getAttribute('data-newcb'));
+  const r = rows[i];
+  if (!r) return false;
+  if (cb.checked) {
+    r.newOpen = true;
+    newClearPending = null;
+    setTimeout(() => { const inp = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${i}"] input[data-k="firstName"]`); if (inp) inp.focus(); }, 0);
     return true;
   }
-  const nc = t && t.closest ? t.closest('[data-newclear]') : null;
-  if (nc) {
-    const r = rows[Number(nc.getAttribute('data-newclear'))];
-    if (r) { for (const k of NEW_FIELDS) r.fields[k] = ''; r.newOpen = false; }
-    grid.render();
+  if (rowHasNewFields(r)) {
+    const key = rowKey(r.fields);
+    if (newClearPending && newClearPending.key === key && Date.now() - newClearPending.t < 6000) {
+      for (const k of NEW_FIELDS) r.fields[k] = '';
+      r.newOpen = false;
+      newClearPending = null;
+      grid.render();
+      ui.status('פרטי התלמיד החדש נמחקו');
+      return false;
+    }
+    newClearPending = { key, t: Date.now() };
+    grid.refresh(); // מחזיר את התיבה למסומנת (ומרענן את שורת-המצב), ולכן ההודעה נכתבת אחריו
+    ui.status('בשורה יש פרטי תלמיד חדש. בטל את הסימון שוב בתוך 6 שניות כדי למחוק אותם');
     return false;
   }
-  return false;
+  r.newOpen = false;
+  return true;
 }
 
 function buildGrid() {
@@ -308,7 +321,7 @@ function buildGrid() {
     onChange: (v) => { refreshStartButton(v); refreshStatus(v); },
     onStatus: (msg) => ui.status(msg),
     onFilled: (label, n) => { const v = grid.validation(); log(`[קלט] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
-    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. "הדבק מאקסל" או מלא שורה.'),
+    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. מלא שורה, הדבק מאקסל או טען קובץ אקסל.'),
   });
 }
 
@@ -335,7 +348,7 @@ function refreshStatus(v) {
   if (absorbIsBusy() || stage === 'run' || stage === 'results') return; // הזרימה / הסיכום מדווחים
   const all = v.counts.all;
   let msg;
-  if (!all) msg = stage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "קליטה חדשה"' : 'אין שורות עדיין. "הדבק מאקסל" או מלא שורה בטבלה';
+  if (!all) msg = stage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "רשימה חדשה"' : 'אין שורות עדיין. מלא שורה, הדבק מאקסל או טען קובץ אקסל';
   else {
     // כשתגית-סינון פעילה, המספרים הם של המוצגים (אלה שירוצו)
     const filtered = grid.filter() !== 'all';
@@ -383,7 +396,7 @@ function clearTable() {
   grid.hidePasteBox();
   awaitingErrorConfirm = false;
   grid.render();
-  ui.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  ui.status('הטבלה נוקתה. מלא שורה, הדבק מאקסל או טען קובץ אקסל');
   log('[קלט] הטבלה נוקתה');
 }
 
@@ -413,6 +426,7 @@ function renderResults() {
   const attention = list.filter((r) => !isAbsorbSuccess(r.status)).length;
   setDisabled(`${P}-keep-attention`, attention === 0);
   setText(`${P}-keep-attention`, attention ? `תקן והרץ שוב: ${plural(attention, 'תלמיד אחד', 'N תלמידים')}${resFilter !== 'all' ? ' (המוצגים)' : ''}` : 'תקן והרץ שוב');
+  const ka = $el(`${P}-keep-attention`); if (ka) ka.title = attention ? 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' : (results.length ? 'אין בין המוצגים מי שדורש טיפול' : '');
   const blocked = list.filter(absorbIsOtherInstituteBlock).length;
   const showContinue = blocked > 0 && !continueChecked() && !absorbIsBusy();
   show(`${P}-continue-rerun`, showContinue);
@@ -507,8 +521,8 @@ async function start() {
   if (v.counts.bad && !awaitingErrorConfirm) {
     awaitingErrorConfirm = true;
     awaitingErrorFilter = grid.filter();
-    setText(`${P}-start`, v.tasks.length ? `כן, התחל בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
-    ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
+    setText(`${P}-start`, v.tasks.length ? `לחץ שוב להתחלה בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
+    ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב על הכפתור כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { ui.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
@@ -595,7 +609,8 @@ function newRun() {
   awaitingErrorConfirm = false;
   setStage('prep');
   grid.render();
-  log('[קלט] קליטה חדשה: הטבלה והתוצאות נוקו');
+  ui.status('רשימה חדשה: הטבלה והתוצאות נוקו. מלא שורה, הדבק מאקסל או טען קובץ אקסל');
+  log('[קלט] רשימה חדשה: הטבלה והתוצאות נוקו');
 }
 
 // הכרעה ט: "נחסם: רשום במוסד אחר" בלי "אשר המשך" → לחיצה אחת מסמנת ומריצה שוב רק את מי שנחסם.
@@ -671,15 +686,16 @@ function mount(container, panelUi, page) {
   container.innerHTML = `
     ${datalistsHtml(page)}
     <section class="tt-zone" id="${P}-zone-in">
-      <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span></div>
+      <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span>
+        <span class="tt-zone-actions">${buttonHtml({ id: `${P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${P}-prep-only">
-        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: מעתיקים באקסל ולוחצים "הדבק מאקסל", או טוענים קובץ, או ממלאים בטבלה. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-template`, label: 'הורד תבנית', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' })}
-          ${buttonHtml({ id: `${P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
+          ${buttonHtml({ id: `${P}-clear`, label: 'נקה טבלה', kind: 'danger', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
         <input id="${P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${grid.pasteBoxHtml()}
@@ -695,17 +711,15 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' })}
         ${buttonHtml({ id: `${P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
     <div class="tt-runline" id="${P}-zone-run" hidden><span class="tt-runtext" id="${P}-runtext"></span>${buttonHtml({ id: `${P}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
-    ${zoneHtml({ id: `${P}-zone-out`, title: 'תוצאות', hidden: true, inner: `
+    ${zoneHtml({ id: `${P}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${P}-new-run`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' }), inner: `
       <div id="${P}-report" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight" id="${P}-out-actions">
         ${buttonHtml({ id: `${P}-keep-attention`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' })}
         ${buttonHtml({ id: `${P}-continue-rerun`, label: 'סמן "אשר המשך" והרץ שוב', kind: 'ghost', size: 'small', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט או בדיווח-באג' })}
         ${buttonHtml({ id: `${P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true, title: 'קובץ CSV עם כל העמודות, כולל "פירוט". מכיל מזהים מלאים' })}
       </div>
@@ -730,9 +744,10 @@ function mount(container, panelUi, page) {
   $el(`${P}-keep-attention`).addEventListener('click', fixAndRerun);
   $el(`${P}-continue-rerun`).addEventListener('click', continueAndRerun);
   // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
-  bindConfirmClick(`${P}-new-run`, { label: 'קליטה חדשה', confirmLabel: 'כן, קליטה חדשה', onConfirm: newRun });
-  bindConfirmClick(`${P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: newRun });
-  bindConfirmClick(`${P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: clearTable });
+  const armNote = (what) => () => { if (stage !== 'results') ui.status(`${what} בלחיצה נוספת על הכפתור (6 שניות)`); };
+  bindConfirmClick(`${P}-new-run`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: newRun, onArm: armNote('הטבלה והתוצאות יימחקו'), onDisarm: () => grid.refresh() });
+  bindConfirmClick(`${P}-restart`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: newRun, onArm: armNote('הטבלה והתוצאות יימחקו'), onDisarm: () => grid.refresh() });
+  bindConfirmClick(`${P}-clear`, { label: 'נקה טבלה', confirmLabel: 'לחץ שוב לניקוי הטבלה', onConfirm: clearTable, onArm: armNote('הטבלה תנוקה'), onDisarm: () => grid.refresh() });
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());

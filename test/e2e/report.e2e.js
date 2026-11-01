@@ -112,6 +112,18 @@ describe('דיווח חודשי: סביבת דמה', () => {
       assert.equal(await evalPatient(page, (k) => sessionStorage.getItem(k), STATE_KEY), null);
       const errors = consoleLines.filter((l) => l.startsWith('PAGEERROR'));
       assert.equal(errors.length, 0, errors.join('\n'));
+      // סבב 5 (ד3): בתוצאות אזור ההכנה מוסתר, "עצור" מוסתר, ו"דיווח חדש" (לחיצה שנייה) חוזר להכנה בלי תוצאות
+      assert.equal(await page.$eval('#tt-report-zone-in', (el) => el.hidden), true, 'אזור ההכנה לא מוצג בתוצאות');
+      assert.equal(await page.$eval('#tt-report-zone-run', (el) => el.hidden), true, 'שורת-הריצה עם "עצור" מוסתרת אחרי הריצה');
+      assert.equal(await page.$eval('#tt-report-new-run', (b) => b.hidden), false);
+      await page.click('#tt-report-new-run');
+      assert.equal(await page.textContent('#tt-report-new-run'), 'לחץ שוב לדיווח חדש');
+      assert.ok(await page.$('#tt-report-results table'), 'לחיצה אחת לא מוחקת');
+      await page.click('#tt-report-new-run');
+      assert.equal(await page.$eval('#tt-report-zone-in', (el) => el.hidden), false, '"דיווח חדש" חוזר להכנה');
+      assert.equal(await page.$eval('#tt-report-zone-out', (el) => el.hidden), true);
+      assert.equal(await page.$('#tt-report-results table'), null, 'התוצאות נוקו');
+      assert.equal(await page.$eval('#tt-report-start', (b) => b.disabled), false);
     } finally { await context.close(); }
   });
 

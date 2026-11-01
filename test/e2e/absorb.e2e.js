@@ -167,7 +167,7 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       await page.click('#tt-absorb-back');
       assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), false);
       await page.click('#tt-absorb-new-run');
-      assert.equal(await page.textContent('#tt-absorb-new-run'), 'כן, קליטה חדשה', 'לחיצה ראשונה רק דורכת');
+      assert.equal(await page.textContent('#tt-absorb-new-run'), 'לחץ שוב לרשימה חדשה', 'לחיצה ראשונה רק דורכת (נוסח סבב 5)');
       assert.ok(await page.$('#tt-absorb-results table'), 'התוצאות עדיין מוצגות אחרי לחיצה אחת');
       await page.click('#tt-absorb-new-run');
       assert.equal(await page.$eval('#tt-absorb-zone-in', (el) => el.hidden), false, 'קליטה חדשה חוזרת להכנה');
@@ -576,13 +576,29 @@ describe('קליטת תלמידים — טבלת ההזנה', () => {
       // "נקה": לחיצה ראשונה דורכת ("כן, נקה"), שנייה מרוקנת
       assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), false);
       await page.click('#tt-absorb-clear');
-      assert.equal(await page.textContent('#tt-absorb-clear'), 'כן, נקה');
+      assert.equal(await page.textContent('#tt-absorb-clear'), 'לחץ שוב לניקוי הטבלה');
+      assert.match(await page.textContent('#tt-absorb-status'), /הטבלה תנוקה בלחיצה נוספת/);
       assert.deepEqual(await ids(), ['AB1234567', 'CD7654321'], 'לחיצה אחת לא מוחקת');
       await page.click('#tt-absorb-clear');
       assert.deepEqual(await ids(), [], 'לחיצה שנייה מרוקנת');
       assert.equal(await startDisabled(), true);
       assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), true);
       assert.match(await page.textContent('#tt-absorb-status'), /הטבלה נוקתה/);
+      // סבב 5 (הכרעה א): תיבת-סימון "תלמיד חדש" פותחת את שורת-הפרטים; ביטול עם פרטים מזהיר ורק ביטול שני מוחק
+      await page.selectOption('#tt-absorb-grid select[data-i="0"][data-k="branch"]', '00');
+      await page.fill(cell(0, 'studyType'), '600');
+      await page.fill(cell(0, 'identifier'), '034567890');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"]', (tr) => tr.hidden), true, 'שורת-הפרטים סגורה כברירת-מחדל');
+      await page.check('#tt-absorb-grid input[data-newcb="0"]');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"]', (tr) => tr.hidden), false, 'הסימון פותח את שורת-הפרטים');
+      await page.fill('#tt-absorb-grid tr.tt-sub[data-sub="0"] input[data-k="firstName"]', 'משה');
+      await page.click('#tt-absorb-grid input[data-newcb="0"]');
+      assert.match(await page.textContent('#tt-absorb-status'), /בטל את הסימון שוב/, 'ביטול ראשון עם פרטים רק מזהיר');
+      assert.equal(await page.$eval('#tt-absorb-grid input[data-newcb="0"]', (c) => c.checked), true, 'התיבה חוזרת למסומנת');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"] input[data-k="firstName"]', (e) => e.value), 'משה', 'הפרטים נשמרו');
+      await page.click('#tt-absorb-grid input[data-newcb="0"]');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"]', (tr) => tr.hidden), true, 'ביטול שני סוגר');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"] input[data-k="firstName"]', (e) => e.value), '', 'ומוחק את הפרטים');
       // אפיון סעיף 5: לשונית ההודעות בדף מוסד = תיבה עם "עבור לדף ההודעות"; הצד נזכר ב-localStorage
       await page.click('#tt-tab-messages');
       assert.ok(await page.$('#tt-messages-goto:not([hidden])'), 'כפתור "עבור לדף ההודעות" בדף מוסד');

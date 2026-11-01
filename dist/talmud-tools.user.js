@@ -798,9 +798,9 @@ function tagHtml({ label, kind = 'info', id = '', button = false, filter = '', a
 }
 
 // אזור ("הכנה" / "תוצאות"): כותרת, הערה קטנה, ותוכן. dim=true כשהאזור עוד לא רלוונטי.
-function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false }) {
+function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false, actions = '' }) {
   return `<section class="tt-zone${dim ? ' tt-zone-dim' : ''}" id="${esc(id)}"${hidden ? ' hidden' : ''}>
-    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span></div>${inner}</section>`;
+    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span>${actions ? `<span class="tt-zone-actions">${actions}</span>` : ''}</div>${inner}</section>`;
 }
 
 // שדה-תאריך (סבב 3): טקסט יום/חודש/שנה + כפתור לוח-שנה שפותח את הלוח של הדפדפן (שדה-תאריך מוסתר). attrs: תכונות
@@ -944,18 +944,20 @@ function setDisabled(id, disabled) {
   if (el) el.disabled = !!disabled;
 }
 
-// כפתור שמוחק (הכרעת 2.11.2026): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"כן, X" והכפתור מאדים), לחיצה שנייה
-// בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
-function bindConfirmClick(target, { label, confirmLabel, onConfirm, ms = 6000 }) {
+// כפתור שמוחק (הכרעת 2.11.2026, נוסח סבב 5): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"לחץ שוב ל…" והכפתור מאדים),
+// לחיצה שנייה בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. onArm/onDisarm: למשל לשורת-המצב.
+// target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
+function bindConfirmClick(target, { label, confirmLabel, onConfirm, onArm = null, onDisarm = null, ms = 6000 }) {
   const el = typeof target === 'string' ? $el(target) : target;
   if (!el) return () => {};
   let timer = null;
-  const disarm = () => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); };
+  const disarm = (silent) => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); if (!silent && onDisarm) onDisarm(); };
   el.addEventListener('click', () => {
-    if (timer !== null) { disarm(); onConfirm(); return; }
+    if (timer !== null) { disarm(true); onConfirm(); return; }
     el.textContent = confirmLabel;
     el.classList.add('tt-btn-armed');
     timer = setTimeout(disarm, ms);
+    if (onArm) onArm();
   });
   return disarm;
 }
@@ -1072,8 +1074,9 @@ const PANEL_CSS = `
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
 .tt-step-done{color:var(--tt-ink-2)}
 .tt-step-done::before{content:"✓";background:var(--tt-accent-soft);border-color:var(--tt-accent);color:var(--tt-accent)}
-.tt-strip-row{display:flex;align-items:baseline;gap:12px;min-height:22px}
-.tt-status{flex:1;font-size:13px;color:var(--tt-ink)}
+.tt-strip-row{display:flex;align-items:center;gap:12px;min-height:22px}
+/* סבב 5 (בקשת בעל-המערכת ק12): שורת-המצב הכללית בתיבה ברורה, לא טקסט רץ */
+.tt-status{flex:1;font-size:13px;color:var(--tt-ink);background:var(--tt-accent-soft);border:1px solid #c6dcd5;border-radius:6px;padding:6px 10px;font-weight:600;line-height:1.4}
 .tt-progress{font-size:12px;color:var(--tt-muted);white-space:nowrap}
 .tt-bar{height:2px;background:var(--tt-line-2);margin-top:6px;overflow:hidden}
 .tt-bar i{display:block;height:100%;width:100%;background:var(--tt-accent);transform:scaleX(0);transform-origin:right;transition:transform .25s ease}
@@ -1081,9 +1084,13 @@ const PANEL_CSS = `
 
 .tt-zone{border:1px solid var(--tt-line);border-radius:8px;background:var(--tt-field);margin:8px 0;padding:8px 12px 10px}
 .tt-zone-dim{opacity:.55}
-.tt-zone-head{display:flex;align-items:baseline;gap:8px;margin-bottom:2px}
+.tt-zone-head{display:flex;align-items:center;gap:8px;margin-bottom:2px}
 .tt-zone-head b{font-size:13.5px}
 .tt-zone-head .tt-zone-note{font-size:12px;color:var(--tt-muted);flex:1}
+.tt-zone-head .tt-zone-actions{margin-inline-start:auto}
+/* סבב 5 (ק14): "רשימה חדשה" / "דיווח חדש" במקום קבוע בכותרת-האזור, בולט */
+.tt-btn-newlist{background:var(--tt-field);border-color:var(--tt-accent);color:var(--tt-accent);font-weight:600}
+.tt-btn-newlist:hover{background:var(--tt-accent-soft);border-color:var(--tt-accent)}
 .tt-zone-lead{font-size:12.5px;color:var(--tt-ink-2);margin:0 0 6px}
 .tt-fit{margin:10px 0}
 
@@ -1164,14 +1171,14 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 
 .tt-table{width:100%;border-collapse:collapse;font-size:12.5px;margin:4px 0;background:var(--tt-field)}
 .tt-table th{color:var(--tt-ink-2);font-weight:600;padding:6px 8px;text-align:right;border-bottom:1px solid var(--tt-line);position:sticky;top:0;background:var(--tt-field)}
-.tt-table td{padding:5px 8px;border-bottom:1px solid var(--tt-line-2);vertical-align:middle}
+.tt-table td{padding:5px 8px;border-bottom:2px solid var(--tt-line);vertical-align:middle} /* סבב 5 (ק2): קו כהה יותר בין שורות */
 .tt-table td.tt-status-cell{font-weight:600;white-space:nowrap}
 .tt-table td.tt-status-cell::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;margin-inline-end:6px;background:var(--tt-line);vertical-align:1px}
 .tt-table tr.tt-r-ok td.tt-status-cell{color:var(--tt-ok)}.tt-table tr.tt-r-ok td.tt-status-cell::before{background:var(--tt-ok)}
 .tt-table tr.tt-r-warn td.tt-status-cell{color:var(--tt-warn)}.tt-table tr.tt-r-warn td.tt-status-cell::before{background:var(--tt-warn)}
 .tt-table tr.tt-r-bad td.tt-status-cell{color:var(--tt-bad)}.tt-table tr.tt-r-bad td.tt-status-cell::before{background:var(--tt-bad)}
 .tt-table tr.tt-r-bad td,.tt-table tr.tt-r-warn td{border-bottom-color:transparent}
-.tt-table tr.tt-act td{padding:0 8px 7px 24px;font-size:12px;color:var(--tt-ink-2);border-bottom:1px solid var(--tt-line-2);white-space:normal;line-height:1.45}
+.tt-table tr.tt-act td{padding:0 8px 7px 24px;font-size:12px;color:var(--tt-ink-2);border-bottom:2px solid var(--tt-line);white-space:normal;line-height:1.45}
 .tt-table tr.tt-act td::before{content:"←";color:var(--tt-muted);margin-inline-end:6px}
 .tt-scroll{max-height:240px;overflow:auto;border:1px solid var(--tt-line);border-radius:6px;background:var(--tt-field)}
 .tt-scroll-tall{max-height:340px}
@@ -1192,7 +1199,9 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-grid-input{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--tt-field)}
 .tt-grid-input th{color:var(--tt-ink-2);font-weight:600;padding:6px 4px;text-align:right;border-bottom:1px solid var(--tt-line);white-space:nowrap;position:sticky;top:0;background:var(--tt-field);z-index:1}
 .tt-grid-input td{padding:5px 2px;vertical-align:middle}
-.tt-grid-input tr.tt-r-main td{border-top:1px solid var(--tt-line-2)}
+.tt-grid-input tr.tt-r-main td{border-top:2px solid var(--tt-line)} /* סבב 5 (ק2): בידול בין שורות */
+.tt-grid-input .tt-newcb{display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.tt-grid-input .tt-newcb input{width:15px;height:15px;cursor:pointer;accent-color:var(--tt-accent)}
 .tt-grid-input tr.tt-r-main:first-child td{border-top:0}
 .tt-grid-input .tt-input,.tt-grid-input .tt-select{padding:4px 6px;font-size:12.5px;min-width:0}
 .tt-grid-input .tt-select{padding-inline-end:2px}
@@ -3994,6 +4003,11 @@ function createGrid(cfg) {
         msg.firstElementChild.innerHTML = parts.join('<br>');
       }
       const num = tr.querySelector('.tt-rownum'); if (num) num.textContent = blank ? '' : String(i + 1);
+      // שורה שמולאה ידנית (הייתה ריקה): תא-הפעולות וכפתור ההסרה נבנים עכשיו, בלי לבנות את כל הטבלה (סבב 5)
+      const act = tr.querySelector('.tt-cell-actions');
+      if (act && cfg.rowActions && (act.innerHTML.trim() !== '') !== !blank) act.innerHTML = blank ? '' : cfg.rowActions(row, i);
+      const del = tr.querySelector('.tt-cell-del');
+      if (del && cfg.allowDelete !== false && (del.innerHTML.trim() !== '') !== !blank) del.innerHTML = blank ? '' : `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-del="${i}" title="הסר שורה">×</button>`;
       const f = row.fields;
       for (const col of columns) {
         const td = tr.querySelector(`.tt-cell-${col.key}`);
@@ -4408,45 +4422,58 @@ function subRowHtml(row, i) {
     <span>שם משפחה</span>${cellInput(i, 'lastName', f.lastName, '84px')}
     <span>מגדר</span>${cellSelect(i, 'gender', f.gender, GENDERS)}
     <span>מצב משפחתי</span>${cellSelect(i, 'familyStatus', f.familyStatus, FAMILY)}
-    <button type="button" class="tt-btn tt-btn-subtle tt-btn-sm" data-newclear="${i}" title="מוחק את פרטי התלמיד החדש וסוגר את השורה">הסר</button>
   </div>`;
 }
 
+// סבב 5 (הכרעה א): תיבת-סימון בעמודת "תלמיד חדש"; סימון פותח את שורת-הפרטים, ביטול סוגר ומוחק אותה
+// (כשיש פרטים: ביטול ראשון רק מזהיר, ביטול שני בתוך 6 שניות מוחק)
 function rowActions(row, i) {
-  const on = rowHasNewFields(row);
-  return `<button type="button" class="tt-btn tt-btn-subtle tt-btn-sm tt-newbtn${on ? ' tt-newbtn-on' : ''}" data-newbtn="${i}" title="פרטים לתלמיד שהאתר לא מכיר: שם, משפחה, מגדר, מצב משפחתי">${on ? '✓ פרטים' : 'פרטים'}</button>`;
+  const on = row.newOpen || rowHasNewFields(row);
+  return `<label class="tt-newcb" title="סמן אם האתר לא מכיר את התלמיד: נפתחת שורה לשם, משפחה, מגדר ומצב משפחתי"><input type="checkbox" data-newcb="${i}"${on ? ' checked' : ''}></label>`;
 }
 
 function refreshRow(tr, sub, row) {
   const f = row.fields;
   const newOn = rowHasNewFields(row);
-  const nb = tr.querySelector('.tt-newbtn'); if (nb) { nb.classList.toggle('tt-newbtn-on', newOn); nb.textContent = newOn ? '✓ פרטים' : 'פרטים'; }
+  const open = !!(row.newOpen || newOn);
+  const cb = tr.querySelector('input[data-newcb]'); if (cb && cb.checked !== open) cb.checked = open;
   if (sub) {
-    const open = row.newOpen || newOn;
     for (const k of ['firstName', 'lastName']) { const inp = sub.querySelector(`input[data-k="${k}"]`); if (inp) inp.classList.toggle('tt-need', open && !String(f[k] || '').trim()); }
   }
 }
 
+let newClearPending = null; // { i, t }: ביטול-סימון ראשון של שורה עם פרטים
+
 function onGridClick(e, rows) {
   const t = e.target;
-  const nb = t && t.closest ? t.closest('[data-newbtn]') : null;
-  if (nb) {
-    const i = Number(nb.getAttribute('data-newbtn'));
-    const r = rows[i];
-    if (r) {
-      r.newOpen = !(r.newOpen || rowHasNewFields(r));
-      setTimeout(() => { const inp = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${i}"] input[data-k="firstName"]`); if (inp && r.newOpen) inp.focus(); }, 0);
-    }
+  const cb = t && t.closest ? t.closest('input[data-newcb]') : null;
+  if (!cb) return false;
+  const i = Number(cb.getAttribute('data-newcb'));
+  const r = rows[i];
+  if (!r) return false;
+  if (cb.checked) {
+    r.newOpen = true;
+    newClearPending = null;
+    setTimeout(() => { const inp = document.querySelector(`#${P}-grid tr.tt-sub[data-sub="${i}"] input[data-k="firstName"]`); if (inp) inp.focus(); }, 0);
     return true;
   }
-  const nc = t && t.closest ? t.closest('[data-newclear]') : null;
-  if (nc) {
-    const r = rows[Number(nc.getAttribute('data-newclear'))];
-    if (r) { for (const k of NEW_FIELDS) r.fields[k] = ''; r.newOpen = false; }
-    grid.render();
+  if (rowHasNewFields(r)) {
+    const key = rowKey(r.fields);
+    if (newClearPending && newClearPending.key === key && Date.now() - newClearPending.t < 6000) {
+      for (const k of NEW_FIELDS) r.fields[k] = '';
+      r.newOpen = false;
+      newClearPending = null;
+      grid.render();
+      ui.status('פרטי התלמיד החדש נמחקו');
+      return false;
+    }
+    newClearPending = { key, t: Date.now() };
+    grid.refresh(); // מחזיר את התיבה למסומנת (ומרענן את שורת-המצב), ולכן ההודעה נכתבת אחריו
+    ui.status('בשורה יש פרטי תלמיד חדש. בטל את הסימון שוב בתוך 6 שניות כדי למחוק אותם');
     return false;
   }
-  return false;
+  r.newOpen = false;
+  return true;
 }
 
 function buildGrid() {
@@ -4466,7 +4493,7 @@ function buildGrid() {
     onChange: (v) => { refreshStartButton(v); refreshStatus(v); },
     onStatus: (msg) => ui.status(msg),
     onFilled: (label, n) => { const v = grid.validation(); log(`[קלט] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
-    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. "הדבק מאקסל" או מלא שורה.'),
+    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. מלא שורה, הדבק מאקסל או טען קובץ אקסל.'),
   });
 }
 
@@ -4493,7 +4520,7 @@ function refreshStatus(v) {
   if (absorbIsBusy() || stage === 'run' || stage === 'results') return; // הזרימה / הסיכום מדווחים
   const all = v.counts.all;
   let msg;
-  if (!all) msg = stage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "קליטה חדשה"' : 'אין שורות עדיין. "הדבק מאקסל" או מלא שורה בטבלה';
+  if (!all) msg = stage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "רשימה חדשה"' : 'אין שורות עדיין. מלא שורה, הדבק מאקסל או טען קובץ אקסל';
   else {
     // כשתגית-סינון פעילה, המספרים הם של המוצגים (אלה שירוצו)
     const filtered = grid.filter() !== 'all';
@@ -4541,7 +4568,7 @@ function clearTable() {
   grid.hidePasteBox();
   awaitingErrorConfirm = false;
   grid.render();
-  ui.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  ui.status('הטבלה נוקתה. מלא שורה, הדבק מאקסל או טען קובץ אקסל');
   log('[קלט] הטבלה נוקתה');
 }
 
@@ -4571,6 +4598,7 @@ function renderResults() {
   const attention = list.filter((r) => !isAbsorbSuccess(r.status)).length;
   setDisabled(`${P}-keep-attention`, attention === 0);
   setText(`${P}-keep-attention`, attention ? `תקן והרץ שוב: ${plural(attention, 'תלמיד אחד', 'N תלמידים')}${resFilter !== 'all' ? ' (המוצגים)' : ''}` : 'תקן והרץ שוב');
+  const ka = $el(`${P}-keep-attention`); if (ka) ka.title = attention ? 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' : (results.length ? 'אין בין המוצגים מי שדורש טיפול' : '');
   const blocked = list.filter(absorbIsOtherInstituteBlock).length;
   const showContinue = blocked > 0 && !continueChecked() && !absorbIsBusy();
   show(`${P}-continue-rerun`, showContinue);
@@ -4665,8 +4693,8 @@ async function start() {
   if (v.counts.bad && !awaitingErrorConfirm) {
     awaitingErrorConfirm = true;
     awaitingErrorFilter = grid.filter();
-    setText(`${P}-start`, v.tasks.length ? `כן, התחל בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
-    ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
+    setText(`${P}-start`, v.tasks.length ? `לחץ שוב להתחלה בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
+    ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב על הכפתור כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { ui.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
@@ -4753,7 +4781,8 @@ function newRun() {
   awaitingErrorConfirm = false;
   setStage('prep');
   grid.render();
-  log('[קלט] קליטה חדשה: הטבלה והתוצאות נוקו');
+  ui.status('רשימה חדשה: הטבלה והתוצאות נוקו. מלא שורה, הדבק מאקסל או טען קובץ אקסל');
+  log('[קלט] רשימה חדשה: הטבלה והתוצאות נוקו');
 }
 
 // הכרעה ט: "נחסם: רשום במוסד אחר" בלי "אשר המשך" → לחיצה אחת מסמנת ומריצה שוב רק את מי שנחסם.
@@ -4829,15 +4858,16 @@ function mount(container, panelUi, page) {
   container.innerHTML = `
     ${datalistsHtml(page)}
     <section class="tt-zone" id="${P}-zone-in">
-      <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span></div>
+      <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span>
+        <span class="tt-zone-actions">${buttonHtml({ id: `${P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${P}-prep-only">
-        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: מעתיקים באקסל ולוחצים "הדבק מאקסל", או טוענים קובץ, או ממלאים בטבלה. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-template`, label: 'הורד תבנית', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' })}
-          ${buttonHtml({ id: `${P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
+          ${buttonHtml({ id: `${P}-clear`, label: 'נקה טבלה', kind: 'danger', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
         <input id="${P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${grid.pasteBoxHtml()}
@@ -4853,17 +4883,15 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' })}
         ${buttonHtml({ id: `${P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
     <div class="tt-runline" id="${P}-zone-run" hidden><span class="tt-runtext" id="${P}-runtext"></span>${buttonHtml({ id: `${P}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
-    ${zoneHtml({ id: `${P}-zone-out`, title: 'תוצאות', hidden: true, inner: `
+    ${zoneHtml({ id: `${P}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${P}-new-run`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' }), inner: `
       <div id="${P}-report" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight" id="${P}-out-actions">
         ${buttonHtml({ id: `${P}-keep-attention`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' })}
         ${buttonHtml({ id: `${P}-continue-rerun`, label: 'סמן "אשר המשך" והרץ שוב', kind: 'ghost', size: 'small', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט או בדיווח-באג' })}
         ${buttonHtml({ id: `${P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true, title: 'קובץ CSV עם כל העמודות, כולל "פירוט". מכיל מזהים מלאים' })}
       </div>
@@ -4888,9 +4916,10 @@ function mount(container, panelUi, page) {
   $el(`${P}-keep-attention`).addEventListener('click', fixAndRerun);
   $el(`${P}-continue-rerun`).addEventListener('click', continueAndRerun);
   // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
-  bindConfirmClick(`${P}-new-run`, { label: 'קליטה חדשה', confirmLabel: 'כן, קליטה חדשה', onConfirm: newRun });
-  bindConfirmClick(`${P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: newRun });
-  bindConfirmClick(`${P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: clearTable });
+  const armNote = (what) => () => { if (stage !== 'results') ui.status(`${what} בלחיצה נוספת על הכפתור (6 שניות)`); };
+  bindConfirmClick(`${P}-new-run`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: newRun, onArm: armNote('הטבלה והתוצאות יימחקו'), onDisarm: () => grid.refresh() });
+  bindConfirmClick(`${P}-restart`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: newRun, onArm: armNote('הטבלה והתוצאות יימחקו'), onDisarm: () => grid.refresh() });
+  bindConfirmClick(`${P}-clear`, { label: 'נקה טבלה', confirmLabel: 'לחץ שוב לניקוי הטבלה', onConfirm: clearTable, onArm: armNote('הטבלה תנוקה'), onDisarm: () => grid.refresh() });
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
@@ -5970,7 +5999,7 @@ function departBuildGrid() {
     onChange: (v) => { departRefreshStartButton(); departRefreshStatus(v); },
     onStatus: (msg) => departUi.status(msg),
     onFilled: (label, n) => { const v = departGrid.validation(); log(`[עזיבה] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
-    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז.) או מלא שורה.'),
+    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל.'),
   });
 }
 
@@ -6013,7 +6042,7 @@ function departClearTable() {
   departGrid.hidePasteBox();
   departAwaitingErrorConfirm = false;
   departGrid.render();
-  departUi.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  departUi.status('הטבלה נוקתה. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל');
   log('[עזיבה] הטבלה נוקתה');
 }
 
@@ -6021,7 +6050,7 @@ function departRefreshStatus(v) {
   departUi.step(DEPART_STAGE_INDEX[departStage] || 0);
   if (departIsRunning() || departStage === 'run' || departStage === 'results') return;
   const all = v.counts.all;
-  if (!all) { departUi.status(departStage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "עזיבה חדשה"' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז. בכל שורה) או מלא שורה'); return; }
+  if (!all) { departUi.status(departStage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "רשימה חדשה"' : 'אין שורות עדיין. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל'); return; }
   const filtered = departGrid.filter() !== 'all';
   const rv = filtered ? departRunnable() : v;
   const c = rv.counts;
@@ -6048,6 +6077,7 @@ function departRenderResults() {
   const attention = list.filter((r) => !isDepartSuccess(r.status)).length;
   setDisabled(`${DEPART_P}-fix`, attention === 0);
   setText(`${DEPART_P}-fix`, attention ? `תקן והרץ שוב: ${departPlural(attention, 'תלמיד אחד', 'N תלמידים')}${departResFilter !== 'all' ? ' (המוצגים)' : ''}` : 'תקן והרץ שוב');
+  const fx = $el(`${DEPART_P}-fix`); if (fx) fx.title = attention ? 'פותח טבלה רק עם מי שדורש טיפול' : (departResults.length ? 'אין בין המוצגים מי שדורש טיפול' : '');
   for (const id of ['tsv', 'csv']) setDisabled(`${DEPART_P}-${id}`, departResults.length === 0);
 }
 
@@ -6146,8 +6176,8 @@ async function departStart() {
   if (v.counts.bad && !departAwaitingErrorConfirm) {
     departAwaitingErrorConfirm = true;
     departAwaitingErrorFilter = departGrid.filter();
-    setText(`${DEPART_P}-start`, v.tasks.length ? `כן, התחל בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
-    departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
+    setText(`${DEPART_P}-start`, v.tasks.length ? `לחץ שוב להתחלה בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
+    departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב על הכפתור כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { departUi.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
@@ -6201,7 +6231,21 @@ function departNewRun() {
   departRenderReport(null); departRenderResults();
   departGrid.setRows([]); departGrid.setNotes(null); departAwaitingErrorConfirm = false;
   departSetStage('prep'); departGrid.render();
-  log('[עזיבה] עזיבה חדשה: הטבלה והתוצאות נוקו');
+  departUi.status('רשימה חדשה: הטבלה והתוצאות נוקו. מלא שורה (סניף ומספר), הדבק מאקסל או טען קובץ אקסל');
+  log('[עזיבה] רשימה חדשה: הטבלה והתוצאות נוקו');
+}
+
+// סבב 5: טעינת קובץ אקסל גם בעזיבה (כמו בקליטה)
+function departHandleXlsx(ev) {
+  const input = ev && ev.target;
+  const file = input && input.files && input.files[0];
+  if (!file) return;
+  departUi.status('טוען קובץ אקסל…');
+  Promise.resolve().then(() => loadXlsxFile(file)).then((text) => {
+    departGrid.applyText(text, `קובץ "${file.name}"`);
+  }).catch((e) => {
+    departUi.status('טעינת האקסל נכשלה: ' + ((e && e.message) || 'שגיאה לא ידועה'));
+  }).finally(() => { if (input) input.value = ''; });
 }
 
 function departCopyTsv() {
@@ -6227,13 +6271,16 @@ function departMount(container, panelUi, page) {
   const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
     <section class="tt-zone" id="${DEPART_P}-zone-in">
-      <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span></div>
+      <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span>
+        <span class="tt-zone-actions">${buttonHtml({ id: `${DEPART_P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${DEPART_P}-prep-only">
-        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מעתיקים באקסל שתי עמודות (סניף ות.ז.) ולוחצים "הדבק מאקסל", או ממלאים בטבלה. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
-          ${buttonHtml({ id: `${DEPART_P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
+          ${buttonHtml({ id: `${DEPART_P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small', title: 'שתי עמודות: סניף ומספר' })}
+          ${buttonHtml({ id: `${DEPART_P}-clear`, label: 'נקה טבלה', kind: 'danger', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
+        <input id="${DEPART_P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${departGrid.pasteBoxHtml()}
       </div>
       <div id="${DEPART_P}-fix-only" hidden><p class="tt-zone-lead">רק מי שדורש טיפול. תקן לפי ההוראה שמתחת לכל שורה, ולחץ "התחל עזיבה חוזרת".</p></div>
@@ -6247,16 +6294,14 @@ function departMount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' })}
         ${buttonHtml({ id: `${DEPART_P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${DEPART_P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
     <div class="tt-runline" id="${DEPART_P}-zone-run" hidden><span class="tt-runtext" id="${DEPART_P}-runtext"></span>${buttonHtml({ id: `${DEPART_P}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
-    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', hidden: true, inner: `
+    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${DEPART_P}-new-run`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' }), inner: `
       <div id="${DEPART_P}-report" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight" id="${DEPART_P}-out-actions">
         ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול' })}
-        ${buttonHtml({ id: `${DEPART_P}-new-run`, label: 'עזיבה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${DEPART_P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט' })}
         ${buttonHtml({ id: `${DEPART_P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true })}
       </div>
@@ -6277,9 +6322,12 @@ function departMount(container, panelUi, page) {
   $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
   $el(`${DEPART_P}-fix`).addEventListener('click', departFixAndRerun);
   // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
-  bindConfirmClick(`${DEPART_P}-new-run`, { label: 'עזיבה חדשה', confirmLabel: 'כן, עזיבה חדשה', onConfirm: departNewRun });
-  bindConfirmClick(`${DEPART_P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: departNewRun });
-  bindConfirmClick(`${DEPART_P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: departClearTable });
+  const departArmNote = (what) => () => { if (departStage !== 'results') departUi.status(`${what} בלחיצה נוספת על הכפתור (6 שניות)`); };
+  bindConfirmClick(`${DEPART_P}-new-run`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: departNewRun, onArm: departArmNote('הטבלה והתוצאות יימחקו'), onDisarm: () => departGrid.refresh() });
+  bindConfirmClick(`${DEPART_P}-restart`, { label: 'רשימה חדשה', confirmLabel: 'לחץ שוב לרשימה חדשה', onConfirm: departNewRun, onArm: departArmNote('הטבלה והתוצאות יימחקו'), onDisarm: () => departGrid.refresh() });
+  bindConfirmClick(`${DEPART_P}-clear`, { label: 'נקה טבלה', confirmLabel: 'לחץ שוב לניקוי הטבלה', onConfirm: departClearTable, onArm: departArmNote('הטבלה תנוקה'), onDisarm: () => departGrid.refresh() });
+  $el(`${DEPART_P}-xlsx`).addEventListener('click', () => $el(`${DEPART_P}-xlsx-file`).click());
+  $el(`${DEPART_P}-xlsx-file`).addEventListener('change', departHandleXlsx);
   $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
   $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
   $el(`${DEPART_P}-report`).addEventListener('click', departOnReportClick);
@@ -6804,12 +6852,35 @@ function reportStep() {
   return 0;
 }
 
+// סבב 5 (ד3): שלבים שמחליפים מסך, כמו בקליטה: הכנה (האזור עם "התחל") → ריצה (שורת-ריצה עם "עצור") → תוצאות
+// (רק אזור התוצאות + "דיווח חדש"). reportStage נגזר מהמצב, לא נשמר.
+function reportApplyStage() {
+  const running = reportIsRunning();
+  const stage = running ? 'run' : (reportRows.length ? 'results' : 'prep');
+  show(`${RP}-zone-in`, stage === 'prep');
+  show(`${RP}-zone-run`, stage === 'run');
+  show(`${RP}-zone-out`, stage !== 'prep');
+  show(`${RP}-new-run`, stage === 'results');
+  if (reportUi) reportUi.step(reportStep());
+}
+
 function reportRenderRows() {
-  const zone = $el(`${RP}-zone-out`);
-  if (zone) zone.classList.toggle('tt-zone-dim', !reportRows.length);
   setHtml(`${RP}-results`, resultsTableHtml({ columns: REPORT_COLUMNS, rows: reportRows, classify: reportClassify }));
   show(`${RP}-results`, reportRows.length > 0);
   setDisabled(`${RP}-tsv`, reportRows.length === 0);
+  reportApplyStage();
+}
+
+// "דיווח חדש" (לחיצה שנייה): מנקה את התוצאות וחוזר להכנה
+function reportNewRun() {
+  if (reportIsRunning()) return;
+  reportRows = [];
+  reportDone = false;
+  reportClearState();
+  reportRenderSummary(null);
+  reportRenderRows();
+  reportSetStatus('דיווח חדש. "התחל דיווח לכל הסניפים" שולח לכל הסניפים שברשימה');
+  log('[דיווח] דיווח חדש: התוצאות נוקו');
 }
 
 function reportRenderSummary(summary) {
@@ -6834,8 +6905,8 @@ function reportSetStatus(msg) {
 
 function reportSetRunning(on) {
   setDisabled(`${RP}-start`, !!on);
-  show(`${RP}-stop`, !!on);
   if (reportUi) { reportUi.running(!!on); reportUi.step(reportStep()); }
+  reportApplyStage();
   if (on) {
     if (!reportStuckTimer) reportStuckTimer = setInterval(reportRenderStatus, 1000);
   } else if (reportStuckTimer) {
@@ -6880,16 +6951,16 @@ function reportUiMount(container, panelUi, page) {
   const fits = !!(page && page.kind === 'institute');
   // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד
   container.innerHTML = fits ? `
-    ${zoneHtml({ id: `${RP}-zone-in`, title: 'לאילו סניפים מדווחים', inner: `
-      <p class="tt-zone-lead">שולח דיווח חודשי לכל הסניפים שברשימת הסניפים, אחד אחרי השני. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
-      <div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
+    ${zoneHtml({ id: `${RP}-zone-in`, title: 'דיווח לכל הסניפים', inner: `
+      <p class="tt-zone-lead">הדיווח החודשי נשלח לכל הסניפים שברשימה, אחד אחרי השני; אין בחירה חלקית. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
+      <div id="${RP}-branches" class="tt-hint">${branches.length ? `ברשימה ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
-        ${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
       </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' });
   if (!fits) $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
   if (fits) container.innerHTML += `
-    ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', dim: true, inner: `
+    <div class="tt-runline" id="${RP}-zone-run" hidden><span class="tt-runtext" id="${RP}-runtext">דיווח בריצה</span>${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
+    ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${RP}-new-run`, label: 'דיווח חדש', kind: 'newlist', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' }), inner: `
       <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${RP}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true })}</div>
       <div id="${RP}-results" class="tt-scroll" hidden></div>` })}`;
@@ -6904,6 +6975,7 @@ function reportUiMount(container, panelUi, page) {
     });
     $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
     $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+    bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
   }
 
   reportSetHooks({
@@ -6917,7 +6989,7 @@ function reportUiMount(container, panelUi, page) {
       reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${reportTotal}`);
       reportUi.open();
     },
-    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
+    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); setText(`${RP}-runtext`, `דיווח בריצה · סניף ${branch} (${idx + 1} מתוך ${total})`); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
     onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {

@@ -70,9 +70,9 @@ export function tagHtml({ label, kind = 'info', id = '', button = false, filter 
 }
 
 // אזור ("הכנה" / "תוצאות"): כותרת, הערה קטנה, ותוכן. dim=true כשהאזור עוד לא רלוונטי.
-export function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false }) {
+export function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden = false, actions = '' }) {
   return `<section class="tt-zone${dim ? ' tt-zone-dim' : ''}" id="${esc(id)}"${hidden ? ' hidden' : ''}>
-    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span></div>${inner}</section>`;
+    <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span>${actions ? `<span class="tt-zone-actions">${actions}</span>` : ''}</div>${inner}</section>`;
 }
 
 // שדה-תאריך (סבב 3): טקסט יום/חודש/שנה + כפתור לוח-שנה שפותח את הלוח של הדפדפן (שדה-תאריך מוסתר). attrs: תכונות
@@ -216,18 +216,20 @@ export function setDisabled(id, disabled) {
   if (el) el.disabled = !!disabled;
 }
 
-// כפתור שמוחק (הכרעת 2.11.2026): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"כן, X" והכפתור מאדים), לחיצה שנייה
-// בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
-export function bindConfirmClick(target, { label, confirmLabel, onConfirm, ms = 6000 }) {
+// כפתור שמוחק (הכרעת 2.11.2026, נוסח סבב 5): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"לחץ שוב ל…" והכפתור מאדים),
+// לחיצה שנייה בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. onArm/onDisarm: למשל לשורת-המצב.
+// target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
+export function bindConfirmClick(target, { label, confirmLabel, onConfirm, onArm = null, onDisarm = null, ms = 6000 }) {
   const el = typeof target === 'string' ? $el(target) : target;
   if (!el) return () => {};
   let timer = null;
-  const disarm = () => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); };
+  const disarm = (silent) => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); if (!silent && onDisarm) onDisarm(); };
   el.addEventListener('click', () => {
-    if (timer !== null) { disarm(); onConfirm(); return; }
+    if (timer !== null) { disarm(true); onConfirm(); return; }
     el.textContent = confirmLabel;
     el.classList.add('tt-btn-armed');
     timer = setTimeout(disarm, ms);
+    if (onArm) onArm();
   });
   return disarm;
 }

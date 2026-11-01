@@ -7,10 +7,10 @@ import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { readBranchesFromTree, institutesPageUrl } from '../core/navigate.js';
-import { esc, buttonHtml, resultsTableHtml, reportBoxHtml, zoneHtml, fitBoxHtml, flash, setHtml, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, resultsTableHtml, reportBoxHtml, zoneHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import {
   REPORT_STATUS, reportSetHooks, reportStart, reportResumeIfPending, reportRequestStop, reportHasPendingRun,
-  reportIsRunning, reportGetResults, reportBuildTsv, reportIsStuck, reportLastStepAt,
+  reportIsRunning, reportGetResults, reportBuildTsv, reportIsStuck, reportLastStepAt, reportClearState,
 } from './report.js';
 
 const RP = 'tt-report';
@@ -40,12 +40,35 @@ function reportStep() {
   return 0;
 }
 
+// סבב 5 (ד3): שלבים שמחליפים מסך, כמו בקליטה: הכנה (האזור עם "התחל") → ריצה (שורת-ריצה עם "עצור") → תוצאות
+// (רק אזור התוצאות + "דיווח חדש"). reportStage נגזר מהמצב, לא נשמר.
+function reportApplyStage() {
+  const running = reportIsRunning();
+  const stage = running ? 'run' : (reportRows.length ? 'results' : 'prep');
+  show(`${RP}-zone-in`, stage === 'prep');
+  show(`${RP}-zone-run`, stage === 'run');
+  show(`${RP}-zone-out`, stage !== 'prep');
+  show(`${RP}-new-run`, stage === 'results');
+  if (reportUi) reportUi.step(reportStep());
+}
+
 function reportRenderRows() {
-  const zone = $el(`${RP}-zone-out`);
-  if (zone) zone.classList.toggle('tt-zone-dim', !reportRows.length);
   setHtml(`${RP}-results`, resultsTableHtml({ columns: REPORT_COLUMNS, rows: reportRows, classify: reportClassify }));
   show(`${RP}-results`, reportRows.length > 0);
   setDisabled(`${RP}-tsv`, reportRows.length === 0);
+  reportApplyStage();
+}
+
+// "דיווח חדש" (לחיצה שנייה): מנקה את התוצאות וחוזר להכנה
+function reportNewRun() {
+  if (reportIsRunning()) return;
+  reportRows = [];
+  reportDone = false;
+  reportClearState();
+  reportRenderSummary(null);
+  reportRenderRows();
+  reportSetStatus('דיווח חדש. "התחל דיווח לכל הסניפים" שולח לכל הסניפים שברשימה');
+  log('[דיווח] דיווח חדש: התוצאות נוקו');
 }
 
 function reportRenderSummary(summary) {
@@ -70,8 +93,8 @@ function reportSetStatus(msg) {
 
 function reportSetRunning(on) {
   setDisabled(`${RP}-start`, !!on);
-  show(`${RP}-stop`, !!on);
   if (reportUi) { reportUi.running(!!on); reportUi.step(reportStep()); }
+  reportApplyStage();
   if (on) {
     if (!reportStuckTimer) reportStuckTimer = setInterval(reportRenderStatus, 1000);
   } else if (reportStuckTimer) {
@@ -116,16 +139,16 @@ function reportUiMount(container, panelUi, page) {
   const fits = !!(page && page.kind === 'institute');
   // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד
   container.innerHTML = fits ? `
-    ${zoneHtml({ id: `${RP}-zone-in`, title: 'לאילו סניפים מדווחים', inner: `
-      <p class="tt-zone-lead">שולח דיווח חודשי לכל הסניפים שברשימת הסניפים, אחד אחרי השני. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
-      <div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
+    ${zoneHtml({ id: `${RP}-zone-in`, title: 'דיווח לכל הסניפים', inner: `
+      <p class="tt-zone-lead">הדיווח החודשי נשלח לכל הסניפים שברשימה, אחד אחרי השני; אין בחירה חלקית. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
+      <div id="${RP}-branches" class="tt-hint">${branches.length ? `ברשימה ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
-        ${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
       </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' });
   if (!fits) $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
   if (fits) container.innerHTML += `
-    ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', dim: true, inner: `
+    <div class="tt-runline" id="${RP}-zone-run" hidden><span class="tt-runtext" id="${RP}-runtext">דיווח בריצה</span>${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
+    ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${RP}-new-run`, label: 'דיווח חדש', kind: 'newlist', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' }), inner: `
       <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${RP}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true })}</div>
       <div id="${RP}-results" class="tt-scroll" hidden></div>` })}`;
@@ -140,6 +163,7 @@ function reportUiMount(container, panelUi, page) {
     });
     $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
     $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+    bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
   }
 
   reportSetHooks({
@@ -153,7 +177,7 @@ function reportUiMount(container, panelUi, page) {
       reportSetStatus(`ממשיך אחרי טעינת דף: סניף ${reportRows.length + 1} מתוך ${reportTotal}`);
       reportUi.open();
     },
-    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
+    onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); setText(`${RP}-runtext`, `דיווח בריצה · סניף ${branch} (${idx + 1} מתוך ${total})`); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
     onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {

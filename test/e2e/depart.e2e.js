@@ -82,7 +82,7 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       assert.ok(!consoleLines.some((l) => l.startsWith('PAGEERROR')), consoleLines.filter((l) => l.startsWith('PAGEERROR')).join('\n'));
       // "עזיבה חדשה" (הכרעת 2.11: מחיקת תוצאות דורשת לחיצה שנייה)
       await page.click('#tt-depart-new-run');
-      assert.equal(await page.textContent('#tt-depart-new-run'), 'כן, עזיבה חדשה', 'לחיצה ראשונה רק דורכת');
+      assert.equal(await page.textContent('#tt-depart-new-run'), 'לחץ שוב לרשימה חדשה', 'לחיצה ראשונה רק דורכת (נוסח סבב 5)');
       assert.ok(await page.$('#tt-depart-results table'), 'התוצאות עדיין מוצגות אחרי לחיצה אחת');
       await page.click('#tt-depart-new-run');
       assert.equal(await page.$eval('#tt-depart-zone-in', (el) => el.hidden), false, '"עזיבה חדשה" חוזרת להכנה');
@@ -113,7 +113,7 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       // "התחלה מחדש" (הכרעת 2.11): לחיצה ראשונה דורכת, שנייה מנקה טבלה ותוצאות וחוזרת להכנה
       assert.equal(await page.$eval('#tt-depart-restart', (b) => b.hidden), false);
       await page.click('#tt-depart-restart');
-      assert.equal(await page.textContent('#tt-depart-restart'), 'כן, התחל מחדש');
+      assert.equal(await page.textContent('#tt-depart-restart'), 'לחץ שוב לרשימה חדשה');
       assert.deepEqual(await ids(), ['099999999'], 'לחיצה אחת לא מוחקת');
       await page.click('#tt-depart-restart');
       assert.equal(await page.$eval('#tt-depart-zone-in-title', (el) => el.textContent.trim()), 'על מי מדווחים עזיבה');

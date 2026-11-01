@@ -275,3 +275,11 @@ test('bindConfirmClick: לחיצה ראשונה דורכת ("כן, נקה" + tt-
   assert.equal(n, 1, 'אחרי שפג: הלחיצה רק דורכת שוב');
   assert.equal(typeof bindConfirmClick(null, { label: 'x', confirmLabel: 'y', onConfirm: () => {} }), 'function', 'בלי אלמנט: לא זורק');
 });
+
+// ─── סבב 5: כפתור-פעולה בכותרת-האזור ("רשימה חדשה" / "דיווח חדש") ─────────
+test('zoneHtml: actions נכנס לכותרת-האזור בתוך tt-zone-actions; בלעדיו אין את המעטפת', () => {
+  const html = zoneHtml({ id: 'z', title: 'תוצאות', actions: '<button id="z-new">רשימה חדשה</button>', inner: '<p>x</p>' });
+  assert.ok(html.includes('<span class="tt-zone-actions"><button id="z-new">רשימה חדשה</button></span>'));
+  assert.ok(html.indexOf('tt-zone-actions') < html.indexOf('<p>x</p>'), 'הכפתור בכותרת, לפני התוכן');
+  assert.ok(!zoneHtml({ id: 'z', title: 'תוצאות' }).includes('tt-zone-actions'));
+});
