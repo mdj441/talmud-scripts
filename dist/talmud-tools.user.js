@@ -1228,6 +1228,12 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-review-table .tt-select.tt-decision{padding:3px 4px;font-size:12px;width:auto;min-width:118px}
 .tt-review-table tr.tt-r-done{background:var(--tt-warn-bg)}
 .tt-review-table td.tt-roster-cell{font-size:11px;color:var(--tt-ink-2);white-space:normal;min-width:70px}
+/* סבב 5 (ה3): לחיצה על גוף ההודעה פותחת את הטקסט המלא בשורה מתחת */
+.tt-review-table td.tt-body-cell{cursor:pointer}
+.tt-review-table td.tt-body-cell.tt-body-open{color:var(--tt-ink)}
+.tt-review-table tr.tt-body-full td{white-space:normal;line-height:1.45;font-size:12px;color:var(--tt-ink);background:var(--tt-accent-soft);padding:6px 24px 8px 12px;border-bottom:2px solid var(--tt-line)}
+.tt-zone-head .tt-row{margin:0}
+.tt-row[hidden]{display:none}
 
 .tt-foot{padding:8px 16px;border-top:1px solid var(--tt-line);font-size:11px;color:var(--tt-muted);display:flex;gap:12px;align-items:center}
 .tt-foot a{color:var(--tt-accent);text-decoration:none}
