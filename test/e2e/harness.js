@@ -114,6 +114,13 @@ export async function waitForPanel(page, sel = ABSORB_SEL, timeoutMs = 10000) {
   await page.waitForSelector(sel.panel, { timeout: timeoutMs });
 }
 
+// סבב 3: "הדבק מאקסל" קורא מהלוח; תיבת-ההדבקה מוסתרת ונפתחת רק כשהלוח חסום. הבדיקות פותחות אותה וממלאות.
+export async function fillPasteBox(page, inputSel, text) {
+  const boxSel = inputSel.replace(/-input$/, '-pastebox');
+  await page.evaluate((s) => { const b = document.querySelector(s); if (b) b.hidden = false; }, boxSel);
+  await page.fill(inputSel, text);
+}
+
 // ממתין לסיום ריצה (דוח "מה נשאר" מוצג), חוצה ניווטים מלאים.
 export async function waitForRunDone(page, sel = ABSORB_SEL, timeoutMs = 90000) {
   const t0 = Date.now();
@@ -157,7 +164,7 @@ export async function runAbsorb(page, text, { startUrl, startDate = '', sel = AB
   if (startUrl) await page.goto(startUrl);
   await waitForPanel(page, sel);
   if (continueOther === false) await page.uncheck('#tt-absorb-continue-other');
-  await page.fill(sel.input, text);
+  await fillPasteBox(page, sel.input, text);
   if (startDate) await page.fill(sel.startDate, startDate);
   await page.click(sel.start);
   const done = await waitForRunDone(page, sel, timeoutMs);

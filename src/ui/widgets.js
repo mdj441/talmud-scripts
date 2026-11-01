@@ -75,6 +75,54 @@ export function zoneHtml({ id, title, note = '', inner = '', dim = false, hidden
     <div class="tt-zone-head"><b>${esc(title)}</b><span class="tt-zone-note" id="${esc(id)}-note">${esc(note)}</span></div>${inner}</section>`;
 }
 
+// שדה-תאריך (סבב 3): טקסט יום/חודש/שנה + כפתור לוח-שנה שפותח את הלוח של הדפדפן (שדה-תאריך מוסתר). attrs: תכונות
+// נוספות לשדה-הטקסט (למשל data-i/data-k בטבלה); cal: מזהה הכפתור (data-cal). bindDateFields מחבר את הלוח לשדה.
+export function dateFieldHtml({ id = '', attrs = '', value = '', placeholder = 'יום/חודש/שנה', width = '', cal = '', maxWidth = '' } = {}) {
+  const style = width ? ` style="width:${width}"` : (maxWidth ? ` style="max-width:${maxWidth}"` : '');
+  return `<span class="tt-date">
+    <input type="text" class="tt-input tt-mono"${id ? ` id="${esc(id)}"` : ''} ${attrs} value="${esc(value)}" maxlength="10" placeholder="${esc(placeholder)}"${style} autocomplete="off">
+    <input type="date" class="tt-date-native" tabindex="-1" aria-hidden="true">
+    <button type="button" class="tt-date-btn" data-cal="${esc(cal || id)}" title="בחירה מלוח-שנה" aria-label="בחירה מלוח-שנה">📅</button>
+  </span>`;
+}
+
+// טהורה: yyyy-mm-dd (שדה-התאריך של הדפדפן) → dd/mm/yyyy; dd/mm/yyyy → yyyy-mm-dd (לאתחול הלוח)
+export function isoToDmy(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
+}
+export function dmyToIso(dmy) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(dmy || '').trim());
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+
+// מחבר את כפתורי לוח-השנה בתוך root (האצלה: עובד גם לשדות שנוספים אחר-כך)
+export function bindDateFields(root) {
+  if (!root || root.__ttDates) return;
+  root.__ttDates = true;
+  root.addEventListener('click', (e) => {
+    const btn = e.target && e.target.closest ? e.target.closest('.tt-date-btn') : null;
+    if (!btn) return;
+    const wrap = btn.closest('.tt-date');
+    const text = wrap && wrap.querySelector('input[type="text"]');
+    const native = wrap && wrap.querySelector('.tt-date-native');
+    if (!native) return;
+    native.value = dmyToIso(text ? text.value : '') || '';
+    try { if (typeof native.showPicker === 'function') native.showPicker(); else native.click(); } catch (err) { try { native.click(); } catch (e2) { /* noop */ } }
+  });
+  root.addEventListener('change', (e) => {
+    const native = e.target;
+    if (!native || !native.classList || !native.classList.contains('tt-date-native')) return;
+    const wrap = native.closest('.tt-date');
+    const text = wrap && wrap.querySelector('input[type="text"]');
+    const dmy = isoToDmy(native.value);
+    if (!text || !dmy) return;
+    text.value = dmy;
+    text.dispatchEvent(new Event('input', { bubbles: true }));
+    text.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}
+
 // הכרעה ח2: תיבה קצרה כשהדף לא מתאים ללשונית, עם כפתור מעבר (אופציונלי).
 export function fitBoxHtml({ id, text, buttonId = '', buttonLabel = '' }) {
   return `<div class="tt-box tt-box-info tt-fit" id="${esc(id)}">${esc(text)}${buttonId ? ` <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: buttonId, label: buttonLabel, kind: 'primary', size: 'small' })}</div>` : ''}</div>`;
@@ -83,9 +131,9 @@ export function fitBoxHtml({ id, text, buttonId = '', buttonLabel = '' }) {
 // טבלת תוצאות. columns: [{key, label, mono?, center?, width?}]. classify(row) → 'ok' | 'warn' | 'bad' | ''
 // ‏actionKey (שכבת-הבהירות): לשורה שאינה 'ok' עם ערך בשדה הזה נוספת שורת "מה לעשות" מתחתיה (tr.tt-act).
 // שורות-התוצאה עצמן מסומנות data-row, כדי שקוראים (בדיקות) יספרו רק אותן.
-export function resultsTableHtml({ columns, rows, classify, emptyText = '', actionKey = '' }) {
+export function resultsTableHtml({ columns, rows, classify, emptyText = '', actionKey = '', sortable = false }) {
   if (!rows || !rows.length) return emptyText ? `<div class="tt-empty">${esc(emptyText)}</div>` : '';
-  const head = columns.map((c) => `<th${c.width ? ` style="width:${c.width}"` : ''}>${esc(c.label)}</th>`).join('');
+  const head = columns.map((c) => `<th${c.width ? ` style="width:${c.width}"` : ''}${sortable ? ` class="tt-th-sort" data-sort="${esc(c.key)}" title="מיון"` : ''}>${esc(c.label)}</th>`).join('');
   const body = rows.map((r, i) => {
     const cls = classify ? classify(r) : '';
     const cells = columns.map((c) => {

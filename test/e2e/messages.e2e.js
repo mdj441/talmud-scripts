@@ -253,6 +253,10 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       const fit = await page.textContent('#tt-messages-fit');
       assert.match(fit, /דף ההודעות/);
       assert.equal(await page.$(SEL.scan), null, 'בדף אחר אין "סרוק"');
+      await page.click('#tt-tab-report');
+      assert.ok(await page.$('#tt-report-goto'), 'דיווח בדף בלי רשימת סניפים: "עבור לדף המוסדות"');
+      assert.equal(await page.$('#tt-report-zone-in'), null, 'בלי אזור "לאילו סניפים מדווחים"');
+      await page.click(SEL.tab);
       await page.click('#tt-messages-goto');
       await page.waitForURL(/Association\/Default\.aspx/, { timeout: 5000 });
       await page.waitForSelector(SEL.scan, { timeout: 5000 });

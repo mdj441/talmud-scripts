@@ -217,7 +217,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}) — לא שומרים`);
     const digitsOnly = /^\d+$/.test(String(identity || ''));
     const res = mk(ABSORB_STATUS.NEW_STUDENT_MISSING, `חסר: ${missing.join(', ')}`,
-      `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם יש לו דרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
+      `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם מדובר בדרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
     if (!recordResult(res, gen, myIdx)) return CONTINUE;
     return leaveNewStudentPage(task, res, gen);
   }

@@ -129,7 +129,7 @@ test('absorbValidateRows: דרכון חסר לידה/ארץ = אדום; ספרת
   assert.match(v.issues[0].msg, /דרכון: חסרים תאריך לידה, ארץ/);
   assert.match(v.issues[1].msg, /ספרת ביקורת/);
   assert.match(v.issues[2].msg, /כפול של שורה 2/);
-  assert.match(v.issues[3].msg, /סניף לא נמצא בעץ/);
+  assert.match(v.issues[3].msg, /סניף לא נמצא ברשימת הסניפים/);
   assert.match(v.issues[4].msg, /סוג לימוד לא נמצא בסניף/);
   assert.match(v.issues[6].msg, /מספר סניף לא תקין/);
   assert.deepEqual(v.counts, { all: 7, ready: 1, warn: 2, bad: 4 });
@@ -199,4 +199,49 @@ test('המגירה: צד ברירת-המחדל שמאל, נזכר, הכפתור 
   assert.ok(!/—/.test(PANEL_WARNING), 'בלי מקף ארוך');
   assert.ok(LOGO_DATA_URI.startsWith('data:image/png;base64,') && LOGO_DATA_URI.length > 3000);
   assert.ok(PANEL_CSS.includes('#tt-panel.tt-side-right') && PANEL_CSS.includes('.tt-steps'));
+});
+
+// ─── סבב 3: רכיב-הטבלה המשותף, טבלת העזיבה, לוח-שנה ───────────────────────────
+import { gridRowMatchesFilter, gridCompare, gridSortRows } from '../src/ui/grid.js';
+import { departValidateRows, departTextToRows, departFriendlyError, DEPART_STEPS } from '../src/tools/depart-ui.js';
+import { isoToDmy, dmyToIso, dateFieldHtml } from '../src/ui/widgets.js';
+
+test('grid: סינון לפי תגית ומיון (מספרים כמספרים, ריק בסוף, יציב)', () => {
+  assert.equal(gridRowMatchesFilter('all', 'bad', false), true);
+  assert.equal(gridRowMatchesFilter('bad', 'bad', false), true);
+  assert.equal(gridRowMatchesFilter('bad', '', false), false);
+  assert.equal(gridRowMatchesFilter('ready', '', false), true);
+  assert.equal(gridRowMatchesFilter('ready', '', true), false, 'שורה ריקה לא מוצגת בסינון');
+  assert.ok(gridCompare('9', '10') < 0, 'מספרית');
+  assert.ok(gridCompare('', 'a') > 0, 'ריק בסוף');
+  const rows = [{ fields: { b: '16' } }, { fields: { b: '00' } }, { fields: { b: '05' } }];
+  assert.deepEqual(gridSortRows(rows, (r) => r.fields.b, 'asc').map((r) => r.fields.b), ['00', '05', '16']);
+  assert.deepEqual(gridSortRows(rows, (r) => r.fields.b, 'desc').map((r) => r.fields.b), ['16', '05', '00']);
+});
+
+test('עזיבה: טקסט → שורות (כותרת מדולגת), אימות (סניף ברשימה, ספרת-ביקורת, כפילות), נוסחים', () => {
+  assert.deepEqual(DEPART_STEPS, ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת']);
+  const rows = departTextToRows('סניף\tת.ז.\n00\t012345678\n16\tAB1234567\n\n# הערה\n05 123456782');
+  assert.deepEqual(rows.map((r) => [r.fields.branch, r.fields.identifier]), [['00', '012345678'], ['16', 'AB1234567'], ['05', '123456782']]);
+  const v = departValidateRows([
+    { fields: { branch: '00', identifier: '123456782' } },
+    { fields: { branch: '00', identifier: '123456782' } }, // כפול
+    { fields: { branch: '00', identifier: '123456789' } }, // ספרת-ביקורת
+    { fields: { branch: '27', identifier: '123456782' } }, // לא ברשימה
+    { fields: { branch: 'ab', identifier: '123456782' } }, // לא תקין
+    { fields: { branch: '', identifier: '' } },
+  ], { branches: ['00', '16'] });
+  assert.deepEqual(v.issues.map((i) => i.level), ['', 'warn', 'warn', 'bad', 'bad']);
+  assert.match(v.issues[1].msg, /כפול של שורה 1/);
+  assert.match(v.issues[3].msg, /ברשימת הסניפים/);
+  assert.deepEqual(v.tasks.map((t) => t.line - 2), [0, 1, 2]);
+  assert.equal(departFriendlyError('חסרים שדות חובה: סניף / ת.ז.', { branch: '00', identifier: '' }), 'חסר: מספר');
+});
+
+test('לוח-שנה: המרות תאריך והרכב השדה', () => {
+  assert.equal(isoToDmy('2026-11-01'), '01/11/2026');
+  assert.equal(dmyToIso('01/11/2026'), '2026-11-01');
+  assert.equal(isoToDmy('bad'), '');
+  const html = dateFieldHtml({ id: 'd1', placeholder: 'יום/חודש/שנה' });
+  assert.ok(html.includes('id="d1"') && html.includes('type="date"') && html.includes('data-cal="d1"'));
 });

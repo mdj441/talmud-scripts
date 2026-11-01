@@ -361,7 +361,7 @@ function messagesMount(container, panelUi, page) {
       </details>
     </div>
     ${buttonsRowHtml([
-      { id: `${MP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר' },
+      { id: `${MP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' },
       { id: `${MP}-copy-report`, label: 'העתק דוח', kind: 'ghost', size: 'small' },
     ])}
     <div id="${MP}-results" class="tt-scroll"></div>

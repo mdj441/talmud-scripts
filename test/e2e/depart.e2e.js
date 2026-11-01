@@ -2,7 +2,7 @@
 // כל התעודות בדויות. הרצה: npm run build && node --test "test/e2e/depart.e2e.js"  (HEADED=1 להצגה)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, openSession, readMockDb, readUserscript, evalRetry, waitForPanel, sleep, URLS } from './harness.js';
+import { launch, openSession, readMockDb, readUserscript, evalRetry, waitForPanel, sleep, URLS, fillPasteBox } from './harness.js';
 
 const T = '\t';
 const SEL = {
@@ -50,7 +50,7 @@ async function runDepart(page, text, { startUrl, date = '', reason = '', timeout
   if (startUrl) await page.goto(startUrl);
   await waitForPanel(page, SEL);
   await page.click(SEL.tab);
-  await page.fill(SEL.input, text);
+  await fillPasteBox(page, SEL.input, text);
   if (date) await page.fill(SEL.date, date);
   if (reason) await page.selectOption(SEL.reason, reason);
   await page.click(SEL.start);
@@ -89,8 +89,9 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       const run = await runDepart(page, `00${T}099999999`, { startUrl: URLS.institute(491) });
       assert.equal(run.results.length, 1, run.log);
       assert.equal(run.results[0].status, 'לא נמצא', run.log);
-      assert.match(run.report, /099999999/);
-      assert.match(run.report, /לא נמצא/);
+      assert.match(run.report, /לבדוק 1/, 'תגית "לבדוק" בסיכום');
+      assert.equal(run.results[0].identity, '099999999');
+      assert.match(await page.textContent('#tt-depart-results tr.tt-act'), /בדוק שהת.ז. והסניף נכונים/, '"מה לעשות" מתחת לשורה');
       const db = await readMockDb(page);
       assert.ok(db.enrolled['10002'].every((s) => !s.left), 'תלמיד אחר סומן כעוזב');
     } finally { await context.close(); }
@@ -145,7 +146,8 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
         return m ? getComputedStyle(m).display !== 'none' : null;
       });
       assert.equal(modalShown, false, 'מודאל העזיבה נשאר פתוח');
-      assert.match(run.report, /נחסם/);
+      assert.match(run.report, /דורשים טיפול 1/);
+      assert.match(run.results[0].status, /^נחסם/);
       assert.ok(!run.log.includes('012345678'), 'ת.ז. מלאה ביומן');
     } finally { await context.close(); }
   });

@@ -118,6 +118,11 @@ export function saveAbsorbLastResults(results, report) {
   } catch (e) { /* אצווה לא נתקעת */ }
 }
 
+// "קליטה חדשה" (סבב 3): מוחקת את תמונת-התוצאות כדי שטעינת-דף לא תחזיר אותה
+export function clearAbsorbLastResults() {
+  try { sessionStorage.removeItem(LAST_RESULTS_KEY); } catch (e) { /* noop */ }
+}
+
 export function loadAbsorbLastResults() {
   try {
     const parsed = JSON.parse(sessionStorage.getItem(LAST_RESULTS_KEY) || 'null');

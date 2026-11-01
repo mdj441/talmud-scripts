@@ -114,31 +114,33 @@ function reportUiMount(container, panelUi, page) {
   reportUi = panelUi;
   const branches = page && page.kind === 'institute' ? readBranchesFromTree() : [];
   const fits = !!(page && page.kind === 'institute');
-  container.innerHTML = `
+  // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד
+  container.innerHTML = fits ? `
     ${zoneHtml({ id: `${RP}-zone-in`, title: 'לאילו סניפים מדווחים', inner: `
-      <p class="tt-zone-lead">שולח דיווח חודשי לכל הסניפים שבעץ, אחד אחרי השני. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
-      ${fits ? `<div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים בעץ של הדף הזה'}</div>`
-    : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח רץ מדף מוסד (שם יש את עץ-הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' })}
+      <p class="tt-zone-lead">שולח דיווח חודשי לכל הסניפים שברשימת הסניפים, אחד אחרי השני. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
+      <div id="${RP}-branches" class="tt-hint">${branches.length ? `נמצאו ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
-        ${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
-      </div>` })}
+        ${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
+      </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' });
+  if (!fits) $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
+  if (fits) container.innerHTML += `
     ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', dim: true, inner: `
       <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${RP}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true })}</div>
       <div id="${RP}-results" class="tt-scroll" hidden></div>` })}`;
 
-  $el(`${RP}-start`).addEventListener('click', () => {
-    Promise.resolve().then(reportUiStart).catch((e) => {
-      log('[דיווח] ההרצה נכשלה: ' + (e && e.message));
-      reportSetRunning(false);
-      reportSetStatus('ההרצה נכשלה. בדוק את היומן ונסה שוב');
+  if (fits) {
+    $el(`${RP}-start`).addEventListener('click', () => {
+      Promise.resolve().then(reportUiStart).catch((e) => {
+        log('[דיווח] ההרצה נכשלה: ' + (e && e.message));
+        reportSetRunning(false);
+        reportSetStatus('ההרצה נכשלה. בדוק את היומן ונסה שוב');
+      });
     });
-  });
-  $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
-  $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
-  const goto = $el(`${RP}-goto`);
-  if (goto) goto.addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
+    $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
+    $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+  }
 
   reportSetHooks({
     onStart: (list, idx) => { reportTotal = list.length; reportSetRunning(true); reportUi.progress(idx, reportTotal); },

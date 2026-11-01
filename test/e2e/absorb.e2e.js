@@ -3,7 +3,7 @@
 // כל התעודות בדויות. הרצה: npm run test:e2e   (HEADED=1 להצגת הדפדפן)
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, waitForRunDone, readResults, readReport, readLog, sleep, evalRetry } from './harness.js';
+import { launch, openSession, runAbsorb, readMockDb, readUserscript, URLS, SITE, ABSORB_SEL, waitForPanel, waitForRunDone, readResults, readReport, readLog, sleep, evalRetry, fillPasteBox } from './harness.js';
 
 const NO_SESSION = { instituteId: null, studyTypeId: null };
 import { ABSORB_STATUS } from '../../src/tools/absorb-report.js';
@@ -95,7 +95,7 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       await page.goto(URLS.institute(491));
       await waitForPanel(page);
       await page.check('#tt-absorb-continue-other');
-      await page.fill(ABSORB_SEL.input, `00${T}600${T}056789012`);
+      await fillPasteBox(page, ABSORB_SEL.input, `00${T}600${T}056789012`);
       await page.click(ABSORB_SEL.start);
       await waitForRunDone(page);
       const results = await readResults(page);
@@ -148,7 +148,7 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       const db = await readMockDb(page);
       assert.ok(!db.enrolled['10002'].some((s) => s.id === '078901234'), 'תלמיד חדש נשמר בלי פרטים!');
       assert.equal(db.pendingNewStudent, null, 'דף תלמיד-חדש נשאר "פתוח" בשרת');
-      assert.match(run.results[0].action, /אם יש לו דרכון/, 'רמז לדרכון שסומן כת.ז. (מספר שכולו ספרות)');
+      assert.match(run.results[0].action, /אם מדובר בדרכון/, 'רמז לדרכון שסומן כת.ז. (מספר שכולו ספרות)');
       // זרימת-התיקון (31.10.2026, סבב 2): "תקן והרץ שוב" → נשארת שורת התלמיד החדש, שורת-הפרטים שלה נפתחת
       await page.click('#tt-absorb-keep-attention');
       const kept = await page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
@@ -156,6 +156,17 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       assert.equal(await page.$eval('#tt-absorb-grid tr.tt-sub[data-sub="0"]', (tr) => tr.hidden), false, 'שורת-הפרטים של תלמיד חדש נפתחה');
       assert.ok(await page.$('#tt-absorb-grid tr.tt-sub[data-sub="0"] input[data-k="firstName"]'), 'שדה שם פרטי מוצג');
       assert.match(await page.textContent('#tt-absorb-status'), /ממתין להשלמה/, 'שורת-המצב אומרת מה חסר');
+      assert.match(await page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="0"]'), /תלמיד חדש: חסרים פרטים/, '"מה קרה" מתחת לשורה בטבלת-התיקון');
+      assert.match(await page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="0"]'), /אם מדובר בדרכון/, '"מה לעשות" מתחת לשורה');
+      assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), true, 'בשלב התיקון טבלת-התוצאות לא מוצגת');
+      assert.equal(await page.$eval('#tt-absorb-zone-in-title', (el) => el.textContent.trim()), 'תיקון והרצה חוזרת');
+      assert.match(await page.textContent('#tt-absorb-start'), /התחל קליטה חוזרת: תלמיד אחד/);
+      // "חזרה לתוצאות" ו"קליטה חדשה"
+      await page.click('#tt-absorb-back');
+      assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), false);
+      await page.click('#tt-absorb-new-run');
+      assert.equal(await page.$eval('#tt-absorb-zone-in', (el) => el.hidden), false, 'קליטה חדשה חוזרת להכנה');
+      assert.equal(await page.$('#tt-absorb-results table'), null, 'התוצאות נוקו');
     } finally { await context.close(); }
   });
 
@@ -173,7 +184,7 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     try {
       await s2.page.goto(URLS.institute(4159));
       await waitForPanel(s2.page);
-      await s2.page.fill(ABSORB_SEL.input, `16${T}900${T}034567890`);
+      await fillPasteBox(s2.page, ABSORB_SEL.input, `16${T}900${T}034567890`);
       assert.match(await s2.page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="0"]'), /סוג לימוד לא נמצא בסניף הזה/);
       assert.match(await s2.page.textContent('#tt-absorb-status'), /שורה אחת לא תרוץ/);
     } finally { await s2.context.close(); }
@@ -184,8 +195,7 @@ describe('קליטת תלמידים — סביבת דמה', () => {
     try {
       const run = await runAbsorb(page, `16${T}600${T}078901234`, { startUrl: URLS.institute(491), timeoutMs: 120000 });
       assert.match(run.results[0].status, /^תלמיד חדש/, run.log);
-      await page.evaluate(() => { document.querySelector('#tt-absorb-paste').open = true; });
-      await page.fill(ABSORB_SEL.input, ''); // מדמה טבלה ריקה אחרי טעינת-דף (ובאתר האמיתי זה המצב ממילא)
+      // אחרי טעינות-דף הטבלה ממילא ריקה (שלב "תוצאות"): "תקן והרץ שוב" בונה אותה מהתוצאות
       await page.click('#tt-absorb-keep-attention');
       const kept = await page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
       assert.deepEqual(kept, ['078901234'], 'השורה נבנתה מהתוצאות');
@@ -357,13 +367,13 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
     try {
       await page.goto(URLS.institute(491));
       await waitForPanel(page);
-      await page.fill(ABSORB_SEL.input, [`00${T}600${T}034567890`, `00${T}600${T}045678901`, `00${T}600${T}012345678`].join('\n'));
+      await fillPasteBox(page, ABSORB_SEL.input, [`00${T}600${T}034567890`, `00${T}600${T}045678901`, `00${T}600${T}012345678`].join('\n'));
       await page.click(ABSORB_SEL.start);
       await sleep(800);
       const pageB = await context.newPage();
       await pageB.goto(URLS.institute(491));
       await waitForPanel(pageB);
-      await pageB.fill(ABSORB_SEL.input, `00${T}600${T}023456789`);
+      await fillPasteBox(pageB, ABSORB_SEL.input, `00${T}600${T}023456789`);
       await pageB.click(ABSORB_SEL.start);
       await sleep(700);
       const statusB = await pageB.textContent(ABSORB_SEL.status);
@@ -449,6 +459,10 @@ describe('קליטת תלמידים — טבלת ההזנה', () => {
       const status = await page.textContent('#tt-absorb-status');
       assert.match(status, /תלמיד אחד מוכן/);
       assert.match(await page.textContent('#tt-absorb-start'), /תלמיד אחד/, 'הכפתור אומר כמה ירוצו');
+      // תגית-סינון פעילה: הכפתור אומר "(המוצגים)" ורק המוצגים ירוצו (הכרעת סבב 3)
+      await page.click('#tt-absorb-tags [data-filter="warn"]');
+      assert.match(await page.textContent('#tt-absorb-start'), /\(המוצגים\)/);
+      await page.click('#tt-absorb-tags [data-filter="all"]');
       await page.click('#tt-absorb-start');
       const { waitForRunDone, readResults } = await import('./harness.js');
       await waitForRunDone(page);
@@ -488,6 +502,12 @@ describe('קליטת תלמידים — טבלת ההזנה', () => {
       assert.equal(await page.$eval(cell(1, 'country'), (e) => e.value), 'ארצות הברית');
       assert.equal(await page.$eval('#tt-absorb-grid tr.tt-rowmsg[data-msg="1"]', (tr) => tr.hidden), true);
       assert.match(await page.textContent('#tt-absorb-status'), /2 תלמידים מוכנים/);
+      // מיון בלחיצה על כותרת: לפי "מספר" יורד → 317528398 לפני AB1234567 (מספרים לפני אותיות בסדר עולה, ולכן יורד הפוך)
+      await page.click('#tt-absorb-grid th[data-sort="identifier"]');
+      const order1 = await page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
+      await page.click('#tt-absorb-grid th[data-sort="identifier"]');
+      const order2 = await page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
+      assert.deepEqual(order2, order1.slice().reverse(), 'לחיצה שנייה הופכת את הסדר');
     } finally { await context.close(); }
   });
 });

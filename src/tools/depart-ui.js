@@ -1,31 +1,38 @@
-// לשונית "עזיבת תלמידים" בחלונית המאוחדת. הזרימה עצמה ב-depart.js; כאן רק הממשק (שכבת-הבהירות 1.11.2026):
-// אזור "למי מדווחים עזיבה" (קלט: טורים סניף · ת.ז., תאריך וסיבת עזיבה, התחל/עצור), אזור "תוצאות" (סיכום, "מה לעשות"
-// מתחת לכל שורה, "תקן והרץ שוב"), סרגל-שלבים ושורת-מצב שמחושבים מכל שינוי.
+// לשונית "עזיבת תלמידים" בחלונית המאוחדת. הזרימה עצמה ב-depart.js; כאן רק הממשק (שכבת-הבהירות, סבב 3, 1.11.2026):
+// אותו מבנה כמו בקליטה: טבלת-הזנה משותפת (ui/grid.js; עמודות סניף ומספר), ארבעה שלבים שמחליפים את המסך
+// (הכנה → ריצה → תוצאות → תיקון והרצה חוזרת), תגיות שמסננות, "מה לעשות" מתחת לכל שורה, "תקן והרץ שוב", "עזיבה חדשה".
 // כל השמות ברמה-עליונה בקידומת depart (סקופ משותף בבאנדל). אין גישה ל-document ברמת המודול.
 
 import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { downloadCsv, copyTextToClipboard } from '../core/csv.js';
+import { isValidIsraeliId } from '../core/identity.js';
+import { readBranchesFromTree } from '../core/navigate.js';
 import {
   DEPART_REASONS, DEPART_DEFAULT_REASON, DEPART_STATUS, parseDepartInput, buildDepartTsv, buildDepartCsvRows,
   isDepartSuccess, departStatusKey, departIsValidDate,
   departSetHooks, departStartRun, departResumeIfPending, departStop, departHasSavedQueue, departIsRunning,
   departGetResults, departSavedQueueInfo, departDiscardSavedQueue,
 } from './depart.js';
-import { esc, buttonHtml, buttonsRowHtml, fieldHtml, selectHtml, resultsTableHtml, reportBoxHtml, zoneHtml, tagHtml, flash, setHtml, setText, show, setDisabled, bindDateMask, todayDMY } from '../ui/widgets.js';
+import { esc, buttonHtml, buttonsRowHtml, fieldHtml, selectHtml, resultsTableHtml, zoneHtml, tagHtml, dateFieldHtml, bindDateFields, flash, setHtml, setText, show, setDisabled, bindDateMask, todayDMY } from '../ui/widgets.js';
+import { createGrid, gridSortRows } from '../ui/grid.js';
 
 const DEPART_P = 'tt-depart';
 export const DEPART_STEPS = ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת'];
+const DEPART_STAGE_INDEX = { prep: 0, run: 1, results: 2, fix: 3 };
 let departUi = null;
+let departPage = null;
+let departGrid = null;
+let departStage = 'prep';
 let departAwaitingErrorConfirm = false;
 let departResults = [];
 let departTotal = 0;
-let departFixMode = false;
-let departRunDone = false;
+let departResFilter = 'all';
+let departResSort = null;
 
 const DEPART_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
-  { key: 'identity', label: 'ת.ז.', mono: true },
+  { key: 'identity', label: 'מספר', mono: true },
   { key: 'status', label: 'מה קרה' },
 ];
 
@@ -35,35 +42,184 @@ function departClassify(r) {
   if (key === DEPART_STATUS.STOPPED || key === DEPART_STATUS.SKIPPED || key === DEPART_STATUS.NOT_FOUND) return 'warn';
   return 'bad';
 }
-
+function departGroup(r) {
+  if (isDepartSuccess(r.status)) return 'ok';
+  const key = departStatusKey(r.status);
+  if (key === DEPART_STATUS.STOPPED || key === DEPART_STATUS.SKIPPED) return 'stopped';
+  return departClassify(r) === 'warn' ? 'verify' : 'bad';
+}
 function departPlural(n, one, many) { return n === 1 ? one : many.replace('N', String(n)); }
+function departNewRow() { return { fields: { branch: '', identifier: '' } }; }
+function departRowFrom(f) { return { fields: { branch: String(f.branch || ''), identifier: String(f.identifier || '') } }; }
+function departRowsToText(rows) { return ['סניף\tת.ז.'].concat(rows.map((r) => `${String(r.fields.branch || '').trim()}\t${String(r.fields.identifier || '').trim()}`)).join('\n'); }
 
-function departRenderResults() {
-  const zone = $el(`${DEPART_P}-zone-out`);
-  if (zone) zone.classList.toggle('tt-zone-dim', !departResults.length);
-  setHtml(`${DEPART_P}-results`, resultsTableHtml({ columns: DEPART_COLUMNS, rows: departResults, classify: departClassify, actionKey: 'action' }));
-  show(`${DEPART_P}-results`, departResults.length > 0);
-  const attention = departResults.filter((r) => !isDepartSuccess(r.status)).length;
-  setDisabled(`${DEPART_P}-fix`, attention === 0);
-  setText(`${DEPART_P}-fix`, attention ? `תקן והרץ שוב: ${departPlural(attention, 'תלמיד אחד', 'N תלמידים')}` : 'תקן והרץ שוב');
-  for (const id of ['tsv', 'csv']) setDisabled(`${DEPART_P}-${id}`, departResults.length === 0);
+// טקסט (הדבקה / קובץ) → שורות-טבלה: סניף ות.ז., עם כותרת או בלי, טאבים / פסיקים / רווחים
+export function departTextToRows(text) {
+  const lines = String(text || '').split(/\r\n|\r|\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  const out = [];
+  lines.forEach((line, i) => {
+    const cells = line.includes('\t') ? line.split('\t') : (line.includes(',') ? line.split(',') : line.split(/\s+/));
+    const c = cells.map((x) => x.trim());
+    if (i === 0 && c[0] && !/^\d+$/.test(c[0]) && /סניף|ת\.?ז|מספר|מזהה|דרכון/.test(line)) return; // כותרת
+    out.push(departRowFrom({ branch: c[0] || '', identifier: c[1] || '' }));
+  });
+  return out;
 }
 
-function departRenderErrors(errors, validCount) {
-  if (!errors || !errors.length) { show(`${DEPART_P}-errors`, false); setHtml(`${DEPART_P}-errors`, ''); return; }
-  const items = errors.slice(0, 25).map((e) => `<li>שורה ${esc(e.line)}: ${esc(e.reason)}</li>`).join('');
-  setHtml(`${DEPART_P}-errors`, `<b>${departPlural(errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')}</b> (${validCount} מוכנות):<ul>${items}${errors.length > 25 ? `<li>ועוד ${errors.length - 25}</li>` : ''}</ul>`);
-  show(`${DEPART_P}-errors`, true);
+// הודעת-פרסור → נוסח לשורה
+export function departFriendlyError(reason, f) {
+  const s = String(reason || '');
+  if (/חסרים שדות חובה/.test(s)) { const miss = []; if (!String(f.branch || '').trim()) miss.push('סניף'); if (!String(f.identifier || '').trim()) miss.push('מספר'); return `חסר: ${miss.join(', ') || 'סניף או מספר'}`; }
+  if (/סניף לא תקין/.test(s)) return 'מספר סניף לא תקין. בחר סניף מהרשימה';
+  if (/חסרה ת\.ז\./.test(s)) return 'חסר: מספר';
+  if (/ת\.ז\. לא תקינה/.test(s)) return 'מספר לא תקין (ת.ז. 5 עד 9 ספרות, או דרכון באותיות וספרות)';
+  return s;
+}
+
+// לכל שורה מלאה: {level, msg}; ctx: {branches: [..]|null}. אדום = לא ירוץ; צהוב = ירוץ עם אזהרה.
+export function departValidateRows(list, ctx) {
+  const filled = (list || []).filter((r) => String(r.fields.branch || '').trim() || String(r.fields.identifier || '').trim());
+  const parsed = parseDepartInput(departRowsToText(filled));
+  const errorByIdx = new Map();
+  for (const e of parsed.errors) errorByIdx.set(e.line - 2, e.reason);
+  const issues = [];
+  const seen = new Map();
+  const counts = { all: filled.length, ready: 0, warn: 0, bad: 0 };
+  filled.forEach((r, i) => {
+    const f = r.fields;
+    let level = '';
+    let msg = '';
+    const err = errorByIdx.get(i);
+    if (err) { level = 'bad'; msg = departFriendlyError(err, f); }
+    else if (ctx && Array.isArray(ctx.branches) && ctx.branches.length && !ctx.branches.includes(String(f.branch).trim().padStart(2, '0'))) { level = 'bad'; msg = 'סניף לא נמצא ברשימת הסניפים'; }
+    if (!level) {
+      const id = String(f.identifier || '').replace(/[\s-]/g, '');
+      const key = `${String(f.branch).trim().padStart(2, '0')}|${/^\d+$/.test(id) ? id.replace(/^0+/, '') : id.toUpperCase()}`;
+      if (seen.has(key)) { level = 'warn'; msg = `כפול של שורה ${seen.get(key) + 1}`; }
+      else { seen.set(key, i); if (/^\d+$/.test(id) && !isValidIsraeliId(id)) { level = 'warn'; msg = 'ת.ז. לא תקינה (ספרת ביקורת). בדוק את המספר'; } }
+    }
+    issues.push({ level, msg });
+    counts[level === 'bad' ? 'bad' : (level === 'warn' ? 'warn' : 'ready')]++;
+  });
+  const tasks = parsed.tasks.filter((t) => { const iss = issues[t.line - 2]; return !(iss && iss.level === 'bad'); });
+  return { filled, issues, tasks, counts };
+}
+
+function departKnownBranches() {
+  const set = new Set(readBranchesFromTree());
+  if (departPage && departPage.branch) set.add(departPage.branch);
+  return Array.from(set).sort();
+}
+
+function departBuildGrid() {
+  const branches = departKnownBranches();
+  departGrid = createGrid({
+    id: DEPART_P,
+    inputId: `${DEPART_P}-input`,
+    columns: [
+      branches.length
+        ? { key: 'branch', label: 'סניף', kind: 'select', width: '70px', options: () => [['', '']].concat(branches.map((b) => [b, b])) }
+        : { key: 'branch', label: 'סניף', kind: 'input', width: '70px', mono: true, placeholder: 'סניף' },
+      { key: 'identifier', label: 'מספר (ת.ז. או דרכון)', kind: 'input', width: '150px', mono: true, placeholder: 'מספר' },
+    ],
+    fieldKeys: ['branch', 'identifier'],
+    newRow: departNewRow,
+    fromText: departTextToRows,
+    validate: (list) => departValidateRows(list, { branches: branches.length ? branches : null }),
+    onCell: () => { if (departAwaitingErrorConfirm) departAwaitingErrorConfirm = false; },
+    onChange: (v) => { departRefreshStartButton(); departRefreshStatus(v); },
+    onStatus: (msg) => departUi.status(msg),
+    onFilled: (label, n) => { const v = departGrid.validation(); log(`[עזיבה] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
+    emptyText: (mode) => (mode === 'fix' ? 'אין מי שדורש טיפול.' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז.) או מלא שורה.'),
+  });
+}
+
+function departSetStage(s) {
+  departStage = s;
+  show(`${DEPART_P}-zone-in`, s === 'prep' || s === 'fix');
+  show(`${DEPART_P}-zone-run`, s === 'run');
+  show(`${DEPART_P}-zone-out`, s === 'run' || s === 'results');
+  show(`${DEPART_P}-prep-only`, s === 'prep');
+  show(`${DEPART_P}-fix-only`, s === 'fix');
+  show(`${DEPART_P}-back`, s === 'fix');
+  show(`${DEPART_P}-out-actions`, s === 'results');
+  setText(`${DEPART_P}-zone-in-title`, s === 'fix' ? 'תיקון והרצה חוזרת' : 'על מי מדווחים עזיבה');
+  departGrid.setMode(s === 'fix' ? 'fix' : 'prep');
+  departUi.step(DEPART_STAGE_INDEX[s] || 0);
+}
+
+function departRunnable() { return departValidateRows(departGrid.visibleFilled(), { branches: departKnownBranches().length ? departKnownBranches() : null }); }
+
+function departRefreshStartButton() {
+  if (departAwaitingErrorConfirm) return;
+  const n = departRunnable().tasks.length;
+  const verb = departStage === 'fix' ? 'התחל עזיבה חוזרת' : 'התחל עזיבה';
+  setText(`${DEPART_P}-start`, n ? `${verb}: ${departPlural(n, 'תלמיד אחד', 'N תלמידים')}${departGrid.filter() !== 'all' ? ' (המוצגים)' : ''}` : verb);
+}
+
+function departRefreshStatus(v) {
+  departUi.step(DEPART_STAGE_INDEX[departStage] || 0);
+  if (departIsRunning() || departStage === 'run' || departStage === 'results') return;
+  const all = v.counts.all;
+  if (!all) { departUi.status(departStage === 'fix' ? 'אין מי שדורש טיפול. "חזרה לתוצאות" או "עזיבה חדשה"' : 'אין שורות עדיין. "הדבק מאקסל" (סניף ות.ז. בכל שורה) או מלא שורה'); return; }
+  const filtered = departGrid.filter() !== 'all';
+  const rv = filtered ? departRunnable() : v;
+  const c = rv.counts;
+  const parts = [];
+  if (filtered) parts.push(`מוצגים ${c.all} מתוך ${all}`);
+  parts.push(departPlural(rv.tasks.length, 'תלמיד אחד מוכן', 'N תלמידים מוכנים'));
+  if (c.bad) parts.push(departPlural(c.bad, 'שורה אחת לא תרוץ (אדום)', 'N שורות לא ירוצו (אדום)'));
+  if (c.warn) parts.push(departPlural(c.warn, 'אזהרה אחת (צהוב)', 'N אזהרות (צהוב)'));
+  departUi.status((departStage === 'fix' ? 'תיקון: ' : '') + parts.join(' · '));
+}
+
+// ─── תוצאות ───────────────────────────────────────────────────────────────────
+function departDisplayed() {
+  let list = departResFilter === 'all' ? departResults.slice() : departResults.filter((r) => departGroup(r) === departResFilter);
+  if (departResSort) list = gridSortRows(list, (r) => r[departResSort.key], departResSort.dir);
+  return list;
+}
+
+function departRenderResults() {
+  const list = departDisplayed();
+  const cols = DEPART_COLUMNS.map((c) => Object.assign({}, c, { label: c.label + (departResSort && departResSort.key === c.key ? (departResSort.dir === 'desc' ? ' ▼' : ' ▲') : '') }));
+  setHtml(`${DEPART_P}-results`, resultsTableHtml({ columns: cols, rows: list, classify: departClassify, actionKey: 'action', sortable: true, emptyText: departResults.length ? 'אין תוצאות בסינון הזה' : '' }));
+  show(`${DEPART_P}-results`, departResults.length > 0);
+  const attention = list.filter((r) => !isDepartSuccess(r.status)).length;
+  setDisabled(`${DEPART_P}-fix`, attention === 0);
+  setText(`${DEPART_P}-fix`, attention ? `תקן והרץ שוב: ${departPlural(attention, 'תלמיד אחד', 'N תלמידים')}${departResFilter !== 'all' ? ' (המוצגים)' : ''}` : 'תקן והרץ שוב');
+  for (const id of ['tsv', 'csv']) setDisabled(`${DEPART_P}-${id}`, departResults.length === 0);
 }
 
 function departRenderReport(report) {
   if (!report) { show(`${DEPART_P}-report`, false); setHtml(`${DEPART_P}-report`, ''); return; }
   const ok = departResults.filter((r) => isDepartSuccess(r.status)).length;
-  const warn = departResults.filter((r) => departClassify(r) === 'warn').length;
-  const bad = departResults.filter((r) => departClassify(r) === 'bad').length;
-  const tags = [ok ? tagHtml({ label: `הצליחו ${ok}`, kind: 'ok' }) : '', warn ? tagHtml({ label: `לבדוק ${warn}`, kind: 'warn' }) : '', bad ? tagHtml({ label: `דורשים טיפול ${bad}`, kind: 'bad' }) : ''].filter(Boolean).join('');
-  setHtml(`${DEPART_P}-report`, `<div class="tt-tags">${tags}</div>${reportBoxHtml(report, { idsWarning: false })}`);
+  const verify = departResults.filter((r) => departGroup(r) === 'verify').length;
+  const bad = departResults.filter((r) => departGroup(r) === 'bad').length;
+  const stopped = departResults.filter((r) => departGroup(r) === 'stopped').length;
+  const tag = (filter, label, n, kind) => (n ? tagHtml({ label: `${label} ${n}`, kind, button: true, filter, active: departResFilter === filter }) : '');
+  const tags = tagHtml({ label: `הכל ${departResults.length}`, kind: 'info', button: true, filter: 'all', active: departResFilter === 'all' })
+    + tag('ok', 'הצליחו', ok, 'ok') + tag('verify', 'לבדוק', verify, 'warn') + tag('bad', 'דורשים טיפול', bad, 'bad') + tag('stopped', 'לא רצו', stopped, 'warn');
+  const sentence = report.stopped || stopped
+    ? `נעצר. ${departPlural(stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}`
+    : `הסתיים: ${ok} מתוך ${departResults.length} הצליחו.${bad || verify ? ` ${departPlural(bad + verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
+  setHtml(`${DEPART_P}-report`, `<div class="tt-tags" id="${DEPART_P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
   show(`${DEPART_P}-report`, true);
+}
+
+function departOnReportClick(e) {
+  const t = e.target && e.target.closest ? e.target.closest('[data-filter]') : null;
+  if (!t) return;
+  departResFilter = t.getAttribute('data-filter') || 'all';
+  t.parentElement.querySelectorAll('[data-filter]').forEach((b) => b.classList.toggle('tt-tag-active', b === t));
+  departRenderResults();
+}
+function departOnResultsClick(e) {
+  const th = e.target && e.target.closest ? e.target.closest('th[data-sort]') : null;
+  if (!th) return;
+  const key = th.getAttribute('data-sort');
+  departResSort = { key, dir: departResSort && departResSort.key === key && departResSort.dir === 'asc' ? 'desc' : 'asc' };
+  departRenderResults();
 }
 
 function departRenderStaleQueue(info) {
@@ -91,32 +247,10 @@ function departRenderStaleQueue(info) {
   });
 }
 
-function departStep() {
-  if (departIsRunning()) return 1;
-  if (departFixMode) return 3;
-  if (departResults.length && departRunDone) return 2;
-  return 0;
-}
-
-// שורת-המצב מהקלט (מחושבת מכל הקשה)
-function departRefreshStatus() {
-  departUi.step(departStep());
-  if (departIsRunning()) return;
-  const text = (($el(`${DEPART_P}-input`) || {}).value || '').trim();
-  if (!text) { departUi.status(departResults.length ? 'התיבה ריקה. "תקן והרץ שוב" מחזיר אליה את מי שדורש טיפול' : 'אין שורות עדיין. הדבק מאקסל: סניף ות.ז. בכל שורה'); setText(`${DEPART_P}-start`, 'התחל עזיבה'); return; }
-  const parsed = parseDepartInput(text);
-  const parts = [departPlural(parsed.tasks.length, 'תלמיד אחד מוכן', 'N תלמידים מוכנים')];
-  if (parsed.errors.length) parts.push(departPlural(parsed.errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו'));
-  departUi.status((departFixMode ? 'תיקון: ' : '') + parts.join(' · ') + (departResults.length && !departFixMode ? '. התוצאות למטה הן מהריצה הקודמת' : ''));
-  if (!departAwaitingErrorConfirm) setText(`${DEPART_P}-start`, parsed.tasks.length ? `התחל עזיבה: ${departPlural(parsed.tasks.length, 'תלמיד אחד', 'N תלמידים')}` : 'התחל עזיבה');
-}
-
 function departSetRunning(on) {
   setDisabled(`${DEPART_P}-start`, !!on);
-  show(`${DEPART_P}-stop`, !!on);
-  const zoneIn = $el(`${DEPART_P}-zone-in`); if (zoneIn) zoneIn.classList.toggle('tt-zone-dim', !!on);
+  if (on) departSetStage('run'); else if (departStage === 'run') departSetStage(departResults.length ? 'results' : 'prep');
   departUi.running(!!on);
-  departUi.step(departStep());
 }
 
 function departReadSettings() {
@@ -136,44 +270,38 @@ function departApplySettings(settings) {
   if (reasonEl && settings.leaveReason) reasonEl.value = String(settings.leaveReason);
 }
 
-function departResetStartButton() {
-  departAwaitingErrorConfirm = false;
-  departRenderErrors([], 0);
-  departRefreshStatus();
-}
-
 async function departStart() {
   if (departIsRunning()) return;
-  const text = (($el(`${DEPART_P}-input`) || {}).value || '').trim();
-  if (!text) { departUi.status('הדבק רשימה: סניף ות.ז. בכל שורה (טורים מאקסל)'); return; }
+  if (departHasSavedQueue()) { departUi.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
   const settings = departReadSettings();
   if (settings.leaveDate && !departIsValidDate(settings.leaveDate)) {
     departUi.status('תאריך העזיבה לא תקין. הפורמט: יום/חודש/שנה, או השאר ריק (= היום)');
     return;
   }
-  const parsed = parseDepartInput(text);
-  if (parsed.errors.length && !departAwaitingErrorConfirm) {
-    departRenderErrors(parsed.errors, parsed.tasks.length);
+  departGrid.refresh();
+  const v = departRunnable();
+  if (!v.filled.length) { departUi.status(departGrid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
+  if (v.counts.bad && !departAwaitingErrorConfirm) {
     departAwaitingErrorConfirm = true;
-    setText(`${DEPART_P}-start`, parsed.tasks.length ? `כן, התחל בלי ${departPlural(parsed.errors.length, 'השורה השגויה', 'N השורות השגויות')}` : 'התחל עזיבה');
-    departUi.status(`${departPlural(parsed.errors.length, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')}. תקן אותן, או לחץ שוב כדי להתחיל בלי השגויות`);
-    log(`[עזיבה] פרסור: ${parsed.tasks.length} תקינות · ${parsed.errors.length} שגויות`);
+    setText(`${DEPART_P}-start`, v.tasks.length ? `כן, התחל בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
+    departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
     return;
   }
-  if (!parsed.tasks.length) { departRenderErrors(parsed.errors, 0); departUi.status('אין תלמידים שיכולים לרוץ. תקן את השורות השגויות'); return; }
+  if (!v.tasks.length) { departUi.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
   departAwaitingErrorConfirm = false;
-  departRenderErrors([], 0);
-  departFixMode = false;
-  departRunDone = false;
   departRenderReport(null);
   departRenderStaleQueue(null);
   departResults = [];
+  departResFilter = 'all';
+  departResSort = null;
   departRenderResults();
+  departTotal = v.tasks.length;
+  setText(`${DEPART_P}-runtext`, departPlural(departTotal, 'תלמיד אחד בריצה', 'N תלמידים בריצה'));
   departSetRunning(true);
-  departUi.progress(0, parsed.tasks.length);
-  departUi.status(`מתחיל: ${departPlural(parsed.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
-  log(`[עזיבה] התחלה: ${parsed.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
-  await departStartRun(parsed.tasks, settings);
+  departUi.progress(0, v.tasks.length);
+  departUi.status(`מתחיל: ${departPlural(v.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
+  log(`[עזיבה] התחלה: ${v.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
+  await departStartRun(v.tasks, settings);
 }
 
 function departStopClick() {
@@ -188,17 +316,29 @@ function departCurrentRows() {
   return live.length ? live : departResults;
 }
 
-// זרימת-התיקון: משאיר בתיבה רק את מי שדורש טיפול
+function departKey(branch, identity) { const id = String(identity || '').replace(/[\s-]/g, ''); return `${String(branch || '').trim().padStart(2, '0')}|${/^\d+$/.test(id) ? id.replace(/^0+/, '') : id.toUpperCase()}`; }
+
+// זרימת-התיקון: טבלה רק עם מי שדורש טיפול מבין המוצגים, "מה קרה / מה לעשות" מתחת לכל שורה
 function departFixAndRerun() {
-  const left = departCurrentRows().filter((r) => !isDepartSuccess(r.status));
-  const ta = $el(`${DEPART_P}-input`);
-  if (ta) ta.value = left.map((r) => `${r.branch}\t${r.identity}`).join('\n');
-  departFixMode = left.length > 0;
+  const attention = departDisplayed().filter((r) => !isDepartSuccess(r.status));
+  if (!attention.length) return;
+  const byKey = new Map(attention.map((r) => [departKey(r.branch, r.identity), r]));
+  departGrid.setRows(attention.map((r) => departRowFrom({ branch: r.branch, identifier: r.identity })));
+  departGrid.setNotes((row) => { const res = byKey.get(departKey(row.fields.branch, row.fields.identifier)); return res ? { kind: departClassify(res) === 'bad' ? 'bad' : 'warn', text: `${res.status}. ${res.action || ''}`.trim() } : null; });
   departAwaitingErrorConfirm = false;
-  departRenderErrors([], 0);
-  departRefreshStatus();
-  if (left.length) departUi.status(`תיקון: ${departPlural(left.length, 'תלמיד אחד בתיבה', 'N תלמידים בתיבה')}. תקן לפי "מה לעשות" בתוצאות ולחץ "התחל עזיבה"`);
-  log(`[עזיבה] תקן והרץ שוב: ${left.length} תלמידים בתיבה`);
+  departSetStage('fix');
+  departGrid.render();
+  log(`[עזיבה] תקן והרץ שוב: ${attention.length} תלמידים בטבלה`);
+}
+
+function departBackToResults() { departGrid.setRows([]); departGrid.setNotes(null); departAwaitingErrorConfirm = false; departSetStage('results'); departUi.status('חזרה לתוצאות הריצה האחרונה'); }
+
+function departNewRun() {
+  departResults = []; departResFilter = 'all'; departResSort = null;
+  departRenderReport(null); departRenderResults();
+  departGrid.setRows([]); departGrid.setNotes(null); departAwaitingErrorConfirm = false;
+  departSetStage('prep'); departGrid.render();
+  log('[עזיבה] עזיבה חדשה: הטבלה והתוצאות נוקו');
 }
 
 function departCopyTsv() {
@@ -219,32 +359,46 @@ function departExportCsv() {
 
 function departMount(container, panelUi, page) {
   departUi = panelUi;
+  departPage = page;
+  departBuildGrid();
   const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
-    ${zoneHtml({ id: `${DEPART_P}-zone-in`, title: 'למי מדווחים עזיבה', inner: `
-      <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מדביקים מאקסל שתי עמודות, סניף ות.ז. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
-      <textarea id="${DEPART_P}-input" class="tt-textarea" placeholder="00&#9;012345678&#10;16&#9;023456789"></textarea>
-      <div id="${DEPART_P}-errors" class="tt-box tt-box-error" hidden></div>
+    <section class="tt-zone" id="${DEPART_P}-zone-in">
+      <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span></div>
+      <div id="${DEPART_P}-prep-only">
+        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מעתיקים באקסל שתי עמודות (סניף ות.ז.) ולוחצים "הדבק מאקסל", או ממלאים בטבלה. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}</div>
+        ${departGrid.pasteBoxHtml()}
+      </div>
+      <div id="${DEPART_P}-fix-only" hidden><p class="tt-zone-lead">רק מי שדורש טיפול. תקן לפי ההוראה שמתחת לכל שורה, ולחץ "התחל עזיבה חוזרת".</p></div>
+      <div class="tt-tags" id="${DEPART_P}-tags"></div>
+      <div id="${DEPART_P}-grid" class="tt-scroll" style="max-height:320px"></div>
       <div id="${DEPART_P}-stale" class="tt-box tt-box-warn" hidden></div>
-      <div class="tt-row">
-        ${fieldHtml('תאריך עזיבה (ריק = היום)', `<input id="${DEPART_P}-date" class="tt-input tt-mono" type="text" maxlength="10" placeholder="${todayDMY()}">`)}
+      <div class="tt-row tt-row-wrap">
+        <label class="tt-field"><span class="tt-field-label">תאריך עזיבה (ריק = היום)</span>${dateFieldHtml({ id: `${DEPART_P}-date`, placeholder: todayDMY(), maxWidth: '130px' })}</label>
         ${fieldHtml('סיבת עזיבה', selectHtml({ id: `${DEPART_P}-reason`, options: DEPART_REASONS, value: DEPART_DEFAULT_REASON }))}
       </div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' })}
-        ${buttonHtml({ id: `${DEPART_P}-stop`, label: 'עצור', kind: 'danger', title: 'גם מקש Escape עוצר', attrs: 'hidden' })}
-      </div>` })}
-    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', dim: true, inner: `
-      <div id="${DEPART_P}-report" class="tt-box tt-box-warn" hidden></div>
-      <div class="tt-row tt-row-wrap tt-row-tight">
-        ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'משאיר בתיבה רק את מי שדורש טיפול' })}
+        ${buttonHtml({ id: `${DEPART_P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
+        <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
+      </div>
+    </section>
+    <div class="tt-runline" id="${DEPART_P}-zone-run" hidden><span class="tt-runtext" id="${DEPART_P}-runtext"></span>${buttonHtml({ id: `${DEPART_P}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
+    ${zoneHtml({ id: `${DEPART_P}-zone-out`, title: 'תוצאות', hidden: true, inner: `
+      <div id="${DEPART_P}-report" hidden></div>
+      <div class="tt-row tt-row-wrap tt-row-tight" id="${DEPART_P}-out-actions">
+        ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול' })}
+        ${buttonHtml({ id: `${DEPART_P}-new-run`, label: 'עזיבה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה' })}
         ${buttonHtml({ id: `${DEPART_P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט' })}
         ${buttonHtml({ id: `${DEPART_P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true })}
       </div>
       <div id="${DEPART_P}-results" class="tt-scroll" hidden></div>` })}`;
 
   bindDateMask(`${DEPART_P}-date`);
-  $el(`${DEPART_P}-input`).addEventListener('input', () => { if (departAwaitingErrorConfirm) departResetStartButton(); else departRefreshStatus(); });
+  bindDateFields(container);
+  departGrid.bind();
+  $el(`${DEPART_P}-paste-btn`).addEventListener('click', () => { departGrid.pasteFromClipboard(); });
   $el(`${DEPART_P}-start`).addEventListener('click', () => {
     Promise.resolve().then(departStart).catch((e) => {
       log('[עזיבה] ההרצה נכשלה: ' + (e && e.message));
@@ -252,36 +406,43 @@ function departMount(container, panelUi, page) {
       departUi.status('ההרצה נכשלה. בדוק את היומן ונסה שוב');
     });
   });
+  $el(`${DEPART_P}-back`).addEventListener('click', departBackToResults);
   $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
   $el(`${DEPART_P}-fix`).addEventListener('click', departFixAndRerun);
+  $el(`${DEPART_P}-new-run`).addEventListener('click', departNewRun);
   $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
   $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
+  $el(`${DEPART_P}-report`).addEventListener('click', departOnReportClick);
+  $el(`${DEPART_P}-results`).addEventListener('click', departOnResultsClick);
 
   departSetHooks({
-    onStart: (queue, idx) => { departTotal = queue.length; departUi.progress(idx, departTotal); departSetRunning(true); },
+    onStart: (queue, idx) => { departTotal = queue.length; departUi.progress(idx, departTotal); setText(`${DEPART_P}-runtext`, departPlural(departTotal, 'תלמיד אחד בריצה', 'N תלמידים בריצה')); departSetRunning(true); },
     onResume: (queue, res, idx, settings) => {
-      departTotal = queue.length; departResults = res.slice(); departRenderResults(); departUi.progress(idx, departTotal); departSetRunning(true);
-      const ta = $el(`${DEPART_P}-input`);
-      if (ta) ta.value = queue.map((t) => `${t.branch}\t${t.identity}`).join('\n');
+      departTotal = queue.length; departResults = res.slice(); departRenderResults(); departUi.progress(idx, departTotal);
+      departGrid.setRows(queue.map((t) => departRowFrom({ branch: t.branch, identifier: t.identity })));
       departApplySettings(settings);
+      setText(`${DEPART_P}-runtext`, `${departPlural(departTotal, 'תלמיד אחד בריצה', 'N תלמידים בריצה')} · ממשיך אחרי טעינת דף`);
+      departSetRunning(true);
       departUi.status(`ממשיך אחרי טעינת דף: ${idx + 1} מתוך ${departTotal}`);
       departUi.open();
     },
-    onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); departUi.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch}`); },
+    onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); setText(`${DEPART_P}-runtext`, `${departPlural(tot, 'תלמיד אחד בריצה', 'N תלמידים בריצה')} · מעבד ${idx + 1} מתוך ${tot}`); departUi.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch}`); },
     onResult: (result, all) => { departResults = all.slice(); departRenderResults(); departUi.progress(all.length, Math.max(departTotal, all.length)); },
     onNavigating: (branch) => { departUi.status(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
-    onStaleQueue: (info) => { departSetRunning(false); departUi.status('יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"'); departRenderStaleQueue(info); departUi.open(); },
+    onStaleQueue: (info) => { departSetRunning(false); departSetStage(departResults.length ? 'results' : 'prep'); departUi.status('יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"'); departRenderStaleQueue(info); departUi.open(); },
     onDone: (all, report) => {
-      departResults = all.slice(); departRunDone = true; departFixMode = false; departRenderResults(); departRenderReport(report); departSetRunning(false); departUi.progress(all.length, all.length);
+      departResults = all.slice(); departResFilter = 'all'; departResSort = null; departGrid.setRows([]); departGrid.setNotes(null);
+      departRenderResults(); departRenderReport(report); departSetRunning(false); departSetStage('results'); departUi.progress(all.length, all.length);
       const bad = all.filter((r) => !isDepartSuccess(r.status)).length;
       departUi.status(bad ? `הסתיים: ${all.length - bad} מתוך ${all.length} הצליחו. ${departPlural(bad, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}: ראה "מה לעשות" בתוצאות` : `הסתיים: ${all.length} מתוך ${all.length} הצליחו. הכול טופל`);
     },
   });
 
   log(`[עזיבה] דף ${page.kind}${page.branch ? ` · סניף ${page.branch} [${page.branchSource || '?'}]` : ''}`);
+  departSetStage('prep');
+  departGrid.render();
   departResults = departGetResults();
   departRenderResults();
-  departRefreshStatus();
   const saved = departSavedQueueInfo();
   if (departHasSavedQueue()) departUi.status(saved && saved.stale ? 'נמצאה ריצת עזיבה שנקטעה. בודק…' : 'נמצאה ריצת עזיבה פתוחה. ממשיך…');
   Promise.resolve().then(() => departResumeIfPending()).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
