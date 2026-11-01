@@ -8,11 +8,15 @@ import {
   messagesIsRunning, messagesRunBulk, messagesScan, messagesRunTable,
   messagesNormId, messagesNormBranch, messagesExtractTransfer, messagesMergeDuplicates, messagesParseRoster, messagesRosterBranches,
   messagesCrossCheck, messagesDecisionCounts, messagesReviewEntries, messagesRowMatchesFilter, messagesShorten,
-  messagesFindFilterSelect, messagesActionOutcome,
+  messagesFindFilterSelect, messagesActionOutcome, messagesRunLabel, messagesResultTodo, messagesRunText, MESSAGES_RESULT,
 } from '../src/tools/messages.js';
 import { messagesTool } from '../src/tools/messages-ui.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const T = '\t';
+const UI_SRC = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'tools', 'messages-ui.js'), 'utf8');
 
 // נוסחי ההודעות מהאתר החי (30.10.2026), עם שמות ומזהים בדויים.
 const LIVE_REQUEST = (name, id, studyType, branch) => `מוסד אחר ביקש להעביר אליו את התלמיד ${name}, בעל ת.ז. ${id} מסוג לימוד ${studyType} בסניף ${branch}. אנא אשר או דחה את המעבר.`;
@@ -417,4 +421,54 @@ test('messagesActionOutcome (ממצא ב-4): אותו עמוד → לפי הספ
   assert.equal(errPopup.ok, false);
   assert.match(errPopup.reason, /הגריד חזר לעמוד אחר אחרי הפעולה/);
   assert.match(errPopup.reason, /הפעולה אפשרית רק עבור בקשת מעבר/);
+});
+
+// ─── סבב לשונית ההודעות (2.11.2026): טהורות של הממשק ─────────────────────────
+test('messagesRunLabel: "בצע לפי הטבלה: N"; עם סינון פעיל "(המוצגות)"; טבלה ריקה או כלום מוצג → בלי מספר', () => {
+  assert.equal(messagesRunLabel(12, 12, ''), 'בצע לפי הטבלה: 12');
+  assert.equal(messagesRunLabel(1, 12, '023'), 'בצע לפי הטבלה: 1 (המוצגות)');
+  assert.equal(messagesRunLabel(12, 12, 'מעבר'), 'בצע לפי הטבלה: 12 (המוצגות)', 'סינון שמתאים לכולן עדיין "המוצגות"');
+  assert.equal(messagesRunLabel(12, 12, '   '), 'בצע לפי הטבלה: 12', 'רווחים בלבד = בלי סינון');
+  assert.equal(messagesRunLabel(0, 12, 'zzz'), 'בצע לפי הטבלה');
+  assert.equal(messagesRunLabel(0, 0, ''), 'בצע לפי הטבלה');
+  assert.equal(messagesRunLabel(undefined, null, undefined), 'בצע לפי הטבלה');
+});
+
+test('messagesResultTodo: "מה לעשות" רק לנכשלות; בוצע / דילוג → ריק', () => {
+  assert.equal(messagesResultTodo({ status: MESSAGES_RESULT.DONE }), '');
+  assert.equal(messagesResultTodo({ status: MESSAGES_RESULT.SKIPPED }), '');
+  assert.match(messagesResultTodo({ status: MESSAGES_RESULT.FAILED_PREFIX + 'האתר הודיע: "לא"' }), /ידנית בדף ההודעות/);
+  assert.equal(messagesResultTodo(null), '');
+  assert.equal(messagesResultTodo({}), '');
+});
+
+test('messagesRunText: שורת-הריצה לטבלה / מצב גורף / סריקה, בלי מקף ארוך', () => {
+  assert.equal(messagesRunText({ mode: 'table', cur: 0, total: 14 }), '14 הודעות בביצוע · מעבד 1 מתוך 14');
+  assert.equal(messagesRunText({ mode: 'table', cur: 13, total: 14 }), '14 הודעות בביצוע · מעבד 14 מתוך 14');
+  assert.equal(messagesRunText({ mode: 'table', cur: 14, total: 14 }), '14 הודעות בביצוע · מעבד 14 מתוך 14', 'לא חורג מהסך');
+  assert.equal(messagesRunText({ mode: 'table', cur: 0, total: 1 }), 'הודעה אחת בביצוע · מעבד 1 מתוך 1');
+  assert.equal(messagesRunText({ mode: 'table' }), 'מבצע לפי הטבלה…');
+  assert.equal(messagesRunText({ mode: 'bulk', cur: 3 }), 'מצב גורף בביצוע · טופלו 3');
+  assert.equal(messagesRunText({ mode: 'bulk' }), 'מצב גורף בביצוע · טופלו 0');
+  assert.equal(messagesRunText({ mode: 'scan' }), 'סורק את ההודעות…');
+  assert.equal(messagesRunText({ mode: 'scan', pages: 2, total: 14 }), 'סורק את ההודעות · 2 עמודים, 14 הודעות עד כה');
+  for (const t of [messagesRunText({ mode: 'table', cur: 0, total: 3 }), messagesRunText({ mode: 'bulk' }), messagesRunText({ mode: 'scan', pages: 1, total: 1 })]) assert.doesNotMatch(t, /—/);
+});
+
+// נוסחי הלשונית (הכרעות הסבב): מונחים אחידים, לחיצה שנייה "לחץ שוב ל…", בלי מקף ארוך
+test('messages-ui: הטקסטים לפי הכרעות הסבב: "מה קרה", "לחץ שוב ל…" לכל כפתור מוחק, "טען קובץ אקסל", בלי מקף ארוך, בלי "סטטוס"', () => {
+  assert.doesNotMatch(UI_SRC, /—/, 'מקף ארוך בלשונית');
+  assert.match(UI_SRC, /label: 'מה קרה'/, 'כותרת עמודת התוצאות');
+  assert.doesNotMatch(UI_SRC, /label: 'סטטוס'/);
+  assert.match(UI_SRC, /confirmLabel: 'לחץ שוב לניקוי המצבת'/);
+  assert.match(UI_SRC, /confirmLabel: 'לחץ שוב לניקוי הטבלה'/);
+  assert.match(UI_SRC, /confirmLabel: 'לחץ שוב לסריקה חדשה'/);
+  const confirms = UI_SRC.match(/confirmLabel: '([^']+)'/g) || [];
+  assert.ok(confirms.length >= 3 && confirms.every((c) => /confirmLabel: 'לחץ שוב ל/.test(c)), confirms.join(' | '));
+  assert.match(UI_SRC, /label: 'טען קובץ אקסל'/);
+  assert.match(UI_SRC, /loadXlsxFile/);
+  assert.match(UI_SRC, /label: 'סריקה חדשה'/);
+  assert.match(UI_SRC, /מבצע רק את השורות המוצגות/, 'ההסבר מזכיר שהביצוע חל על המוצגות בלבד');
+  assert.match(UI_SRC, /title: 'גם מקש Escape עוצר'/);
+  assert.match(UI_SRC, /actionKey: 'todo'/, 'שורת "מה לעשות" מתחת לנכשלות');
 });

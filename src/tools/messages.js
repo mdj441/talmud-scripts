@@ -375,6 +375,40 @@ export function messagesShorten(text, max) {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
+// ─── טהורות ללשונית (סבב לשונית ההודעות, 2.11.2026) ─────────────────────────
+
+// תווית "בצע לפי הטבלה": הביצוע חל רק על השורות המוצגות (אחרי הסינון המהיר). visible = כמה מוצגות,
+// total = כמה בטבלה, filterText = טקסט הסינון. טבלה ריקה או כלום מוצג → התווית בלי מספר (הכפתור כבוי).
+export function messagesRunLabel(visible, total, filterText) {
+  const v = Number(visible) > 0 ? Number(visible) : 0;
+  const t = Number(total) > 0 ? Number(total) : 0;
+  if (!t || !v) return 'בצע לפי הטבלה';
+  const filtered = messagesFlat(filterText) !== '';
+  return `בצע לפי הטבלה: ${v}${filtered ? ' (המוצגות)' : ''}`;
+}
+
+// "מה לעשות" מתחת לשורת-תוצאה שדורשת טיפול: רק לנכשלות; "בוצע" ו"דילוג" בלי שורה.
+export function messagesResultTodo(row) {
+  const s = row && row.status ? String(row.status) : '';
+  if (!s || s === MESSAGES_RESULT.DONE || s === MESSAGES_RESULT.SKIPPED) return '';
+  return 'טפל בהודעה ידנית בדף ההודעות';
+}
+
+function messagesPluralMsgs(n) {
+  return n === 1 ? 'הודעה אחת' : `${n} הודעות`;
+}
+
+// נוסח שורת-הריצה (מוצגת רק בזמן ריצה, עם "עצור"). table: "N הודעות בביצוע · מעבד i מתוך N";
+// bulk: כמה טופלו עד כה (אין סך ידוע מראש); scan: עמודים והודעות עד כה.
+export function messagesRunText({ mode, cur = 0, total = 0, pages = 0 } = {}) {
+  const c = Number(cur) > 0 ? Number(cur) : 0;
+  const t = Number(total) > 0 ? Number(total) : 0;
+  if (mode === 'scan') return pages ? `סורק את ההודעות · ${pages} עמודים, ${messagesPluralMsgs(t)} עד כה` : 'סורק את ההודעות…';
+  if (mode === 'bulk') return `מצב גורף בביצוע · טופלו ${c}`;
+  if (!t) return 'מבצע לפי הטבלה…';
+  return `${messagesPluralMsgs(t)} בביצוע · מעבד ${Math.min(c + 1, t)} מתוך ${t}`;
+}
+
 // ─── מצב הריצה + hooks לפאנל ─────────────────────────────────────────────────
 
 export const MSG = {

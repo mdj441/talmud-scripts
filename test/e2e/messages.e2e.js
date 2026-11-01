@@ -31,6 +31,16 @@ const SEL = {
   rosterInput: '#tt-messages-roster-input',
   rosterLoad: '#tt-messages-roster-load',
   rosterStatus: '#tt-messages-roster-status',
+  rosterClear: '#tt-messages-roster-clear',
+  rosterXlsx: '#tt-messages-roster-xlsx',
+  zoneScan: '#tt-messages-zone-scan',
+  zoneReview: '#tt-messages-zone-review',
+  zoneRun: '#tt-messages-zone-run',
+  zoneOut: '#tt-messages-zone-out',
+  runtext: '#tt-messages-runtext',
+  newScan: '#tt-messages-new-scan',
+  clearTable: '#tt-messages-clear-table',
+  steps: '#tt-messages-steps',
   excelSummary: '#tt-messages-excel-summary',
   input: '#tt-messages-input',
   load: '#tt-messages-load',
@@ -99,24 +109,53 @@ async function scanAndWait(page) {
   return waitForScan(page);
 }
 
-// שורות טבלה → מערך של מערכי-תאים (טקסט).
+// שורות טבלת-התוצאות (tr[data-row]) → מערך של מערכי-תאים (טקסט); התא האחרון (אינדקס 5) הוא שורת "מה לעשות"
+// שמתחת לנכשלת (ריק כשאין).
 async function readTable(page, sel) {
-  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s} table tbody tr`))
-    .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim())), sel);
+  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s} table tbody tr[data-row]`))
+    .map((tr) => {
+      const cells = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
+      const next = tr.nextElementSibling;
+      cells.push(next && next.classList.contains('tt-act') ? next.textContent.trim() : '');
+      return cells;
+    }), sel);
 }
 
-// טבלת הסקירה: [{uid, uids, id, header, body, date, count, roster, done, decision, hidden}]
+async function readResultsHeader(page) {
+  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.results} table thead th`)).map((th) => th.textContent.trim()), SEL);
+}
+
+// טבלת הסקירה: [{uid, uids, id, header, body, bodyFull, bodyOpen, fullShown, date, count, roster, done, decision, hidden}]
 async function readReview(page) {
-  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.scanned} table tbody tr`)).map((tr) => {
+  return evalRetry(page, (s) => Array.from(document.querySelectorAll(`${s.scanned} table tbody tr.tt-review-row`)).map((tr) => {
     const td = Array.from(tr.querySelectorAll('td'));
     const sel = tr.querySelector('select');
+    const full = tr.nextElementSibling && tr.nextElementSibling.classList.contains('tt-body-full') ? tr.nextElementSibling : null;
     return {
       uid: tr.getAttribute('data-uid'), uids: (tr.getAttribute('data-uids') || '').split(',').filter(Boolean),
       id: td[0].textContent.trim(), header: td[1].textContent.trim(), body: td[2].textContent.trim(), bodyFull: td[2].getAttribute('title') || '',
+      bodyOpen: td[2].getAttribute('aria-expanded') === 'true', fullShown: !!full && !full.hidden, fullText: full ? full.textContent.trim() : '',
       date: td[3].textContent.trim(), count: td[4].textContent.trim(), roster: td[5].textContent.trim(),
       done: !!tr.querySelector('.tt-tag-done'), pending: !!tr.querySelector('.tt-tag-pending'), decision: sel ? sel.value : '', hidden: tr.hidden,
     };
   }), SEL);
+}
+
+// מה מוצג על המסך (שלבים שמחליפים את המסך): נמדד לפי getClientRects, כך שגם hidden על אב נספר.
+async function readStage(page) {
+  return evalRetry(page, (s) => {
+    const shown = (sel) => { const el = document.querySelector(sel); return !!el && el.getClientRects().length > 0; };
+    const step = document.querySelector(`${s.steps} .tt-step-on`);
+    return {
+      scan: shown(s.zoneScan), review: shown(s.zoneReview), run: shown(s.zoneRun), out: shown(s.zoneOut),
+      stop: shown(s.stop), newScan: shown(s.newScan), modes: shown(s.modeTable),
+      step: step ? step.textContent.trim() : '', runtext: (document.querySelector(s.runtext) || {}).textContent || '',
+    };
+  }, SEL);
+}
+
+async function buttonState(page, sel) {
+  return evalRetry(page, (q) => { const b = document.querySelector(q); return b ? { label: b.textContent.trim(), disabled: b.disabled, armed: b.classList.contains('tt-btn-armed') } : null; }, sel);
 }
 
 async function readText(page, sel) {
@@ -219,6 +258,11 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       assert.deepEqual(st[m02.uid], ['דילוג']);
       assert.deepEqual(st[m04.uid], ['בוצע']);
       assert.match(st[m06.uid][0], /^נכשל/);
+      // הכרעה 4: הכותרת "מה קרה" (לא "סטטוס"); מתחת לנכשלת שורת "מה לעשות"; מתחת לבוצעה ולמדולגת אין
+      assert.deepEqual(await readResultsHeader(page), ['UID', 'נושא', 'ת.ז./דרכון', 'פעולה', 'מה קרה']);
+      assert.match(rows.find((r) => r[0] === m06.uid)[5], /ידנית בדף ההודעות/);
+      assert.equal(rows.find((r) => r[0] === m04.uid)[5], '');
+      assert.equal(rows.find((r) => r[0] === m02.uid)[5], '');
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -227,12 +271,18 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     const { context, page, consoleLines } = await openSession(browser, { script, delayMs: 500 });
     try {
       await openBulk(page);
+      assert.equal((await readStage(page)).stop, false, '"עצור" מוסתר לפני ריצה');
       await page.click(SEL.bulkRun);
       await sleep(900);
+      const mid = await readStage(page);
+      assert.deepEqual([mid.run, mid.stop, mid.out, mid.modes, mid.step], [true, true, true, false, 'ביצוע'], JSON.stringify(mid));
+      assert.match(mid.runtext, /^מצב גורף בביצוע · טופלו \d+$/, mid.runtext);
       await page.click(SEL.stop);
       const rep = await waitForReport(page, 30000);
       assert.match(rep.text, /נעצר/, rep.text);
       assert.match(rep.status, /נעצר/, rep.status);
+      const after = await readStage(page);
+      assert.deepEqual([after.run, after.stop, after.out, after.newScan, after.step], [false, false, true, true, 'תוצאות'], JSON.stringify(after));
       const db = await readMockDb(page);
       const remaining = db.messages.filter((m) => m.status === 'נשלחה').length;
       const done = db.messages.filter((m) => m.handledAt).length;
@@ -292,9 +342,16 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       const summary1 = await readText(page, SEL.summary);
       assert.match(summary1, /אישור מעבר=4 · דחיית מעבר=1/, summary1);
 
+      // הכרעה 3: לפני הביצוע: שלב הסקירה, בלי "עצור"; הכפתור אומר כמה שורות ירוצו
+      const before = await readStage(page);
+      assert.deepEqual([before.scan, before.review, before.run, before.out, before.stop, before.step], [false, true, false, false, false, 'סקירה'], JSON.stringify(before));
+      assert.equal((await buttonState(page, SEL.runReview)).label, 'בצע לפי הטבלה: 12');
       await page.click(SEL.runReview);
       const rep = await waitForReport(page);
       assert.match(rep.text, /בוצעו=14 · נכשלו=0 · דולגו=0/, rep.text + '\n' + (await readLog(page)));
+      // אחרי הביצוע: שלב התוצאות בלבד (הטבלה מוסתרת), "עצור" נעלם, "סריקה חדשה" בכותרת
+      const after = await readStage(page);
+      assert.deepEqual([after.scan, after.review, after.run, after.out, after.stop, after.newScan, after.step], [false, false, false, true, false, true, 'תוצאות'], JSON.stringify(after));
 
       const db = await readMockDb(page);
       assert.equal(byId(db, 'm03').handledBy, 'decline');
@@ -419,13 +476,16 @@ describe('טיפול בהודעות: סביבת דמה', () => {
     } finally { await context.close(); }
   });
 
-  test('8 Escape באמצע "בצע לפי הטבלה" → נעצר, נשארו "נשלחה", הטבלה נשארת לסבב הבא', async () => {
+  test('8 Escape באמצע "בצע לפי הטבלה" → נעצר, נשארו "נשלחה"; בזמן הריצה שורת-ריצה עם "עצור" והטבלה מוסתרת; בסוף שלב התוצאות', async () => {
     const { context, page, consoleLines } = await openSession(browser, { script, delayMs: 500 });
     try {
       await openMessages(page);
       await scanAndWait(page);
       await page.click(SEL.runReview);
       await sleep(900);
+      const mid = await readStage(page);
+      assert.deepEqual([mid.scan, mid.review, mid.run, mid.out, mid.stop, mid.modes, mid.step], [false, false, true, true, true, false, 'ביצוע'], JSON.stringify(mid));
+      assert.match(mid.runtext, /^14 הודעות בביצוע · מעבד \d+ מתוך 14$/, mid.runtext);
       await page.keyboard.press('Escape');
       const rep = await waitForReport(page, 30000);
       assert.match(rep.text, /נעצר/, rep.text);
@@ -433,10 +493,8 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       const remaining = db.messages.filter((m) => m.status === 'נשלחה').length;
       const done = db.messages.filter((m) => m.handledAt).length;
       assert.ok(remaining > 0 && done >= 1 && remaining + done === SENT_IDS.length, `remaining=${remaining} done=${done}`);
-      const review = await readReview(page);
-      assert.equal(review.length, 12, 'טבלת הסקירה נשארת אחרי עצירה');
-      const runEnabled = await evalRetry(page, (s) => !document.querySelector(s.runReview).disabled, SEL);
-      assert.equal(runEnabled, true, '"בצע לפי הטבלה" חוזר להיות זמין');
+      const after = await readStage(page);
+      assert.deepEqual([after.review, after.run, after.out, after.stop, after.newScan], [false, false, true, false, true], JSON.stringify(after));
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
@@ -476,6 +534,132 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       assert.match(st[m18.uid][0], /הפעולה אפשרית רק עבור בקשת מעבר/, st[m18.uid][0]);
       assert.deepEqual(st[m15.uid].map((s) => s.replace(/:.*$/, '')), ['בוצע', 'נכשל']);
       assert.match(rep.text, new RegExp(m15.uid), 'שורת "מה נשאר" להודעה התקועה');
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  // הכרעה 1: "בצע לפי הטבלה" חל רק על השורות המוצגות. הכרעה 3+5: "סריקה חדשה" בלחיצה שנייה חוזר לסריקה.
+  test('10 סינון → "בצע לפי הטבלה: 1 (המוצגות)" מבצע רק את המוצגת; השאר נשארו "נשלחה"; כלום מוצג → כבוי; "סריקה חדשה" בשתי לחיצות חוזר לסריקה', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      const st0 = await readStage(page);
+      assert.deepEqual([st0.scan, st0.review, st0.run, st0.out, st0.stop, st0.step], [true, false, false, false, false, 'סריקה'], JSON.stringify(st0));
+      await scanAndWait(page);
+      assert.deepEqual(await buttonState(page, SEL.runReview), { label: 'בצע לפי הטבלה: 12', disabled: false, armed: false });
+
+      await page.fill(SEL.filter, 'zzz-אין-כזה');
+      assert.deepEqual(await buttonState(page, SEL.runReview), { label: 'בצע לפי הטבלה', disabled: true, armed: false }, 'כלום מוצג → כבוי');
+
+      await page.fill(SEL.filter, '023456789'); // רק m02
+      const review = await readReview(page);
+      assert.deepEqual(review.filter((r) => !r.hidden).map((r) => r.id), ['023456789']);
+      assert.deepEqual(await buttonState(page, SEL.runReview), { label: 'בצע לפי הטבלה: 1 (המוצגות)', disabled: false, armed: false });
+      await page.click(SEL.runReview);
+      const rep = await waitForReport(page);
+      assert.match(rep.text, /בוצעו=1 · נכשלו=0 · דולגו=0/, rep.text + '\n' + (await readLog(page)));
+      assert.doesNotMatch(rep.text, /לא נמצאו/);
+
+      const db = await readMockDb(page);
+      assert.equal(byId(db, 'm02').handledBy, 'handled');
+      for (const id of SENT_IDS.filter((x) => x !== 'm02')) assert.equal(byId(db, id).status, 'נשלחה', `${id} לא הייתה מוצגת ולא אמורה להשתנות`);
+      const rows = await readTable(page, SEL.results);
+      assert.equal(rows.length, 1, 'שורת-תוצאה אחת בלבד');
+
+      // שלב התוצאות: הטבלה מוסתרת, "עצור" מוסתר; "סריקה חדשה" דורש לחיצה שנייה
+      const st1 = await readStage(page);
+      assert.deepEqual([st1.review, st1.run, st1.out, st1.stop, st1.newScan, st1.step], [false, false, true, false, true, 'תוצאות'], JSON.stringify(st1));
+      await page.click(SEL.newScan);
+      assert.deepEqual(await buttonState(page, SEL.newScan), { label: 'לחץ שוב לסריקה חדשה', disabled: false, armed: true });
+      assert.equal((await readStage(page)).out, true, 'לחיצה ראשונה לא מנקה');
+      await page.click(SEL.newScan);
+      const st2 = await readStage(page);
+      assert.deepEqual([st2.scan, st2.review, st2.out, st2.stop, st2.step], [true, false, false, false, 'סריקה'], JSON.stringify(st2));
+      assert.equal((await readTable(page, SEL.results)).length, 0, 'התוצאות נוקו');
+      assert.equal((await readReview(page)).length, 0, 'הטבלה נוקתה');
+      assert.equal(await readText(page, SEL.scanStatus), 'לא בוצעה סריקה.');
+      assert.equal(await evalRetry(page, (s) => document.querySelector(s.filter).value, SEL), '', 'הסינון אופס');
+      // סריקה שנייה מוצאת את 13 שנותרו
+      const scanTxt = await scanAndWait(page);
+      assert.match(scanTxt, /נסרקו 13 הודעות/, scanTxt);
+      assert.equal((await readStage(page)).review, true);
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  // הכרעה 2: לחיצה על גוף ההודעה פותחת את הנוסח המלא מתחת לשורה; לחיצה שנייה סוגרת; שינוי החלטה לא נוגע
+  test('11 לחיצה על גוף ההודעה פותחת/סוגרת את הנוסח המלא; בחירת החלטה לא משנה; הסינון מסתיר גם את הנוסח הפתוח', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      let review = await readReview(page);
+      assert.ok(review.every((r) => !r.bodyOpen && !r.fullShown), 'הכול סגור בהתחלה');
+      const r01 = review.find((r) => r.id === '012345678');
+      assert.ok(r01.body.endsWith('…') && r01.body.length < r01.bodyFull.length, 'הגוף מקוצר בתא');
+      const bodySel = `${SEL.scanned} tr[data-uid="${r01.uid}"] td.tt-body-cell`;
+      await page.click(bodySel);
+      review = await readReview(page);
+      const open = review.find((r) => r.id === '012345678');
+      assert.equal(open.bodyOpen, true);
+      assert.equal(open.fullShown, true);
+      assert.equal(open.fullText, open.bodyFull, 'הנוסח המלא כמו ב-title');
+      assert.ok(open.fullText.includes('מסוג לימוד 600 בסניף 09'));
+      assert.equal(review.filter((r) => r.fullShown).length, 1, 'רק שורה אחת פתוחה');
+
+      await setDecision(page, r01.uid, DECLINE); // בחירת החלטה אינה לחיצה על הגוף
+      review = await readReview(page);
+      assert.equal(review.find((r) => r.id === '012345678').fullShown, true, 'ההחלטה לא סגרה');
+      assert.equal(review.find((r) => r.id === '012345678').decision, DECLINE);
+
+      await page.fill(SEL.filter, '023456789');
+      review = await readReview(page);
+      assert.equal(review.find((r) => r.id === '012345678').fullShown, false, 'הסינון מסתיר גם את הנוסח המלא');
+      await page.fill(SEL.filter, '');
+      review = await readReview(page);
+      assert.equal(review.find((r) => r.id === '012345678').fullShown, true, 'ביטול הסינון מחזיר אותו פתוח');
+
+      await page.click(bodySel);
+      review = await readReview(page);
+      assert.equal(review.find((r) => r.id === '012345678').fullShown, false, 'לחיצה שנייה סוגרת');
+      assert.equal(review.find((r) => r.id === '012345678').bodyOpen, false);
+      assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
+    } finally { await context.close(); }
+  });
+
+  // הכרעה 5: "נקה מצבת" בשתי לחיצות ("לחץ שוב לניקוי המצבת"); לחיצה אחת לא מוחקת
+  test('12 "נקה מצבת": לחיצה ראשונה דורכת ("לחץ שוב לניקוי המצבת"), שנייה מוחקת את המצבת ואת התגים; "נקה טבלה" בשתי לחיצות חוזר לסריקה', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openMessages(page);
+      await scanAndWait(page);
+      await page.click(SEL.rosterSummary);
+      await page.fill(SEL.rosterInput, ['סניף' + T + 'ת.ז./דרכון', '05' + T + '12345678'].join('\n'));
+      await page.click(SEL.rosterLoad);
+      assert.match(await readText(page, SEL.rosterStatus), /נטענה מצבת: 1 שורות/);
+      let review = await readReview(page);
+      assert.equal(review.find((r) => r.id === '012345678').pending, true);
+      assert.equal(review.filter((r) => r.done).length, 4, 'שאר בקשות-המעבר "כנראה בוצע"');
+
+      await page.click(SEL.rosterClear);
+      assert.deepEqual(await buttonState(page, SEL.rosterClear), { label: 'לחץ שוב לניקוי המצבת', disabled: false, armed: true });
+      assert.match(await readText(page, SEL.rosterStatus), /נטענה מצבת/, 'לחיצה אחת לא מוחקת');
+      assert.equal((await readReview(page)).find((r) => r.id === '012345678').pending, true);
+      await page.click(SEL.rosterClear);
+      assert.deepEqual(await buttonState(page, SEL.rosterClear), { label: 'נקה מצבת', disabled: false, armed: false });
+      assert.equal(await readText(page, SEL.rosterStatus), 'אין מצבת טעונה.');
+      assert.equal(await evalRetry(page, (s) => document.querySelector(s.rosterInput).value, SEL), '');
+      review = await readReview(page);
+      assert.ok(review.every((r) => r.roster === '' && !r.pending && !r.done), 'ההצלבה נעלמה');
+
+      // "נקה טבלה": אותו דפוס; מרוקן את הטבלה וחוזר לסריקה
+      await page.click(SEL.clearTable);
+      assert.deepEqual(await buttonState(page, SEL.clearTable), { label: 'לחץ שוב לניקוי הטבלה', disabled: false, armed: true });
+      assert.equal((await readReview(page)).length, 12, 'לחיצה אחת לא מוחקת');
+      await page.click(SEL.clearTable);
+      const st = await readStage(page);
+      assert.deepEqual([st.scan, st.review, st.step], [true, false, 'סריקה'], JSON.stringify(st));
+      assert.equal((await readReview(page)).length, 0);
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });
