@@ -249,7 +249,10 @@ function departRenderStaleQueue(info) {
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
   const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
-  setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. עבר זמן רב, ולכן הכלי לא ממשיך לבד.
+  const why = info.reason === 'foreign-page'
+    ? 'הדף הזה אינו חלק מהעזיבה, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף המוסד של התלמיד הבא.'
+    : 'עבר זמן רב, ולכן הכלי לא ממשיך לבד.';
+  setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. ${esc(why)}
     ${buttonsRowHtml([
       { id: `${DEPART_P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },
       { id: `${DEPART_P}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
@@ -259,7 +262,8 @@ function departRenderStaleQueue(info) {
     departRenderStaleQueue(null);
     departUi.status('ממשיך את הריצה שנקטעה…');
     departSetRunning(true);
-    Promise.resolve().then(() => departResumeIfPending({ allowStale: true })).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
+    Promise.resolve().then(() => departResumeIfPending({ force: true })).then((ran) => { if (ran === false && !departIsRunning()) departSetRunning(false); })
+      .catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
   });
   $el(`${DEPART_P}-stale-clear`).addEventListener('click', () => {
     departDiscardSavedQueue();
@@ -295,7 +299,7 @@ function departApplySettings(settings) {
 }
 
 async function departStart() {
-  if (departIsRunning()) return;
+  if (departIsRunning()) { departUi.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
   if (departHasSavedQueue()) { departUi.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
   const settings = departReadSettings();
   if (settings.leaveDate && !departIsValidDate(settings.leaveDate)) {
@@ -326,7 +330,8 @@ async function departStart() {
   departUi.progress(0, v.tasks.length);
   departUi.status(`מתחיל: ${departPlural(v.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
   log(`[עזיבה] התחלה: ${v.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
-  await departStartRun(v.tasks, settings);
+  const started = await departStartRun(v.tasks, settings);
+  if (started === false) departSetRunning(false); // ריצה אחרת פעילה (נעילה); ההודעה הוצגה דרך onLocked
 }
 
 function departStopClick() {
@@ -478,7 +483,14 @@ function departMount(container, panelUi, page) {
     onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); setText(`${DEPART_P}-runtext`, `${departPlural(tot, 'תלמיד אחד בריצה', 'N תלמידים בריצה')} · מעבד ${idx + 1} מתוך ${tot}`); departUi.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch}`); },
     onResult: (result, all) => { departResults = all.slice(); departRenderResults(); departUi.progress(all.length, Math.max(departTotal, all.length)); },
     onNavigating: (branch) => { departUi.status(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
-    onStaleQueue: (info) => { departSetRunning(false); departSetStage(departResults.length ? 'results' : 'prep'); departUi.status('יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"'); departRenderStaleQueue(info); departUi.open(); },
+    onStaleQueue: (info) => {
+      departSetRunning(false);
+      departSetStage(departResults.length ? 'results' : 'prep');
+      departUi.status(info && info.reason === 'foreign-page' ? 'יש ריצת עזיבה שנקטעה, אך הדף הזה אינו חלק מהעזיבה. בחר "המשך" או "בטל"' : 'יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"');
+      departRenderStaleQueue(info);
+      departUi.open();
+    },
+    onLocked: (msg) => { departSetRunning(false); departUi.status(msg); setHtml(`${DEPART_P}-stale`, esc(msg)); show(`${DEPART_P}-stale`, true); departUi.open(); },
     onDone: (all, report) => {
       departResults = all.slice(); departResFilter = 'all'; departResSort = null; departGrid.setRows([]); departGrid.setNotes(null);
       departRenderResults(); departRenderReport(report); departSetRunning(false); departSetStage('results'); departUi.progress(all.length, all.length);

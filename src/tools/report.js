@@ -7,12 +7,14 @@
 // לסניף, בלי alert ובלי reload בסוף. אין גישה ל-document/window ברמת המודול.
 
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
-import { log } from '../core/log.js';
+import { log, maskIdsInText } from '../core/log.js';
 import { waitPRM, firePostback } from '../core/prm.js';
 import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { getPage, gotoInstitute, readBranchesFromTree, parsePostbackHref } from '../core/navigate.js';
+import { holdRunLock, dropRunLock } from '../core/lock.js';
 
 export const REPORT_STATE_KEY = 'talmud.report.state';
+const REPORT_LOCK_TOOL = 'report';
 export const REPORT_STATUS = {
   SENT: 'נשלח',
   SKIPPED: 'דולג (כבר דווח)',
@@ -216,11 +218,21 @@ function reportFillRemaining(state) {
   reportSaveState(state);
 }
 
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו (hook onLocked עם ההודעה).
+function reportTakeRunLock(where) {
+  const held = holdRunLock(REPORT_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  reportHook('onLocked', held.message);
+  return false;
+}
+
 function reportFinish(state) {
   reportLive.running = false;
   reportLive.stop = false;
   reportLive.lastResults = Array.isArray(state.results) ? state.results.slice() : [];
   reportClearState();
+  dropRunLock(REPORT_LOCK_TOOL);
   const summary = reportSummary(reportLive.lastResults);
   log(`═══ סיום דיווח חודשי · ${summary.summary}`);
   reportHook('onDone', reportLive.lastResults.slice(), summary);
@@ -339,7 +351,7 @@ async function reportProcessBranch(state, idx, branch) {
   // חלונית האזהרה עם "המשך"
   const confirm = await reportWaitPopup();
   if (!confirm) return mk(REPORT_STATUS.ERROR, 'לא הופיעה חלונית אחרי לחיצה על "שליחת דיווח חודשי"', reportManualAction(branch));
-  log(`[הודעה] "${confirm.text}" [${confirm.buttons.join(', ')}]`);
+  log(`[הודעה] "${maskIdsInText(confirm.text)}" [${confirm.buttons.join(', ')}]`);
   if (!confirm.hasContinue) {
     await reportHidePopup();
     if (confirm.kind === 'success') return mk(REPORT_STATUS.SENT, confirm.text);
@@ -365,7 +377,7 @@ async function reportProcessBranch(state, idx, branch) {
   if (!done) {
     return mk(REPORT_STATUS.ERROR, 'לא הופיעה הודעת הצלחה תוך 10 שניות אחרי "המשך"', `בדוק בדף המוסד של סניף ${branch} אם כפתור הדיווח הפך מנוטרל (סימן שנשלח); אם לא, שלח ידנית`);
   }
-  log(`[הודעה] "${done.text}" [${done.buttons.join(', ')}]`);
+  log(`[הודעה] "${maskIdsInText(done.text)}" [${done.buttons.join(', ')}]`);
   if (done.hasContinue && done.kind !== 'success') {
     // בקשת-אישור נוספת שאינה מוכרת: לא לוחצים לבד
     return mk(REPORT_STATUS.ERROR, `המערכת מבקשת אישור נוסף: "${done.text}"`, `פתח את דף המוסד של סניף ${branch}, קרא את ההודעה והחלט ידנית`);
@@ -412,8 +424,10 @@ export async function reportRunLoop() {
 // "התחל": אוסף את הסניפים מעץ-הצד ומתחיל. מחזיר {ok, count} או {ok:false, reason}.
 export async function reportStart() {
   if (reportIsRunning()) return { ok: false, reason: 'ריצה כבר פעילה' };
+  const held = holdRunLock(REPORT_LOCK_TOOL);
+  if (!held.ok) { log(`[נעילה] התחלה: ${held.message}`); return { ok: false, reason: held.message, locked: true }; }
   const branches = readBranchesFromTree();
-  if (!branches.length) return { ok: false, reason: 'לא נמצאו סניפים בעץ-הצד. ודא שאתה בדף פרטי מוסד' };
+  if (!branches.length) { dropRunLock(REPORT_LOCK_TOOL); return { ok: false, reason: 'לא נמצאו סניפים בעץ-הצד. ודא שאתה בדף פרטי מוסד' }; }
   reportLive.stop = false;
   reportLive.lastResults = [];
   const state = {
@@ -440,6 +454,7 @@ export async function reportResumeIfPending() {
     reportFinish(state);
     return true;
   }
+  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה
   reportLive.running = true; // לפני ההמתנה, כדי ש"התחל" לא יפתח ריצה מקבילה
   reportLive.lastStepAt = state.lastStepAt || Date.now();
   reportHook('onResume', state);

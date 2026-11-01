@@ -12,6 +12,8 @@ import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
 import { getPage, gotoInstitute, normalizeBranch, parsePostbackHref } from '../core/navigate.js';
+import { holdRunLock, dropRunLock } from '../core/lock.js';
+import { dateTodayDMY, dateIsValidDMY } from '../core/dates.js';
 
 // ─── מזהי הפקדים (כמו בסקריפט הישן, שורות 15-29) ─────────────────────────────
 const DEPART_BASE = 'ContentPlaceHolder1_tabInstituteDetails_TabPanel1_ucStudentsSearch';
@@ -156,19 +158,9 @@ export function parseDepartInput(text) {
   return { tasks, errors };
 }
 
-// ─── תאריך DD/MM/YYYY ─────────────────────────────────────────────────────────
-export function departIsValidDate(s) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
-  if (!m) return false;
-  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
-  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
-  return d <= new Date(y, mo, 0).getDate();
-}
-
-export function departTodayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+// ─── תאריך DD/MM/YYYY (מקור אחד: core/dates.js) ─────────────────────────────
+export function departIsValidDate(s) { return dateIsValidDMY(s); }
+export function departTodayDMY() { return dateTodayDMY(); }
 
 // ─── ניתוח הגריד (פורט של analyzeGrid הישן, שורות 183-218) ───────────────────
 // rows = שורות-תאים (td בלבד; שורת הכותרת עם th יוצאת ריקה ונדחית ב-length<10).
@@ -281,6 +273,8 @@ const DEPART_QUEUE_KEY = 'talmud.depart.queue';
 const DEPART_STOP_KEY = 'talmud.depart.stop';
 const DEPART_LANDINGS_KEY = 'talmud.depart.landings';
 const DEPART_STOP_PREFIX = '__DEPART_STOPPED__@';
+const DEPART_CANCEL_PREFIX = '__DEPART_CANCELLED__@';
+const DEPART_LOCK_TOOL = 'depart';
 export const DEPART_MAX_LANDINGS = 6; // טעינות-דף לתלמיד אחד; מעל זה "דולג"
 export const DEPART_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // תור שמור ישן מזה לא ממשיך לבד
 const DEPART_STUDENT_TIMEOUT_MS = 60000;
@@ -307,7 +301,20 @@ function departSetStop() { try { sessionStorage.setItem(DEPART_STOP_KEY, '1'); }
 function departClearStop() { try { sessionStorage.removeItem(DEPART_STOP_KEY); } catch (e) { /* noop */ } }
 function departStopError(where) { return new Error(DEPART_STOP_PREFIX + where); }
 function departIsStopError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_STOP_PREFIX) === 0; }
-function departCheckStop(where) { if (departIsStopped()) throw departStopError(where); }
+function departCancelError(where) { return new Error(DEPART_CANCEL_PREFIX + where); }
+export function departIsCancelError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_CANCEL_PREFIX) === 0; }
+
+// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו (60 שניות) ממשיך לחיות ברקע ועלול לגעת
+// בדף בזמן שהתלמיד הבא רץ (למשל לחיצת "שמירה" מאוחרת, או חיפוש-אימות שמחליף את הגריד של הבא). לכן לכל
+// ניסיון יש "דור"; timeout מקדם את הדור, והניסיון הישן מת בנקודת-הבדיקה הבאה (לפני כל צעד שנוגע באתר).
+let departGeneration = 0;
+export function departNextGeneration() { departGeneration++; return departGeneration; }
+export function departCurrentGeneration() { return departGeneration; }
+export function departIsCancelled(gen) { return typeof gen === 'number' && gen !== departGeneration; }
+export function departCheckStop(where, gen) {
+  if (departIsCancelled(gen)) throw departCancelError(where);
+  if (departIsStopped()) throw departStopError(where);
+}
 
 function departSaveState() {
   const state = {
@@ -555,11 +562,11 @@ async function departClickContinue(popup) {
 }
 
 // ═══ תלמיד יחיד (ישן processStudent 407-549, אותו סדר צעדים) ═══════════════════
-async function departProcessStudent(task) {
+async function departProcessStudent(task, gen) {
   const identity = task.identity;
   const mk = (status, detail, action) => makeDepartResult(task, status, detail, action);
   log(`▶ סניף ${task.branch} · ${maskId(identity)}`);
-  departCheckStop('start');
+  departCheckStop('start', gen);
 
   // שלב 1: לשונית 3
   await departActivateStudentsTab();
@@ -578,7 +585,7 @@ async function departProcessStudent(task) {
   if (analysis.departed) return mk(`${DEPART_STATUS.ALREADY} (${analysis.departDate})`, '', '');
 
   // נקודת-עצירה לפני החלק ההרסני (כמו בישן)
-  departCheckStop('before-depart');
+  departCheckStop('before-depart', gen);
 
   // שלב 4: בחירת השורה
   const sel = await departSelectFirstActiveRow();
@@ -626,6 +633,7 @@ async function departProcessStudent(task) {
     // שלב 8: "אישור"
     const confirmEl = $el(DEPART_IDS.confirmBtn);
     if (!confirmEl) return mk(DEPART_STATUS.ERROR, 'כפתור "אישור" במודאל לא נמצא', DEPART_ACTIONS.error);
+    departCheckStop('before-confirm', gen);
     const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
     if (cres && cres.validationFailed) return mk(DEPART_STATUS.ERROR, 'ולידציה בחלון העזיבה נכשלה (תאריך או סיבה)', 'בדוק את תאריך העזיבה (DD/MM/YYYY) ואת הסיבה והרץ שוב');
     await sleep(300);
@@ -633,6 +641,14 @@ async function departProcessStudent(task) {
     // שלב 8ב: חלונית ההודעה אחרי "אישור"
     const popup = await departReadPopupAfter(1200);
     let softConfirm = '';
+    if (popup && popup.kind === 'error') {
+      // סקירה סופית 1.11.2026: הודעת-שגיאה של האתר ("שגיאה תקלה בתהליך…") מגיעה עם "המשך" בלבד; "המשך" שם רק סוגר.
+      // קודם היא נראתה כאישור-רך: "המשך" נלחץ ואז "שמירה" על עזיבה שלא בוצעה. עכשיו: שגיאה עם הודעת האתר, בלי "שמירה".
+      log(`[אישור] הודעת-שגיאה של האתר: "${maskIdsInText(popup.text)}"`);
+      await departHidePopup();
+      await departCloseModalIfOpen();
+      return mk(`${DEPART_STATUS.ERROR}: ${popup.text || 'תקלה באתר'}`, popup.text, DEPART_ACTIONS.blocked);
+    }
     if (popup && !popup.hasContinue) {
       // רק "אישור": חסימה/ולידציה. מציגים למשתמש ומדלגים; לעולם לא לוחצים "המשך".
       log(`[אישור] נחסם: "${maskIdsInText(popup.text)}"`);
@@ -648,6 +664,7 @@ async function departProcessStudent(task) {
     // שלב 9: "שמירה"
     const saveEl = $el(DEPART_IDS.saveBtn);
     if (!saveEl) return mk(DEPART_STATUS.ERROR, 'כפתור "שמירה" לא נמצא', DEPART_ACTIONS.unverified);
+    if (departIsCancelled(gen)) throw departCancelError('before-save'); // ניסיון שהוחלף לא שומר (עצירה רגילה: רק לפני התלמיד הבא)
     log(`[שמירה] class="${saveEl.className}" disabled=${saveEl.getAttribute('disabled')}`);
     const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
     if (sres && sres.ok === false) log(`[שמירה] postback לא תקין: ${sres.reason}`);
@@ -663,6 +680,7 @@ async function departProcessStudent(task) {
     }
 
     // שלב 10: אימות. מקור האמת: תאריך עזיבה בגריד אחרי חיפוש חוזר.
+    if (departIsCancelled(gen)) throw departCancelError('before-verify'); // חיפוש מאוחר היה מחליף את הגריד של התלמיד הבא
     const verify = await departSearch(identity);
     const v = verify.executed ? analyzeDepartGrid(departReadGridRows(), identity, verify.count) : { found: false, departed: false, departDate: '' };
     log(`[אימות] departed=${v.departed} date="${v.departDate}"`);
@@ -670,7 +688,8 @@ async function departProcessStudent(task) {
     if (saveBlocked) return mk(`${DEPART_STATUS.BLOCKED}: ${saveBlocked}`, saveBlocked, DEPART_ACTIONS.blocked);
     return mk(DEPART_STATUS.UNVERIFIED, verify.executed ? (softConfirm || '') : departSearchFailReason(verify), DEPART_ACTIONS.unverified);
   } finally {
-    try { if (departModalVisible()) await departCloseModalIfOpen(); } catch (e) { /* אצווה לא נתקעת */ }
+    // ניסיון שהוחלף (דור ישן) לא נוגע בדף: המודאל שהוא השאיר נסגר על-ידי departRunAttempt, לא כאן
+    try { if (!departIsCancelled(gen) && departModalVisible()) await departCloseModalIfOpen(); } catch (e) { /* אצווה לא נתקעת */ }
   }
 }
 
@@ -681,16 +700,25 @@ function departWithTimeout(promise, ms) {
   });
 }
 
-async function departProcessStudentSafe(task) {
+// ניסיון אחד לתלמיד, עם תקציב-זמן ודור. runFn(task, gen) הוא הזרימה (מוזרק גם לבדיקה). timeout או שגיאה:
+// הדור מתקדם (הניסיון הישן מת בנקודת-הבדיקה הבאה), החלונית והמודאל נסגרים, והתלמיד מקבל "שגיאה". "נעצר" עובר הלאה.
+export async function departRunAttempt(task, runFn, timeoutMs) {
+  const gen = departNextGeneration();
   try {
-    return await departWithTimeout(departProcessStudent(task), DEPART_STUDENT_TIMEOUT_MS);
+    return await departWithTimeout(runFn(task, gen), timeoutMs);
   } catch (err) {
     if (departIsStopError(err)) throw err;
-    log(`▶ שגיאה: ${err && err.message}`);
+    departNextGeneration();
+    log(`▶ ${departIsCancelError(err) ? 'בוטל' : 'שגיאה'}: ${err && err.message}`);
     try { const pop = readMessagePopup(); if (pop) await departHidePopup(); } catch (e) { /* noop */ }
     try { await departCloseModalIfOpen(); } catch (e) { /* noop */ }
+    if (departIsStopped()) throw departStopError('between-attempts');
     return makeDepartResult(task, `${DEPART_STATUS.ERROR}: ${err && err.message}`, err && err.message, DEPART_ACTIONS.error);
   }
+}
+
+function departProcessStudentSafe(task) {
+  return departRunAttempt(task, departProcessStudent, DEPART_STUDENT_TIMEOUT_MS);
 }
 
 // ═══ הסניף הנכון: דף המוסד של task.branch (הסניף נקרא מה-h1 של הדף, לא מזיכרון) ═══
@@ -740,10 +768,20 @@ function departFillRemaining(status, detail, action) {
   departSaveState();
 }
 
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
+function departTakeRunLock(where) {
+  const held = holdRunLock(DEPART_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  departHook('onLocked', held.message);
+  return false;
+}
+
 function departFinishRun() {
   DEPART_S.running = false;
   departClearState();
   departClearStop();
+  dropRunLock(DEPART_LOCK_TOOL);
   const report = buildDepartReport(DEPART_S.results);
   log(`═══ סיום עזיבה · ${report.summary}`);
   departHook('onDone', DEPART_S.results, report);
@@ -797,8 +835,11 @@ async function departRunQueue() {
   return null;
 }
 
+// מחזיר false כשריצה אחרת פעילה (נעילה); אחרת את ה-Promise של הריצה.
 export async function departStartRun(tasks, settings) {
+  if (!departTakeRunLock('התחלה')) return false;
   departClearStop();
+  departNextGeneration();
   departResetRun();
   departResetLandings();
   DEPART_S.queue = Array.isArray(tasks) ? tasks.slice() : [];
@@ -823,33 +864,60 @@ export function departSavedQueueInfo() {
 }
 
 export function departDiscardSavedQueue() {
+  departNextGeneration();
   departResetRun();
   departClearState();
   departClearStop();
+  dropRunLock(DEPART_LOCK_TOOL);
   log('[עזיבה] התור השמור נמחק לבקשת המשתמש');
   return true;
 }
 
-// בטעינת דף: תור שמור → ממשיכים (אחרי שה-MS AJAX מסיים לאתחל). תור ישן (>30 דק') ממשיך
-// רק אחרי "המשך" בפאנל. רשת-ביטחון: מעל DEPART_MAX_LANDINGS טעינות לתלמיד → "דולג".
-export async function departResumeIfPending(opts) {
-  if (DEPART_S.running) return false;
-  const allowStale = !!(opts && opts.allowStale);
-  const st = departLoadState();
-  if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
+// טהורה: דף שאינו חלק מהעזיבה (כמו ממצא 11 בקליטה): דף אחר (למשל ההודעות) או דף תלמיד-חדש אינם מקום
+// להשתלט עליו; הפאנל מציג "הריצה נקטעה" ומחכה ל"המשך". דף מוסד או דף סוג-לימוד (יש בהם עץ): ממשיכים.
+export function departForeignPage(page) {
+  return !page || page.kind === 'other' || page.kind === 'newStudent';
+}
 
-  if (departIsStopped()) { log('[המשך] דגל עצירה - מנקים מצב'); departClearState(); departClearStop(); return false; }
-  if (!allowStale && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
-    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: true });
-    return false;
-  }
-
+function departLoadRunFromState(st) {
   DEPART_S.queue = st.queue;
   DEPART_S.results = Array.isArray(st.results) ? st.results : [];
   DEPART_S.curIdx = st.curIdx || 0;
   DEPART_S.startedAt = st.startedAt || null;
   DEPART_S.settings = Object.assign({ leaveDate: '', leaveReason: DEPART_DEFAULT_REASON }, st.settings || {});
+}
+
+// בטעינת דף: תור שמור → ממשיכים (אחרי שה-MS AJAX מסיים לאתחל). תור ישן (>30 דק') או דף זר ממשיכים
+// רק אחרי "המשך" בפאנל (opts.force; ‏allowStale נשמר כשם ישן). רשת-ביטחון: מעל DEPART_MAX_LANDINGS טעינות לתלמיד → "דולג".
+export async function departResumeIfPending(opts) {
+  if (DEPART_S.running) return false;
+  const force = !!(opts && (opts.force || opts.allowStale));
+  const st = departLoadState();
+  if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
+
+  if (departIsStopped()) {
+    // סקירה סופית 1.11.2026 (כמו ממצא 6 בקליטה): "עצור" נלחץ בזמן טעינת-דף. קודם המצב נמחק בשקט והתוצאות של
+    // מי שכבר עזב אבדו. עכשיו השארית מסומנת "נעצר" והתוצאות מוצגות.
+    log('[המשך] דגל עצירה אחרי טעינת דף: מסיימים את הריצה עם "נעצר"');
+    departLoadRunFromState(st);
+    departFillRemaining(DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped);
+    departFinishRun();
+    return false;
+  }
+  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: false, reason: '' };
+  if (!force && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
+    departHook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
+    return false;
+  }
+  if (!force && departForeignPage(getPage())) {
+    log('[המשך] הדף הזה אינו חלק מהעזיבה: לא ממשיכים אוטומטית; "המשך" בפאנל ינווט');
+    departHook('onStaleQueue', Object.assign(info, { reason: 'foreign-page' }));
+    return false;
+  }
+  if (!departTakeRunLock('המשך')) return false; // התור נשאר שמור; ינסה שוב בטעינה הבאה או ב"המשך"
+
+  departLoadRunFromState(st);
   if (DEPART_S.curIdx >= DEPART_S.queue.length) { departFinishRun(); return false; }
 
   const landings = departBumpLandings(DEPART_S.curIdx);
@@ -885,6 +953,7 @@ export function departStop() {
     } else {
       departClearState();
       departClearStop();
+      dropRunLock(DEPART_LOCK_TOOL);
     }
   }
 }

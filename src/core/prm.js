@@ -2,6 +2,8 @@
 // v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
 // אין גישה ל-Sys/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין גם ב-Node).
 
+import { log } from './log.js';
+
 export function getPRM() {
   try {
     return Sys.WebForms.PageRequestManager.getInstance();
@@ -68,6 +70,15 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
 // נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
 export function firePostback(target, arg = '', opts) {
   const wait = waitPRM(opts); // (1) registers wait: add_endRequest is wired synchronously inside
-  setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
+  // (2) נדחה, אחרי הרישום. סקירה סופית 1.11.2026: בלי __doPostBack (דף בלי WebForms) הקריאה זרקה חריגה לא-נתפסת
+  // בתוך setTimeout; עכשיו היא נרשמת ביומן וההמתנה מסתיימת כרגיל ב-{ok:true, started:false} (לחיצה שנבלעה).
+  setTimeout(() => {
+    try {
+      if (typeof window === 'undefined' || typeof window.__doPostBack !== 'function') throw new Error('__doPostBack אינה זמינה בדף');
+      window.__doPostBack(target, arg);
+    } catch (e) {
+      log(`[postback] ${target}: ${e && e.message}`);
+    }
+  }, 0);
   return wait;
 }

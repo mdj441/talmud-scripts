@@ -3,16 +3,14 @@
 
 import { $el } from '../core/dom.js';
 import { getLogText, setLogListener, copyLog, clearLog, log } from '../core/log.js';
+import { dateTodayDMY } from '../core/dates.js';
 
 export function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-export function todayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+export function todayDMY() { return dateTodayDMY(); }
 
 // כפתור. kind: primary | danger | ghost | subtle. size: normal | small
 export function buttonHtml({ id, label, kind = 'ghost', size = 'normal', title = '', disabled = false, attrs = '' }) {

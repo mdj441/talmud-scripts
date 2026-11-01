@@ -14,6 +14,9 @@ import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
 import { downloadText } from '../core/csv.js';
 import { parsePostbackHref } from '../core/navigate.js';
+import { holdRunLock, dropRunLock } from '../core/lock.js';
+
+const MESSAGES_LOCK_TOOL = 'messages';
 
 // ─── קבועים ─────────────────────────────────────────────────────────────────
 
@@ -436,18 +439,23 @@ function messagesHook(name, ...args) {
   try { if (MSG.hooks[name]) MSG.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ }
 }
 
+// false = ריצה אחרת (לשונית אחרת של תלמו"ד, או כלי אחר באותה לשונית) פעילה: לא מתחילים (hook onLocked).
 function messagesBeginRun(mode) {
+  const held = holdRunLock(MESSAGES_LOCK_TOOL);
+  if (!held.ok) { log(`[נעילה] ${mode}: ${held.message}`); messagesHook('onLocked', held.message); return false; }
   MSG.running = true;
   MSG.stop = false;
   MSG.mode = mode;
   if (mode !== 'scan') MSG.report = [];
   messagesHook('onStart', mode);
+  return true;
 }
 
 function messagesFinishRun(opts) {
   const report = messagesBuildReport(MSG.report, opts);
   MSG.lastReport = report;
   MSG.running = false;
+  dropRunLock(MESSAGES_LOCK_TOOL);
   messagesHook('onDone', MSG.report.slice(), report, MSG.mode);
   return report;
 }
@@ -631,7 +639,7 @@ const MESSAGES_REPEAT_REASON = 'ההודעה עדיין במצב "נשלחה" א
 
 export async function messagesRunBulk() {
   if (MSG.running) return null;
-  messagesBeginRun('bulk');
+  if (!messagesBeginRun('bulk')) return null;
   const t0 = Date.now();
   log('[הודעות] ▶ מצב גורף: בקשת מעבר → אישור מעבר; אחרת → סמן כטופל');
   await messagesEnsureSentFilter();
@@ -685,7 +693,7 @@ export async function messagesRunBulk() {
 
 export async function messagesScan() {
   if (MSG.running) return null;
-  messagesBeginRun('scan');
+  if (!messagesBeginRun('scan')) return null;
   MSG.scanned = [];
   const t0 = Date.now();
   log('[הודעות] סריקה: מתחיל');
@@ -716,6 +724,7 @@ export async function messagesScan() {
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   log(`[הודעות] סריקה הסתיימה${MSG.stop ? ' (נעצר)' : ''}: ${total} הודעות (${MSG.scanned.length} שונות) מ-${pages} עמודים (${dt} שניות)`);
   MSG.running = false;
+  dropRunLock(MESSAGES_LOCK_TOOL);
   const info = { pages, total, stopped: MSG.stop };
   messagesHook('onScanDone', MSG.scanned.slice(), info);
   return MSG.scanned.slice();
@@ -734,7 +743,7 @@ export async function messagesRunTable(entries) {
     pending.set(e.uid, { action: e.action, left });
   }
   if (!pending.size) { log('[הודעות] אין טבלה טעונה'); return null; }
-  messagesBeginRun('table');
+  if (!messagesBeginRun('table')) return null;
   const t0 = Date.now();
   let toDo = 0;
   for (const p of pending.values()) if (p.action !== MESSAGES_ACTION.SKIP) toDo += Number.isFinite(p.left) ? p.left : 1;

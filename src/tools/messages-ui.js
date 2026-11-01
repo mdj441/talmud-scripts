@@ -605,6 +605,7 @@ function messagesMount(container, panelUi, page) {
       msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי הטבלה…');
     },
     onStatus: (msg) => msgUi.status(msg),
+    onLocked: (msg) => { messagesSetRunning(false); if (msgStage === 'run') messagesSetStage(messagesIdleStage()); msgUi.status(msg); },
     onProgress: (cur, total) => { msgUi.progress(cur, total); messagesSetRunText(messagesRunText({ mode: 'table', cur, total })); },
     onResult: (row, all) => {
       msgResults = all;

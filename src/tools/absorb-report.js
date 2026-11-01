@@ -3,6 +3,7 @@
 
 import { padId9 } from '../core/identity.js';
 import { parsePostbackHref } from '../core/navigate.js';
+import { dateTodayDMY, dateIsValidDMY } from '../core/dates.js';
 
 // הנוסחים (שכבת-הבהירות 1.11.2026): קצרים, בלי מקף ארוך, "לבדוק" = צהוב (לא תקלה), השאר אדום.
 export const ABSORB_STATUS = {
@@ -226,19 +227,10 @@ export function absorbQueueLastActivity(state) {
 }
 
 // תאריך היום כ-DD/MM/YYYY (הסקריפט הישן כתב "היום" במפורש במודאל; האתר זוכר תאריך קודם באותה טעינה).
-export function absorbTodayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+export function absorbTodayDMY() { return dateTodayDMY(); }
 
-// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה).
-export function absorbIsValidDate(s) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
-  if (!m) return false;
-  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
-  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
-  return d <= new Date(y, mo, 0).getDate();
-}
+// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה: core/dates.js).
+export function absorbIsValidDate(s) { return dateIsValidDMY(s); }
 
 // תאריך הקליטה שנכתב במודאל: מה שבשדה, ואם ריק: היום במפורש.
 export function absorbResolveStartDate(panelValue) {

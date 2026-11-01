@@ -59,81 +59,6 @@ function waitFor(predicate, { timeout = 5000, interval = 30 } = {}) {
   });
 }
 
-// ─── src/core/prm.js ───
-// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager: פורט מ"תלמוד - עזיבת תלמידים"
-// v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
-// אין גישה ל-Sys/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין גם ב-Node).
-
-function getPRM() {
-  try {
-    return Sys.WebForms.PageRequestManager.getInstance();
-  } catch (e) {
-    return null;
-  }
-}
-
-// שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
-// לעולם לא נזרק/נדחה: "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
-// {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
-// ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
-// "הפעולה לא הפעילה שום בקשה לשרת": לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
-// אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
-function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
-  return new Promise((resolve) => {
-    const prm = getPRM();
-    if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
-
-    let started = false, done = false;
-    // ממצא 8: ירי בקשה כשאחרת בטיסה: MS AJAX מריץ abortPostBack שמרים endRequest (בלי שגיאה) של
-    // הבקשה הקודמת *לפני* ה-beginRequest של החדשה. ה-endRequest הראשון אחרי רישום-בזמן-טיסה
-    // שייך לקודמת, ולא מסיים את ההמתנה הזו.
-    let inFlight = !!prm._isInAsyncPostBack;
-
-    function onBegin() { started = true; inFlight = false; clearTimeout(startTimer); }
-
-    function onEnd(s, e) {
-      if (inFlight && !started) { inFlight = false; return; }
-      const err = e && e.get_error && e.get_error();
-      if (err && e.set_errorHandled) e.set_errorHandled(true);
-      finish(err ? { ok: false, reason: 'PRM: ' + (err.message || 'postback error') } : { ok: true });
-    }
-
-    function finish(result) {
-      if (done) return;
-      done = true;
-      prm.remove_beginRequest(onBegin);
-      prm.remove_endRequest(onEnd);
-      clearTimeout(startTimer);
-      clearTimeout(totalTimer);
-      resolve(Object.assign({ started }, result));
-    }
-
-    prm.add_beginRequest(onBegin);
-    prm.add_endRequest(onEnd);
-
-    const startTimer = setTimeout(() => {
-      if (!started && !prm._isInAsyncPostBack) {
-        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback: ממשיכים
-      }
-    }, startTimeoutMs);
-
-    const totalTimer = setTimeout(() => {
-      // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
-      // ‏timeout:true (ממצא ב-2): הקורא מבחין בין "פג הזמן" (אולי pageRedirect בלי endRequest) לכשל אחר.
-      finish({ ok: false, timeout: true, reason: `PRM timeout after ${totalTimeoutMs}ms` });
-    }, totalTimeoutMs);
-  });
-}
-
-// יורה postback עם סדר קשיח (global-constraints, "postback מקוד strict"): רושמים
-// את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
-// נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
-function firePostback(target, arg = '', opts) {
-  const wait = waitPRM(opts); // (1) registers wait: add_endRequest is wired synchronously inside
-  setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
-  return wait;
-}
-
 // ─── src/core/csv.js ───
 // ייצוא/העתקה: פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
 // toCsv טהורה (נבדקת ביחידה); downloadText/copyTextToClipboard נוגעות ב-DOM ולכן
@@ -280,6 +205,91 @@ function setLogListener(fn) {
 
 function copyLog() {
   return copyTextToClipboard(getLogText());
+}
+
+// ─── src/core/prm.js ───
+// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager: פורט מ"תלמוד - עזיבת תלמידים"
+// v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
+// אין גישה ל-Sys/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין גם ב-Node).
+
+
+function getPRM() {
+  try {
+    return Sys.WebForms.PageRequestManager.getInstance();
+  } catch (e) {
+    return null;
+  }
+}
+
+// שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
+// לעולם לא נזרק/נדחה: "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
+// {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
+// ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
+// "הפעולה לא הפעילה שום בקשה לשרת": לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
+// אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
+function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
+  return new Promise((resolve) => {
+    const prm = getPRM();
+    if (!prm) { setTimeout(() => resolve({ ok: true, started: false }), 200); return; }
+
+    let started = false, done = false;
+    // ממצא 8: ירי בקשה כשאחרת בטיסה: MS AJAX מריץ abortPostBack שמרים endRequest (בלי שגיאה) של
+    // הבקשה הקודמת *לפני* ה-beginRequest של החדשה. ה-endRequest הראשון אחרי רישום-בזמן-טיסה
+    // שייך לקודמת, ולא מסיים את ההמתנה הזו.
+    let inFlight = !!prm._isInAsyncPostBack;
+
+    function onBegin() { started = true; inFlight = false; clearTimeout(startTimer); }
+
+    function onEnd(s, e) {
+      if (inFlight && !started) { inFlight = false; return; }
+      const err = e && e.get_error && e.get_error();
+      if (err && e.set_errorHandled) e.set_errorHandled(true);
+      finish(err ? { ok: false, reason: 'PRM: ' + (err.message || 'postback error') } : { ok: true });
+    }
+
+    function finish(result) {
+      if (done) return;
+      done = true;
+      prm.remove_beginRequest(onBegin);
+      prm.remove_endRequest(onEnd);
+      clearTimeout(startTimer);
+      clearTimeout(totalTimer);
+      resolve(Object.assign({ started }, result));
+    }
+
+    prm.add_beginRequest(onBegin);
+    prm.add_endRequest(onEnd);
+
+    const startTimer = setTimeout(() => {
+      if (!started && !prm._isInAsyncPostBack) {
+        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback: ממשיכים
+      }
+    }, startTimeoutMs);
+
+    const totalTimer = setTimeout(() => {
+      // מפסיקים להמתין לתלמיד הזה בלי לזרוק, כדי לא לסכן postback שני מעל אחד שעדיין בטיסה.
+      // ‏timeout:true (ממצא ב-2): הקורא מבחין בין "פג הזמן" (אולי pageRedirect בלי endRequest) לכשל אחר.
+      finish({ ok: false, timeout: true, reason: `PRM timeout after ${totalTimeoutMs}ms` });
+    }, totalTimeoutMs);
+  });
+}
+
+// יורה postback עם סדר קשיח (global-constraints, "postback מקוד strict"): רושמים
+// את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
+// נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
+function firePostback(target, arg = '', opts) {
+  const wait = waitPRM(opts); // (1) registers wait: add_endRequest is wired synchronously inside
+  // (2) נדחה, אחרי הרישום. סקירה סופית 1.11.2026: בלי __doPostBack (דף בלי WebForms) הקריאה זרקה חריגה לא-נתפסת
+  // בתוך setTimeout; עכשיו היא נרשמת ביומן וההמתנה מסתיימת כרגיל ב-{ok:true, started:false} (לחיצה שנבלעה).
+  setTimeout(() => {
+    try {
+      if (typeof window === 'undefined' || typeof window.__doPostBack !== 'function') throw new Error('__doPostBack אינה זמינה בדף');
+      window.__doPostBack(target, arg);
+    } catch (e) {
+      log(`[postback] ${target}: ${e && e.message}`);
+    }
+  }, 0);
+  return wait;
 }
 
 // ─── src/core/navigate.js ───
@@ -727,6 +737,24 @@ async function gotoStudyType(branch, code) {
   return Object.assign({ studyType: c }, res);
 }
 
+// ─── src/core/dates.js ───
+// תאריכים בפורמט האתר (DD/MM/YYYY): מקור אחד לקליטה, לעזיבה ולחלונית (סקירה סופית 1.11.2026: שלושה עותקים
+// זהים אוחדו לכאן; השמות הישנים נשארו כעטיפות דקות). טהור, בלי DOM.
+
+function dateTodayDMY() {
+  const d = new Date();
+  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
+}
+
+// תאריך DD/MM/YYYY תקין: חודש 1 עד 12, יום לפי החודש, שנה 1900 עד 2200.
+function dateIsValidDMY(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
+  if (!m) return false;
+  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
+  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
+  return d <= new Date(y, mo, 0).getDate();
+}
+
 // ─── src/ui/widgets.js ───
 // רכיבי-ממשק משותפים לכל הכלים: בוני HTML טהורים (נבדקים ב-Node) + קושרי-אירועים קטנים.
 // כל המחלקות עם קידומת tt- (ה-CSS ב-panel.js). אין גישה ל-document ברמת המודול.
@@ -737,10 +765,7 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function todayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+function todayDMY() { return dateTodayDMY(); }
 
 // כפתור. kind: primary | danger | ghost | subtle. size: normal | small
 function buttonHtml({ id, label, kind = 'ghost', size = 'normal', title = '', disabled = false, attrs = '' }) {
@@ -1307,7 +1332,7 @@ function activateTab(id) {
   for (const t of tools) {
     const tab = $el(`tt-tab-${t.id}`);
     const pane = $el(`tt-pane-${t.id}`);
-    if (tab) tab.classList.toggle('tt-tab-active', t.id === id);
+    if (tab) { tab.classList.toggle('tt-tab-active', t.id === id); tab.setAttribute('aria-selected', t.id === id ? 'true' : 'false'); }
     if (pane) pane.hidden = t.id !== id;
   }
   saveUiState({ tab: id });
@@ -2328,19 +2353,10 @@ function absorbQueueLastActivity(state) {
 }
 
 // תאריך היום כ-DD/MM/YYYY (הסקריפט הישן כתב "היום" במפורש במודאל; האתר זוכר תאריך קודם באותה טעינה).
-function absorbTodayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+function absorbTodayDMY() { return dateTodayDMY(); }
 
-// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה).
-function absorbIsValidDate(s) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
-  if (!m) return false;
-  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
-  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
-  return d <= new Date(y, mo, 0).getDate();
-}
+// תאריך DD/MM/YYYY תקין (אותם כללים כמו בעזיבה: core/dates.js).
+function absorbIsValidDate(s) { return dateIsValidDMY(s); }
 
 // תאריך הקליטה שנכתב במודאל: מה שבשדה, ואם ריק: היום במפורש.
 function absorbResolveStartDate(panelValue) {
@@ -2553,19 +2569,25 @@ function absorbResetRun() {
 }
 
 // ─── src/core/lock.js ───
-// נעילת-ריצה בין לשוניות (ממצא 5): ההקשר צד-השרת של תלמו"ד משותף לכל הלשוניות (דף תלמיד-חדש
-// נפתח בלי פרמטרים), ולכן שתי ריצות במקביל משבשות זו את זו. הנעילה ב-localStorage (משותף ללשוניות):
-// { tab: מזהה-לשונית, at: Date.now() }. הלשונית הרצה מרעננת אותה כל כמה שניות; נעילה שלא רועננה
-// RUN_LOCK_TTL_MS נחשבת מתה (לשונית שנסגרה באמצע). מזהה-הלשונית נשמר ב-sessionStorage (פר-לשונית).
-// הלוגיקה הטהורה (runLockState) נפרדת כדי שגם עזיבה/דיווח יוכלו להשתמש בה. אין DOM כאן.
+// נעילת-ריצה בין לשוניות ובין כלים (ממצא 5): ההקשר צד-השרת של תלמו"ד משותף לכל הלשוניות ("המוסד הנוכחי"
+// נקבע בלחיצה האחרונה בעץ, לא בכתובת; דף תלמיד-חדש נפתח בלי פרמטרים), ולכן שתי ריצות במקביל משבשות זו
+// את זו: גם בשתי לשוניות-דפדפן, וגם שני כלים (למשל קליטה ועזיבה) באותה לשונית. הנעילה ב-localStorage
+// (משותף ללשוניות): { tab: מזהה-לשונית, tool: מזהה-הכלי, at: Date.now() }. הכלי הרץ מרענן אותה כל כמה
+// שניות; נעילה שלא רועננה RUN_LOCK_TTL_MS נחשבת מתה (לשונית שנסגרה באמצע). מזהה-הלשונית נשמר
+// ב-sessionStorage (פר-לשונית). "שלי" = אותה לשונית ואותו כלי. הלוגיקה הטהורה (runLockState) נפרדת. אין DOM כאן.
+// סקירה סופית 1.11.2026: עד עכשיו רק הקליטה נעלה; עזיבה, דיווח והודעות רצו בלי נעילה (README הבטיח "ריצה אחת
+// בכל פעם" לכל הלשוניות). עכשיו כל ארבעת הכלים עוברים דרך holdRunLock / dropRunLock.
 
 const RUN_LOCK_KEY = 'talmud.absorb.lock';
 const RUN_LOCK_TTL_MS = 10000;
 const RUN_LOCK_REFRESH_MS = 3000;
 const TAB_ID_KEY = 'talmud.tabId';
 
-// טהורה: האם הנעילה חיה (טרייה מ-TTL) והאם היא של הלשונית הזו.
-function runLockState(lock, tabId, now, ttlMs) {
+// שמות הכלים להודעה למשתמש (אותם נוסחים כמו בלשוניות החלונית).
+const RUN_LOCK_TOOL_TITLES = { absorb: 'קליטת תלמידים', depart: 'עזיבת תלמידים', report: 'דיווח חודשי', messages: 'הודעות' };
+
+// טהורה: האם הנעילה חיה (טרייה מ-TTL) והאם היא שלי (אותה לשונית; ואם נרשם כלי, גם אותו כלי).
+function runLockState(lock, tabId, now, ttlMs, tool) {
   const dead = { live: false, mine: false };
   if (!lock || typeof lock !== 'object') return dead;
   const at = typeof lock.at === 'number' ? lock.at : NaN;
@@ -2573,7 +2595,18 @@ function runLockState(lock, tabId, now, ttlMs) {
   const ttl = typeof ttlMs === 'number' ? ttlMs : RUN_LOCK_TTL_MS;
   const nowMs = typeof now === 'number' ? now : Date.now();
   if (nowMs - at > ttl) return dead;
-  return { live: true, mine: !!tabId && lock.tab === tabId };
+  const sameTab = !!tabId && lock.tab === tabId;
+  const sameTool = !tool || !lock.tool || lock.tool === tool;
+  return { live: true, mine: sameTab && sameTool };
+}
+
+// טהורה: ההודעה למשתמש כשנעילה חיה של מישהו אחר חוסמת. מבחינה בין "באותה לשונית" (כלי אחר בחלונית הזו)
+// ל"בלשונית אחרת של הדפדפן".
+function runLockBusyMessage(lock, tabId) {
+  const title = lock && lock.tool && RUN_LOCK_TOOL_TITLES[lock.tool] ? `"${RUN_LOCK_TOOL_TITLES[lock.tool]}"` : '';
+  const what = title ? `ריצה של ${title} פעילה` : 'ריצה פעילה';
+  if (lock && tabId && lock.tab === tabId) return `${what} בחלונית הזו. עצור אותה ("עצור" או Escape) או המתן לסיומה`;
+  return `${what} בלשונית אחרת של תלמו"ד בדפדפן. עצור אותה שם או המתן לסיומה`;
 }
 
 function randomId() {
@@ -2604,41 +2637,71 @@ function readRunLock() {
   }
 }
 
-function writeRunLock() {
+function writeRunLock(tool) {
   try {
     if (typeof localStorage === 'undefined') return true; // בלי אחסון משותף אין לשוניות אחרות
-    localStorage.setItem(RUN_LOCK_KEY, JSON.stringify({ tab: currentTabId(), at: Date.now() }));
+    const rec = { tab: currentTabId(), at: Date.now() };
+    if (tool) rec.tool = String(tool);
+    localStorage.setItem(RUN_LOCK_KEY, JSON.stringify(rec));
     return true;
   } catch (e) {
     return true; // כשל-אחסון לא עוצר ריצה ("אצווה לא נתקעת")
   }
 }
 
-// רוכש את הנעילה. false = לשונית אחרת מחזיקה נעילה חיה.
-function acquireRunLock() {
-  const st = runLockState(readRunLock(), currentTabId());
+// רוכש את הנעילה לכלי. false = מישהו אחר (לשונית אחרת, או כלי אחר באותה לשונית) מחזיק נעילה חיה.
+function acquireRunLock(tool) {
+  const st = runLockState(readRunLock(), currentTabId(), undefined, undefined, tool);
   if (st.live && !st.mine) return false;
-  return writeRunLock();
+  return writeRunLock(tool);
 }
 
 // מרענן נעילה שלנו. false = הנעילה אינה שלנו (לא נוגעים).
-function refreshRunLock() {
-  const st = runLockState(readRunLock(), currentTabId());
+function refreshRunLock(tool) {
+  const st = runLockState(readRunLock(), currentTabId(), undefined, undefined, tool);
   if (st.live && !st.mine) return false;
-  return writeRunLock();
+  return writeRunLock(tool);
 }
 
-// משחרר רק נעילה שלנו.
-function releaseRunLock() {
+// משחרר רק נעילה שלנו (אותה לשונית; ואם נרשם כלי, אותו כלי).
+function releaseRunLock(tool) {
   try {
     if (typeof localStorage === 'undefined') return;
     const lock = readRunLock();
     if (lock && lock.tab && lock.tab !== currentTabId()) return;
+    if (lock && lock.tool && tool && lock.tool !== tool) return;
     localStorage.removeItem(RUN_LOCK_KEY);
   } catch (e) { /* noop */ }
 }
 
-// הודעה למשתמש כשלשונית אחרת רצה.
+// ─── החזקה עם רענון תקופתי: מה שכל כלי צריך ────────────────────────────────
+let holdTimer = null;
+let holdTool = null;
+
+function stopHoldTimer() {
+  if (holdTimer !== null) { try { clearInterval(holdTimer); } catch (e) { /* noop */ } holdTimer = null; }
+  holdTool = null;
+}
+
+// רוכש את הנעילה לכלי ומתחיל לרענן אותה. מחזיר {ok:true} או {ok:false, message} עם ההודעה למשתמש.
+// הריענון נעצר ב-dropRunLock; טעינת-דף מפילה אותו ממילא, וההמשך אחרי הטעינה רוכש מחדש (אותה לשונית = שלי).
+function holdRunLock(tool) {
+  if (!acquireRunLock(tool)) return { ok: false, message: runLockBusyMessage(readRunLock(), currentTabId()) };
+  if (holdTimer !== null && holdTool !== tool) stopHoldTimer();
+  if (holdTimer === null) {
+    holdTool = tool;
+    holdTimer = setInterval(() => { refreshRunLock(tool); }, RUN_LOCK_REFRESH_MS);
+  }
+  return { ok: true };
+}
+
+// מפסיק לרענן ומשחרר (רק נעילה שלנו).
+function dropRunLock(tool) {
+  stopHoldTimer();
+  releaseRunLock(tool);
+}
+
+// הודעה כללית (נשמרת לתאימות; ההודעה המדויקת מגיעה מ-holdRunLock).
 const RUN_LOCK_BUSY_MESSAGE = 'ריצה פעילה בלשונית אחרת של תלמו"ד. סגור אותה או המתן';
 
 // ─── src/core/popup.js ───
@@ -3591,7 +3654,7 @@ async function absorbAfterConfirmPopup(gen) {
   if (!(confirmKind && S.continueOtherInstitute && OTHER_INSTITUTE_RE.test(pop.text))) {
     return absorbReadAndHidePopup('אחרי אישור', gen);
   }
-  log(`[הודעה] אחרי אישור: ${pop.text} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
+  log(`[הודעה] אחרי אישור: ${maskIdsInText(pop.text)} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
   log('[המשך] "אשר המשך" מסומן בפאנל: לוחצים "המשך" (מעבר בין מוסדות; לימודיו במוסד האחר מסתיימים)');
   const pressed = pressMessagePopupContinueAsync();
   if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא: נשאר "נחסם"'); return { pop, blocked: true }; }
@@ -3657,29 +3720,20 @@ function recordResult(result, gen, idx) {
   return true;
 }
 
-// ─── נעילת-ריצה בין לשוניות (ממצא 5) ────────────────────────────────────────
-let lockTimer = null;
+// ─── נעילת-ריצה בין לשוניות ובין כלים (ממצא 5; סקירה סופית 1.11.2026: משותפת לכל הכלים ב-core/lock.js) ───
+const ABSORB_LOCK_TOOL = 'absorb';
 
-function startLockRefresh() {
-  if (lockTimer !== null) return;
-  lockTimer = setInterval(() => { refreshRunLock(); }, RUN_LOCK_REFRESH_MS);
-}
-
-function stopLockRefresh() {
-  if (lockTimer !== null) { try { clearInterval(lockTimer); } catch (e) { /* noop */ } lockTimer = null; }
-}
-
-// false = לשונית אחרת של תלמו"ד רצה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
 function takeRunLock(where) {
-  if (acquireRunLock()) { startLockRefresh(); return true; }
-  log(`[נעילה] ${where}: ${RUN_LOCK_BUSY_MESSAGE}`);
-  hook('onLocked', RUN_LOCK_BUSY_MESSAGE);
+  const held = holdRunLock(ABSORB_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  hook('onLocked', held.message);
   return false;
 }
 
-function dropRunLock() {
-  stopLockRefresh();
-  releaseRunLock();
+function absorbDropRunLock() {
+  dropRunLock(ABSORB_LOCK_TOOL);
 }
 
 function fillRemaining(status, detail, action) {
@@ -3696,7 +3750,7 @@ function finishRun() {
   navigating = false;
   clearAbsorbState();
   clearAbsorbStop();
-  dropRunLock(); // ממצא 5
+  absorbDropRunLock(); // ממצא 5
   const report = buildRemainingReport(S.results);
   saveAbsorbLastResults(S.results, report); // ממצא 6: תמונת-תוצאות אחרונה שורדת טעינת-דף
   log(`═══ סיום · ${report.summary}`);
@@ -3708,7 +3762,7 @@ async function runQueue() {
   navigating = false;
   clearWatchdog();
   watchUnload();
-  startLockRefresh();
+  holdRunLock(ABSORB_LOCK_TOOL); // ההמשך אחרי טעינת-דף: הנעילה שלנו (אותה לשונית), הריענון מתחיל מחדש
   log(`🚀 ריצה: ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
   hook('onStart', S.queue, S.curIdx);
 
@@ -3792,7 +3846,7 @@ function absorbDiscardSavedQueue() {
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
-  dropRunLock();
+  absorbDropRunLock();
   log('[המשך] התור השמור נמחק לבקשת המשתמש');
   return true;
 }
@@ -3895,7 +3949,7 @@ function absorbStop() {
     } else {
       clearAbsorbState();
       clearAbsorbStop();
-      dropRunLock();
+      absorbDropRunLock();
     }
   }
 }
@@ -5186,19 +5240,9 @@ function parseDepartInput(text) {
   return { tasks, errors };
 }
 
-// ─── תאריך DD/MM/YYYY ─────────────────────────────────────────────────────────
-function departIsValidDate(s) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s == null ? '' : s).trim());
-  if (!m) return false;
-  const d = Number(m[1]); const mo = Number(m[2]); const y = Number(m[3]);
-  if (mo < 1 || mo > 12 || d < 1 || y < 1900 || y > 2200) return false;
-  return d <= new Date(y, mo, 0).getDate();
-}
-
-function departTodayDMY() {
-  const d = new Date();
-  return [String(d.getDate()).padStart(2, '0'), String(d.getMonth() + 1).padStart(2, '0'), d.getFullYear()].join('/');
-}
+// ─── תאריך DD/MM/YYYY (מקור אחד: core/dates.js) ─────────────────────────────
+function departIsValidDate(s) { return dateIsValidDMY(s); }
+function departTodayDMY() { return dateTodayDMY(); }
 
 // ─── ניתוח הגריד (פורט של analyzeGrid הישן, שורות 183-218) ───────────────────
 // rows = שורות-תאים (td בלבד; שורת הכותרת עם th יוצאת ריקה ונדחית ב-length<10).
@@ -5311,6 +5355,8 @@ const DEPART_QUEUE_KEY = 'talmud.depart.queue';
 const DEPART_STOP_KEY = 'talmud.depart.stop';
 const DEPART_LANDINGS_KEY = 'talmud.depart.landings';
 const DEPART_STOP_PREFIX = '__DEPART_STOPPED__@';
+const DEPART_CANCEL_PREFIX = '__DEPART_CANCELLED__@';
+const DEPART_LOCK_TOOL = 'depart';
 const DEPART_MAX_LANDINGS = 6; // טעינות-דף לתלמיד אחד; מעל זה "דולג"
 const DEPART_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // תור שמור ישן מזה לא ממשיך לבד
 const DEPART_STUDENT_TIMEOUT_MS = 60000;
@@ -5337,7 +5383,20 @@ function departSetStop() { try { sessionStorage.setItem(DEPART_STOP_KEY, '1'); }
 function departClearStop() { try { sessionStorage.removeItem(DEPART_STOP_KEY); } catch (e) { /* noop */ } }
 function departStopError(where) { return new Error(DEPART_STOP_PREFIX + where); }
 function departIsStopError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_STOP_PREFIX) === 0; }
-function departCheckStop(where) { if (departIsStopped()) throw departStopError(where); }
+function departCancelError(where) { return new Error(DEPART_CANCEL_PREFIX + where); }
+function departIsCancelError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_CANCEL_PREFIX) === 0; }
+
+// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו (60 שניות) ממשיך לחיות ברקע ועלול לגעת
+// בדף בזמן שהתלמיד הבא רץ (למשל לחיצת "שמירה" מאוחרת, או חיפוש-אימות שמחליף את הגריד של הבא). לכן לכל
+// ניסיון יש "דור"; timeout מקדם את הדור, והניסיון הישן מת בנקודת-הבדיקה הבאה (לפני כל צעד שנוגע באתר).
+let departGeneration = 0;
+function departNextGeneration() { departGeneration++; return departGeneration; }
+function departCurrentGeneration() { return departGeneration; }
+function departIsCancelled(gen) { return typeof gen === 'number' && gen !== departGeneration; }
+function departCheckStop(where, gen) {
+  if (departIsCancelled(gen)) throw departCancelError(where);
+  if (departIsStopped()) throw departStopError(where);
+}
 
 function departSaveState() {
   const state = {
@@ -5585,11 +5644,11 @@ async function departClickContinue(popup) {
 }
 
 // ═══ תלמיד יחיד (ישן processStudent 407-549, אותו סדר צעדים) ═══════════════════
-async function departProcessStudent(task) {
+async function departProcessStudent(task, gen) {
   const identity = task.identity;
   const mk = (status, detail, action) => makeDepartResult(task, status, detail, action);
   log(`▶ סניף ${task.branch} · ${maskId(identity)}`);
-  departCheckStop('start');
+  departCheckStop('start', gen);
 
   // שלב 1: לשונית 3
   await departActivateStudentsTab();
@@ -5608,7 +5667,7 @@ async function departProcessStudent(task) {
   if (analysis.departed) return mk(`${DEPART_STATUS.ALREADY} (${analysis.departDate})`, '', '');
 
   // נקודת-עצירה לפני החלק ההרסני (כמו בישן)
-  departCheckStop('before-depart');
+  departCheckStop('before-depart', gen);
 
   // שלב 4: בחירת השורה
   const sel = await departSelectFirstActiveRow();
@@ -5656,6 +5715,7 @@ async function departProcessStudent(task) {
     // שלב 8: "אישור"
     const confirmEl = $el(DEPART_IDS.confirmBtn);
     if (!confirmEl) return mk(DEPART_STATUS.ERROR, 'כפתור "אישור" במודאל לא נמצא', DEPART_ACTIONS.error);
+    departCheckStop('before-confirm', gen);
     const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
     if (cres && cres.validationFailed) return mk(DEPART_STATUS.ERROR, 'ולידציה בחלון העזיבה נכשלה (תאריך או סיבה)', 'בדוק את תאריך העזיבה (DD/MM/YYYY) ואת הסיבה והרץ שוב');
     await sleep(300);
@@ -5663,6 +5723,14 @@ async function departProcessStudent(task) {
     // שלב 8ב: חלונית ההודעה אחרי "אישור"
     const popup = await departReadPopupAfter(1200);
     let softConfirm = '';
+    if (popup && popup.kind === 'error') {
+      // סקירה סופית 1.11.2026: הודעת-שגיאה של האתר ("שגיאה תקלה בתהליך…") מגיעה עם "המשך" בלבד; "המשך" שם רק סוגר.
+      // קודם היא נראתה כאישור-רך: "המשך" נלחץ ואז "שמירה" על עזיבה שלא בוצעה. עכשיו: שגיאה עם הודעת האתר, בלי "שמירה".
+      log(`[אישור] הודעת-שגיאה של האתר: "${maskIdsInText(popup.text)}"`);
+      await departHidePopup();
+      await departCloseModalIfOpen();
+      return mk(`${DEPART_STATUS.ERROR}: ${popup.text || 'תקלה באתר'}`, popup.text, DEPART_ACTIONS.blocked);
+    }
     if (popup && !popup.hasContinue) {
       // רק "אישור": חסימה/ולידציה. מציגים למשתמש ומדלגים; לעולם לא לוחצים "המשך".
       log(`[אישור] נחסם: "${maskIdsInText(popup.text)}"`);
@@ -5678,6 +5746,7 @@ async function departProcessStudent(task) {
     // שלב 9: "שמירה"
     const saveEl = $el(DEPART_IDS.saveBtn);
     if (!saveEl) return mk(DEPART_STATUS.ERROR, 'כפתור "שמירה" לא נמצא', DEPART_ACTIONS.unverified);
+    if (departIsCancelled(gen)) throw departCancelError('before-save'); // ניסיון שהוחלף לא שומר (עצירה רגילה: רק לפני התלמיד הבא)
     log(`[שמירה] class="${saveEl.className}" disabled=${saveEl.getAttribute('disabled')}`);
     const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
     if (sres && sres.ok === false) log(`[שמירה] postback לא תקין: ${sres.reason}`);
@@ -5693,6 +5762,7 @@ async function departProcessStudent(task) {
     }
 
     // שלב 10: אימות. מקור האמת: תאריך עזיבה בגריד אחרי חיפוש חוזר.
+    if (departIsCancelled(gen)) throw departCancelError('before-verify'); // חיפוש מאוחר היה מחליף את הגריד של התלמיד הבא
     const verify = await departSearch(identity);
     const v = verify.executed ? analyzeDepartGrid(departReadGridRows(), identity, verify.count) : { found: false, departed: false, departDate: '' };
     log(`[אימות] departed=${v.departed} date="${v.departDate}"`);
@@ -5700,7 +5770,8 @@ async function departProcessStudent(task) {
     if (saveBlocked) return mk(`${DEPART_STATUS.BLOCKED}: ${saveBlocked}`, saveBlocked, DEPART_ACTIONS.blocked);
     return mk(DEPART_STATUS.UNVERIFIED, verify.executed ? (softConfirm || '') : departSearchFailReason(verify), DEPART_ACTIONS.unverified);
   } finally {
-    try { if (departModalVisible()) await departCloseModalIfOpen(); } catch (e) { /* אצווה לא נתקעת */ }
+    // ניסיון שהוחלף (דור ישן) לא נוגע בדף: המודאל שהוא השאיר נסגר על-ידי departRunAttempt, לא כאן
+    try { if (!departIsCancelled(gen) && departModalVisible()) await departCloseModalIfOpen(); } catch (e) { /* אצווה לא נתקעת */ }
   }
 }
 
@@ -5711,16 +5782,25 @@ function departWithTimeout(promise, ms) {
   });
 }
 
-async function departProcessStudentSafe(task) {
+// ניסיון אחד לתלמיד, עם תקציב-זמן ודור. runFn(task, gen) הוא הזרימה (מוזרק גם לבדיקה). timeout או שגיאה:
+// הדור מתקדם (הניסיון הישן מת בנקודת-הבדיקה הבאה), החלונית והמודאל נסגרים, והתלמיד מקבל "שגיאה". "נעצר" עובר הלאה.
+async function departRunAttempt(task, runFn, timeoutMs) {
+  const gen = departNextGeneration();
   try {
-    return await departWithTimeout(departProcessStudent(task), DEPART_STUDENT_TIMEOUT_MS);
+    return await departWithTimeout(runFn(task, gen), timeoutMs);
   } catch (err) {
     if (departIsStopError(err)) throw err;
-    log(`▶ שגיאה: ${err && err.message}`);
+    departNextGeneration();
+    log(`▶ ${departIsCancelError(err) ? 'בוטל' : 'שגיאה'}: ${err && err.message}`);
     try { const pop = readMessagePopup(); if (pop) await departHidePopup(); } catch (e) { /* noop */ }
     try { await departCloseModalIfOpen(); } catch (e) { /* noop */ }
+    if (departIsStopped()) throw departStopError('between-attempts');
     return makeDepartResult(task, `${DEPART_STATUS.ERROR}: ${err && err.message}`, err && err.message, DEPART_ACTIONS.error);
   }
+}
+
+function departProcessStudentSafe(task) {
+  return departRunAttempt(task, departProcessStudent, DEPART_STUDENT_TIMEOUT_MS);
 }
 
 // ═══ הסניף הנכון: דף המוסד של task.branch (הסניף נקרא מה-h1 של הדף, לא מזיכרון) ═══
@@ -5770,10 +5850,20 @@ function departFillRemaining(status, detail, action) {
   departSaveState();
 }
 
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
+function departTakeRunLock(where) {
+  const held = holdRunLock(DEPART_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  departHook('onLocked', held.message);
+  return false;
+}
+
 function departFinishRun() {
   DEPART_S.running = false;
   departClearState();
   departClearStop();
+  dropRunLock(DEPART_LOCK_TOOL);
   const report = buildDepartReport(DEPART_S.results);
   log(`═══ סיום עזיבה · ${report.summary}`);
   departHook('onDone', DEPART_S.results, report);
@@ -5827,8 +5917,11 @@ async function departRunQueue() {
   return null;
 }
 
+// מחזיר false כשריצה אחרת פעילה (נעילה); אחרת את ה-Promise של הריצה.
 async function departStartRun(tasks, settings) {
+  if (!departTakeRunLock('התחלה')) return false;
   departClearStop();
+  departNextGeneration();
   departResetRun();
   departResetLandings();
   DEPART_S.queue = Array.isArray(tasks) ? tasks.slice() : [];
@@ -5853,33 +5946,60 @@ function departSavedQueueInfo() {
 }
 
 function departDiscardSavedQueue() {
+  departNextGeneration();
   departResetRun();
   departClearState();
   departClearStop();
+  dropRunLock(DEPART_LOCK_TOOL);
   log('[עזיבה] התור השמור נמחק לבקשת המשתמש');
   return true;
 }
 
-// בטעינת דף: תור שמור → ממשיכים (אחרי שה-MS AJAX מסיים לאתחל). תור ישן (>30 דק') ממשיך
-// רק אחרי "המשך" בפאנל. רשת-ביטחון: מעל DEPART_MAX_LANDINGS טעינות לתלמיד → "דולג".
-async function departResumeIfPending(opts) {
-  if (DEPART_S.running) return false;
-  const allowStale = !!(opts && opts.allowStale);
-  const st = departLoadState();
-  if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
+// טהורה: דף שאינו חלק מהעזיבה (כמו ממצא 11 בקליטה): דף אחר (למשל ההודעות) או דף תלמיד-חדש אינם מקום
+// להשתלט עליו; הפאנל מציג "הריצה נקטעה" ומחכה ל"המשך". דף מוסד או דף סוג-לימוד (יש בהם עץ): ממשיכים.
+function departForeignPage(page) {
+  return !page || page.kind === 'other' || page.kind === 'newStudent';
+}
 
-  if (departIsStopped()) { log('[המשך] דגל עצירה - מנקים מצב'); departClearState(); departClearStop(); return false; }
-  if (!allowStale && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
-    departHook('onStaleQueue', { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: true });
-    return false;
-  }
-
+function departLoadRunFromState(st) {
   DEPART_S.queue = st.queue;
   DEPART_S.results = Array.isArray(st.results) ? st.results : [];
   DEPART_S.curIdx = st.curIdx || 0;
   DEPART_S.startedAt = st.startedAt || null;
   DEPART_S.settings = Object.assign({ leaveDate: '', leaveReason: DEPART_DEFAULT_REASON }, st.settings || {});
+}
+
+// בטעינת דף: תור שמור → ממשיכים (אחרי שה-MS AJAX מסיים לאתחל). תור ישן (>30 דק') או דף זר ממשיכים
+// רק אחרי "המשך" בפאנל (opts.force; ‏allowStale נשמר כשם ישן). רשת-ביטחון: מעל DEPART_MAX_LANDINGS טעינות לתלמיד → "דולג".
+async function departResumeIfPending(opts) {
+  if (DEPART_S.running) return false;
+  const force = !!(opts && (opts.force || opts.allowStale));
+  const st = departLoadState();
+  if (!st || !Array.isArray(st.queue) || !st.queue.length) return false;
+
+  if (departIsStopped()) {
+    // סקירה סופית 1.11.2026 (כמו ממצא 6 בקליטה): "עצור" נלחץ בזמן טעינת-דף. קודם המצב נמחק בשקט והתוצאות של
+    // מי שכבר עזב אבדו. עכשיו השארית מסומנת "נעצר" והתוצאות מוצגות.
+    log('[המשך] דגל עצירה אחרי טעינת דף: מסיימים את הריצה עם "נעצר"');
+    departLoadRunFromState(st);
+    departFillRemaining(DEPART_STATUS.STOPPED, 'לא עובד (נעצר)', DEPART_ACTIONS.stopped);
+    departFinishRun();
+    return false;
+  }
+  const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, lastAt: departQueueLastActivity(st), stale: false, reason: '' };
+  if (!force && departQueueIsStale(departQueueLastActivity(st), Date.now(), DEPART_MAX_QUEUE_AGE_MS)) {
+    log(`[המשך] תור עזיבה שמור, פעילות אחרונה ${departQueueLastActivity(st)}, ישן מ-${Math.round(DEPART_MAX_QUEUE_AGE_MS / 60000)} דקות - לא ממשיכים אוטומטית`);
+    departHook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
+    return false;
+  }
+  if (!force && departForeignPage(getPage())) {
+    log('[המשך] הדף הזה אינו חלק מהעזיבה: לא ממשיכים אוטומטית; "המשך" בפאנל ינווט');
+    departHook('onStaleQueue', Object.assign(info, { reason: 'foreign-page' }));
+    return false;
+  }
+  if (!departTakeRunLock('המשך')) return false; // התור נשאר שמור; ינסה שוב בטעינה הבאה או ב"המשך"
+
+  departLoadRunFromState(st);
   if (DEPART_S.curIdx >= DEPART_S.queue.length) { departFinishRun(); return false; }
 
   const landings = departBumpLandings(DEPART_S.curIdx);
@@ -5915,6 +6035,7 @@ function departStop() {
     } else {
       departClearState();
       departClearStop();
+      dropRunLock(DEPART_LOCK_TOOL);
     }
   }
 }
@@ -6157,7 +6278,10 @@ function departRenderStaleQueue(info) {
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
   const ageMin = Number.isNaN(lastMs) ? null : Math.round((Date.now() - lastMs) / 60000);
-  setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. עבר זמן רב, ולכן הכלי לא ממשיך לבד.
+  const why = info.reason === 'foreign-page'
+    ? 'הדף הזה אינו חלק מהעזיבה, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף המוסד של התלמיד הבא.'
+    : 'עבר זמן רב, ולכן הכלי לא ממשיך לבד.';
+  setHtml(`${DEPART_P}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(done)} מתוך ${esc(info.total || 0)} תלמידים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. ${esc(why)}
     ${buttonsRowHtml([
       { id: `${DEPART_P}-stale-go`, label: 'המשך מהתלמיד הבא', kind: 'primary', size: 'small' },
       { id: `${DEPART_P}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
@@ -6167,7 +6291,8 @@ function departRenderStaleQueue(info) {
     departRenderStaleQueue(null);
     departUi.status('ממשיך את הריצה שנקטעה…');
     departSetRunning(true);
-    Promise.resolve().then(() => departResumeIfPending({ allowStale: true })).catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
+    Promise.resolve().then(() => departResumeIfPending({ force: true })).then((ran) => { if (ran === false && !departIsRunning()) departSetRunning(false); })
+      .catch((e) => { log('[המשך] כשל: ' + (e && e.message)); departSetRunning(false); });
   });
   $el(`${DEPART_P}-stale-clear`).addEventListener('click', () => {
     departDiscardSavedQueue();
@@ -6203,7 +6328,7 @@ function departApplySettings(settings) {
 }
 
 async function departStart() {
-  if (departIsRunning()) return;
+  if (departIsRunning()) { departUi.status('ריצה כבר פעילה. לעצור אותה: "עצור" או Escape'); return; }
   if (departHasSavedQueue()) { departUi.status('יש ריצה שנקטעה וממתינה. לחץ "המשך" או "בטל" למעלה'); return; }
   const settings = departReadSettings();
   if (settings.leaveDate && !departIsValidDate(settings.leaveDate)) {
@@ -6234,7 +6359,8 @@ async function departStart() {
   departUi.progress(0, v.tasks.length);
   departUi.status(`מתחיל: ${departPlural(v.tasks.length, 'תלמיד אחד', 'N תלמידים')}…`);
   log(`[עזיבה] התחלה: ${v.tasks.length} תלמידים · תאריך "${settings.leaveDate || 'היום'}" · סיבה ${settings.leaveReason}`);
-  await departStartRun(v.tasks, settings);
+  const started = await departStartRun(v.tasks, settings);
+  if (started === false) departSetRunning(false); // ריצה אחרת פעילה (נעילה); ההודעה הוצגה דרך onLocked
 }
 
 function departStopClick() {
@@ -6386,7 +6512,14 @@ function departMount(container, panelUi, page) {
     onProgress: (idx, tot, task) => { departTotal = tot; departUi.progress(idx, tot); setText(`${DEPART_P}-runtext`, `${departPlural(tot, 'תלמיד אחד בריצה', 'N תלמידים בריצה')} · מעבד ${idx + 1} מתוך ${tot}`); departUi.status(`מעבד ${idx + 1} מתוך ${tot}: סניף ${task.branch}`); },
     onResult: (result, all) => { departResults = all.slice(); departRenderResults(); departUi.progress(all.length, Math.max(departTotal, all.length)); },
     onNavigating: (branch) => { departUi.status(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
-    onStaleQueue: (info) => { departSetRunning(false); departSetStage(departResults.length ? 'results' : 'prep'); departUi.status('יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"'); departRenderStaleQueue(info); departUi.open(); },
+    onStaleQueue: (info) => {
+      departSetRunning(false);
+      departSetStage(departResults.length ? 'results' : 'prep');
+      departUi.status(info && info.reason === 'foreign-page' ? 'יש ריצת עזיבה שנקטעה, אך הדף הזה אינו חלק מהעזיבה. בחר "המשך" או "בטל"' : 'יש ריצת עזיבה שנקטעה. בחר "המשך" או "בטל"');
+      departRenderStaleQueue(info);
+      departUi.open();
+    },
+    onLocked: (msg) => { departSetRunning(false); departUi.status(msg); setHtml(`${DEPART_P}-stale`, esc(msg)); show(`${DEPART_P}-stale`, true); departUi.open(); },
     onDone: (all, report) => {
       departResults = all.slice(); departResFilter = 'all'; departResSort = null; departGrid.setRows([]); departGrid.setNotes(null);
       departRenderResults(); departRenderReport(report); departSetRunning(false); departSetStage('results'); departUi.progress(all.length, all.length);
@@ -6428,6 +6561,7 @@ const departTool = {
 
 
 const REPORT_STATE_KEY = 'talmud.report.state';
+const REPORT_LOCK_TOOL = 'report';
 const REPORT_STATUS = {
   SENT: 'נשלח',
   SKIPPED: 'דולג (כבר דווח)',
@@ -6631,11 +6765,21 @@ function reportFillRemaining(state) {
   reportSaveState(state);
 }
 
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו (hook onLocked עם ההודעה).
+function reportTakeRunLock(where) {
+  const held = holdRunLock(REPORT_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  reportHook('onLocked', held.message);
+  return false;
+}
+
 function reportFinish(state) {
   reportLive.running = false;
   reportLive.stop = false;
   reportLive.lastResults = Array.isArray(state.results) ? state.results.slice() : [];
   reportClearState();
+  dropRunLock(REPORT_LOCK_TOOL);
   const summary = reportSummary(reportLive.lastResults);
   log(`═══ סיום דיווח חודשי · ${summary.summary}`);
   reportHook('onDone', reportLive.lastResults.slice(), summary);
@@ -6754,7 +6898,7 @@ async function reportProcessBranch(state, idx, branch) {
   // חלונית האזהרה עם "המשך"
   const confirm = await reportWaitPopup();
   if (!confirm) return mk(REPORT_STATUS.ERROR, 'לא הופיעה חלונית אחרי לחיצה על "שליחת דיווח חודשי"', reportManualAction(branch));
-  log(`[הודעה] "${confirm.text}" [${confirm.buttons.join(', ')}]`);
+  log(`[הודעה] "${maskIdsInText(confirm.text)}" [${confirm.buttons.join(', ')}]`);
   if (!confirm.hasContinue) {
     await reportHidePopup();
     if (confirm.kind === 'success') return mk(REPORT_STATUS.SENT, confirm.text);
@@ -6780,7 +6924,7 @@ async function reportProcessBranch(state, idx, branch) {
   if (!done) {
     return mk(REPORT_STATUS.ERROR, 'לא הופיעה הודעת הצלחה תוך 10 שניות אחרי "המשך"', `בדוק בדף המוסד של סניף ${branch} אם כפתור הדיווח הפך מנוטרל (סימן שנשלח); אם לא, שלח ידנית`);
   }
-  log(`[הודעה] "${done.text}" [${done.buttons.join(', ')}]`);
+  log(`[הודעה] "${maskIdsInText(done.text)}" [${done.buttons.join(', ')}]`);
   if (done.hasContinue && done.kind !== 'success') {
     // בקשת-אישור נוספת שאינה מוכרת: לא לוחצים לבד
     return mk(REPORT_STATUS.ERROR, `המערכת מבקשת אישור נוסף: "${done.text}"`, `פתח את דף המוסד של סניף ${branch}, קרא את ההודעה והחלט ידנית`);
@@ -6827,8 +6971,10 @@ async function reportRunLoop() {
 // "התחל": אוסף את הסניפים מעץ-הצד ומתחיל. מחזיר {ok, count} או {ok:false, reason}.
 async function reportStart() {
   if (reportIsRunning()) return { ok: false, reason: 'ריצה כבר פעילה' };
+  const held = holdRunLock(REPORT_LOCK_TOOL);
+  if (!held.ok) { log(`[נעילה] התחלה: ${held.message}`); return { ok: false, reason: held.message, locked: true }; }
   const branches = readBranchesFromTree();
-  if (!branches.length) return { ok: false, reason: 'לא נמצאו סניפים בעץ-הצד. ודא שאתה בדף פרטי מוסד' };
+  if (!branches.length) { dropRunLock(REPORT_LOCK_TOOL); return { ok: false, reason: 'לא נמצאו סניפים בעץ-הצד. ודא שאתה בדף פרטי מוסד' }; }
   reportLive.stop = false;
   reportLive.lastResults = [];
   const state = {
@@ -6855,6 +7001,7 @@ async function reportResumeIfPending() {
     reportFinish(state);
     return true;
   }
+  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה
   reportLive.running = true; // לפני ההמתנה, כדי ש"התחל" לא יפתח ריצה מקבילה
   reportLive.lastStepAt = state.lastStepAt || Date.now();
   reportHook('onResume', state);
@@ -7045,6 +7192,7 @@ function reportUiMount(container, panelUi, page) {
     },
     onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); setText(`${RP}-runtext`, `דיווח בריצה · סניף ${branch} (${idx + 1} מתוך ${total})`); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
     onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
+    onLocked: (msg) => { reportSetRunning(false); reportSetStatus(msg); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {
       reportRows = all.slice();
@@ -7092,6 +7240,8 @@ const reportTool = {
 // ולא תיכנס ללולאה על אותה הודעה; (3) קריאת חלונית-ההודעה דרך הליבה, סגירה בלי "המשך", עם שורת-יומן.
 // אין גישה ל-document/window ברמת המודול (import תקין ב-Node).
 
+
+const MESSAGES_LOCK_TOOL = 'messages';
 
 // ─── קבועים ─────────────────────────────────────────────────────────────────
 
@@ -7514,18 +7664,23 @@ function messagesHook(name, ...args) {
   try { if (MSG.hooks[name]) MSG.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ }
 }
 
+// false = ריצה אחרת (לשונית אחרת של תלמו"ד, או כלי אחר באותה לשונית) פעילה: לא מתחילים (hook onLocked).
 function messagesBeginRun(mode) {
+  const held = holdRunLock(MESSAGES_LOCK_TOOL);
+  if (!held.ok) { log(`[נעילה] ${mode}: ${held.message}`); messagesHook('onLocked', held.message); return false; }
   MSG.running = true;
   MSG.stop = false;
   MSG.mode = mode;
   if (mode !== 'scan') MSG.report = [];
   messagesHook('onStart', mode);
+  return true;
 }
 
 function messagesFinishRun(opts) {
   const report = messagesBuildReport(MSG.report, opts);
   MSG.lastReport = report;
   MSG.running = false;
+  dropRunLock(MESSAGES_LOCK_TOOL);
   messagesHook('onDone', MSG.report.slice(), report, MSG.mode);
   return report;
 }
@@ -7709,7 +7864,7 @@ const MESSAGES_REPEAT_REASON = 'ההודעה עדיין במצב "נשלחה" א
 
 async function messagesRunBulk() {
   if (MSG.running) return null;
-  messagesBeginRun('bulk');
+  if (!messagesBeginRun('bulk')) return null;
   const t0 = Date.now();
   log('[הודעות] ▶ מצב גורף: בקשת מעבר → אישור מעבר; אחרת → סמן כטופל');
   await messagesEnsureSentFilter();
@@ -7763,7 +7918,7 @@ async function messagesRunBulk() {
 
 async function messagesScan() {
   if (MSG.running) return null;
-  messagesBeginRun('scan');
+  if (!messagesBeginRun('scan')) return null;
   MSG.scanned = [];
   const t0 = Date.now();
   log('[הודעות] סריקה: מתחיל');
@@ -7794,6 +7949,7 @@ async function messagesScan() {
   const dt = ((Date.now() - t0) / 1000).toFixed(1);
   log(`[הודעות] סריקה הסתיימה${MSG.stop ? ' (נעצר)' : ''}: ${total} הודעות (${MSG.scanned.length} שונות) מ-${pages} עמודים (${dt} שניות)`);
   MSG.running = false;
+  dropRunLock(MESSAGES_LOCK_TOOL);
   const info = { pages, total, stopped: MSG.stop };
   messagesHook('onScanDone', MSG.scanned.slice(), info);
   return MSG.scanned.slice();
@@ -7812,7 +7968,7 @@ async function messagesRunTable(entries) {
     pending.set(e.uid, { action: e.action, left });
   }
   if (!pending.size) { log('[הודעות] אין טבלה טעונה'); return null; }
-  messagesBeginRun('table');
+  if (!messagesBeginRun('table')) return null;
   const t0 = Date.now();
   let toDo = 0;
   for (const p of pending.values()) if (p.action !== MESSAGES_ACTION.SKIP) toDo += Number.isFinite(p.left) ? p.left : 1;
@@ -8512,6 +8668,7 @@ function messagesMount(container, panelUi, page) {
       msgUi.status(mode === 'scan' ? 'סורק…' : mode === 'bulk' ? 'מצב גורף רץ…' : 'מבצע לפי הטבלה…');
     },
     onStatus: (msg) => msgUi.status(msg),
+    onLocked: (msg) => { messagesSetRunning(false); if (msgStage === 'run') messagesSetStage(messagesIdleStage()); msgUi.status(msg); },
     onProgress: (cur, total) => { msgUi.progress(cur, total); messagesSetRunText(messagesRunText({ mode: 'table', cur, total })); },
     onResult: (row, all) => {
       msgResults = all;

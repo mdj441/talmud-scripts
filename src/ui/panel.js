@@ -341,7 +341,7 @@ function activateTab(id) {
   for (const t of tools) {
     const tab = $el(`tt-tab-${t.id}`);
     const pane = $el(`tt-pane-${t.id}`);
-    if (tab) tab.classList.toggle('tt-tab-active', t.id === id);
+    if (tab) { tab.classList.toggle('tt-tab-active', t.id === id); tab.setAttribute('aria-selected', t.id === id ? 'true' : 'false'); }
     if (pane) pane.hidden = t.id !== id;
   }
   saveUiState({ tab: id });

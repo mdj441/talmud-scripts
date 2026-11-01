@@ -107,6 +107,26 @@ test('waitPRM: כששום בקשה לא מתחילה עד ל-startTimeout → {o
   }
 });
 
+// סקירה סופית 1.11.2026: בלי __doPostBack (דף בלי WebForms) הקריאה בתוך setTimeout זרקה חריגה לא-נתפסת;
+// עכשיו היא נרשמת ביומן וההמתנה מסתיימת כרגיל כ"לחיצה שנבלעה".
+test('firePostback: בלי window.__doPostBack → בלי חריגה לא-נתפסת; מסתיים {ok:true, started:false}', async () => {
+  const prevWindow = globalThis.window;
+  globalThis.window = {}; // אין __doPostBack
+  let uncaught = null;
+  const onErr = (e) => { uncaught = e; };
+  process.on('uncaughtException', onErr);
+  try {
+    const result = await firePostback('ctl00$x', '', { startTimeoutMs: 20, totalTimeoutMs: 100 });
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(uncaught, null, 'חריגה לא-נתפסת: ' + (uncaught && uncaught.message));
+    assert.equal(result.ok, true);
+    assert.equal(result.started, false);
+  } finally {
+    process.off('uncaughtException', onErr);
+    if (prevWindow === undefined) delete globalThis.window; else globalThis.window = prevWindow;
+  }
+});
+
 test('waitPRM: בלי PRM בכלל → {ok:true, started:false}', async () => {
   const result = await waitPRM({ startTimeoutMs: 20, totalTimeoutMs: 100 });
   assert.equal(result.ok, true);

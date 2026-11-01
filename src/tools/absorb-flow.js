@@ -4,10 +4,10 @@
 // אין גישה ל-document/window ברמת המודול.
 
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
-import { log, maskId } from '../core/log.js';
+import { log, maskId, maskIdsInText } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
 import { getPage, gotoStudyType, normalizeBranch, classifyUrl } from '../core/navigate.js';
-import { acquireRunLock, refreshRunLock, releaseRunLock, RUN_LOCK_REFRESH_MS, RUN_LOCK_BUSY_MESSAGE } from '../core/lock.js';
+import { holdRunLock, dropRunLock } from '../core/lock.js';
 import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision, absorbShortStatus, OTHER_INSTITUTE_RE,
   absorbShouldRecord, absorbQueueIsStale, buildRemainingReport, manualStudyTypeAction, absorbNormalizeId,
@@ -554,7 +554,7 @@ async function absorbAfterConfirmPopup(gen) {
   if (!(confirmKind && S.continueOtherInstitute && OTHER_INSTITUTE_RE.test(pop.text))) {
     return absorbReadAndHidePopup('אחרי אישור', gen);
   }
-  log(`[הודעה] אחרי אישור: ${pop.text} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
+  log(`[הודעה] אחרי אישור: ${maskIdsInText(pop.text)} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
   log('[המשך] "אשר המשך" מסומן בפאנל: לוחצים "המשך" (מעבר בין מוסדות; לימודיו במוסד האחר מסתיימים)');
   const pressed = pressMessagePopupContinueAsync();
   if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא: נשאר "נחסם"'); return { pop, blocked: true }; }
@@ -620,29 +620,20 @@ function recordResult(result, gen, idx) {
   return true;
 }
 
-// ─── נעילת-ריצה בין לשוניות (ממצא 5) ────────────────────────────────────────
-let lockTimer = null;
+// ─── נעילת-ריצה בין לשוניות ובין כלים (ממצא 5; סקירה סופית 1.11.2026: משותפת לכל הכלים ב-core/lock.js) ───
+const ABSORB_LOCK_TOOL = 'absorb';
 
-function startLockRefresh() {
-  if (lockTimer !== null) return;
-  lockTimer = setInterval(() => { refreshRunLock(); }, RUN_LOCK_REFRESH_MS);
-}
-
-function stopLockRefresh() {
-  if (lockTimer !== null) { try { clearInterval(lockTimer); } catch (e) { /* noop */ } lockTimer = null; }
-}
-
-// false = לשונית אחרת של תלמו"ד רצה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
+// false = ריצה אחרת (לשונית אחרת, או כלי אחר באותה לשונית) פעילה עכשיו. הפאנל מציג את ההודעה (hook onLocked).
 function takeRunLock(where) {
-  if (acquireRunLock()) { startLockRefresh(); return true; }
-  log(`[נעילה] ${where}: ${RUN_LOCK_BUSY_MESSAGE}`);
-  hook('onLocked', RUN_LOCK_BUSY_MESSAGE);
+  const held = holdRunLock(ABSORB_LOCK_TOOL);
+  if (held.ok) return true;
+  log(`[נעילה] ${where}: ${held.message}`);
+  hook('onLocked', held.message);
   return false;
 }
 
-function dropRunLock() {
-  stopLockRefresh();
-  releaseRunLock();
+function absorbDropRunLock() {
+  dropRunLock(ABSORB_LOCK_TOOL);
 }
 
 function fillRemaining(status, detail, action) {
@@ -659,7 +650,7 @@ function finishRun() {
   navigating = false;
   clearAbsorbState();
   clearAbsorbStop();
-  dropRunLock(); // ממצא 5
+  absorbDropRunLock(); // ממצא 5
   const report = buildRemainingReport(S.results);
   saveAbsorbLastResults(S.results, report); // ממצא 6: תמונת-תוצאות אחרונה שורדת טעינת-דף
   log(`═══ סיום · ${report.summary}`);
@@ -671,7 +662,7 @@ export async function runQueue() {
   navigating = false;
   clearWatchdog();
   watchUnload();
-  startLockRefresh();
+  holdRunLock(ABSORB_LOCK_TOOL); // ההמשך אחרי טעינת-דף: הנעילה שלנו (אותה לשונית), הריענון מתחיל מחדש
   log(`🚀 ריצה: ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
   hook('onStart', S.queue, S.curIdx);
 
@@ -755,7 +746,7 @@ export function absorbDiscardSavedQueue() {
   absorbResetRun();
   clearAbsorbState();
   clearAbsorbStop();
-  dropRunLock();
+  absorbDropRunLock();
   log('[המשך] התור השמור נמחק לבקשת המשתמש');
   return true;
 }
@@ -858,7 +849,7 @@ export function absorbStop() {
     } else {
       clearAbsorbState();
       clearAbsorbStop();
-      dropRunLock();
+      absorbDropRunLock();
     }
   }
 }
