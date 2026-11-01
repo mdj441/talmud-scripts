@@ -1,19 +1,19 @@
-// חלונית ההודעה המשותפת של האתר (ucMessagePopUp) — פורט מ"תלמוד - עזיבת תלמידים" v5
+// חלונית ההודעה המשותפת של האתר (ucMessagePopUp): פורט מ"תלמוד - עזיבת תלמידים" v5
 // (‏getMessagePopup:290, hideMessagePopup:303). אותה בקרה משמשת בכל האתר (למשל ולידציה
 // "תאריך העזיבה לא יכול להיות לפני תאריך הקליטה..."). לעולם לא לוחצים על "המשך" (btnMOK)
-// בשקט — הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
-// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות.
+// בשקט: הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
+// אין גישה ל-document/window ברמת המודול: רק בתוך גופי הפונקציות.
 
 import { $el, isVisible } from './dom.js';
 import { waitPRM } from './prm.js';
 
 // ‏W3 (בדיקה רטובה 10.9.2026, F4): סיווג טהור של ההודעה. האתר מציג את הודעת-ההצלחה
-// "הצלחה קליטת תלמיד הצליחה" באותה בקרה ועם כפתור "המשך" גלוי — ולכן hasContinue לבדו
+// "הצלחה קליטת תלמיד הצליחה" באותה בקרה ועם כפתור "המשך" גלוי: ולכן hasContinue לבדו
 // סיווג הצלחה כ"נחסם" ודילג על אימות-הגריד. טקסט הצלחה מנצח את הכפתורים; "לא הצליח" /
-// "נכשל" אינם הצלחה (נופלים לסיווג לפי הכפתורים — fail-safe).
-//   'success' — אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
-//   'confirm' — יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
-//   'info'    — רק "אישור" (שגיאה/ולידציה); 'unknown' — אין מידע.
+// "נכשל" אינם הצלחה (נופלים לסיווג לפי הכפתורים: fail-safe).
+//   'success': אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
+//   'confirm': יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
+//   'info'   : רק "אישור" (שגיאה/ולידציה); 'unknown': אין מידע.
 // ‏1b (סקירת-בטיחות): "הצליח" לבדו רחב מדי (היה מסתיר בקשת-אישור לא-מוכרת כהצלחה). הצלחה = רק
 // "הצלחה" בתחילת הטקסט (כותרת ההודעה) או "קליטת תלמיד הצליחה" (גוף ההודעה שנצפה, F4).
 export function classifyPopupText(text, flags) {
@@ -30,7 +30,7 @@ export function classifyPopupText(text, flags) {
   return 'unknown';
 }
 
-// תווית כפתור (input.value או טקסט) — ללוג, כדי שהבדיקה הרטובה תספר מה האתר מציג.
+// תווית כפתור (input.value או טקסט): ללוג, כדי שהבדיקה הרטובה תספר מה האתר מציג.
 function popupButtonLabel(el) {
   if (!el) return '';
   const raw = el.value || el.textContent || el.innerText || '';
@@ -38,9 +38,9 @@ function popupButtonLabel(el) {
 }
 
 // שמות ה-ID נשמרים כפי שהם ב-depart-v5: btnMOK = "המשך" (אישור-רך), btnMCancel = "אישור"
-// (אישור/סגירת שגיאה — למרות השם), btnMNo = "לא".
-// מחזיר { text, hasContinue, hasOkOnly, kind, buttons } — ‏kind לפי classifyPopupText,
-// ‏buttons = תוויות הכפתורים הגלויים (בסדר: המשך, לא, אישור). הדגלים הגולמיים נשמרים —
+// (אישור/סגירת שגיאה: למרות השם), btnMNo = "לא".
+// מחזיר { text, hasContinue, hasOkOnly, kind, buttons }: ‏kind לפי classifyPopupText,
+// ‏buttons = תוויות הכפתורים הגלויים (בסדר: המשך, לא, אישור). הדגלים הגולמיים נשמרים:
 // הקורא מחליט "נחסם" רק כש-hasContinue && kind!=='success'.
 export function readMessagePopup() {
   const panel = $el('ucMessagePopUp_pnlMessagePopup');
@@ -54,7 +54,7 @@ export function readMessagePopup() {
   if (!hasContinue && !hasOk && !hasNo) return null; // פאנל מעובד אך בלי כפתור חי → לא פרומפט אמיתי
   let text = (panel.innerText || panel.textContent || '').replace(/\s+/g, ' ').trim();
   text = text.replace(/^\s*הודעה\s*/, '').trim();
-  // תוויות הכפתורים נכללות ב-innerText של הפאנל — מקלפים אותן מהסוף, כמה שיש (עד 4).
+  // תוויות הכפתורים נכללות ב-innerText של הפאנל: מקלפים אותן מהסוף, כמה שיש (עד 4).
   for (let i = 0; i < 4; i++) {
     const stripped = text.replace(/\s*(המשך|לא|אישור|ביטול|סגור)\s*$/, '').trim();
     if (stripped === text) break;
@@ -70,10 +70,10 @@ export function readMessagePopup() {
 
 // סוגר את חלונית ההודעה. מעדיף את ה-ModalPopupExtender (hide() נקי, לא מפעיל שום
 // postback צד-שרת). נופל ל-btnMCancel ("אישור") רק אם ה-extender לא זמין. לעולם לא
-// לוחץ על btnMOK ("המשך") — זה כפתור אישור-רך ולא כפתור סגירה.
+// לוחץ על btnMOK ("המשך"): זה כפתור אישור-רך ולא כפתור סגירה.
 // M-f: ‏btnMCancel הוא postback צד-שרת, ולכן הוא חייב את הסדר הקשיח של
 // global-constraints: רושמים waitPRM *לפני* הלחיצה, והלחיצה נדחית ל-setTimeout(0).
-// מחזיר {hidden, wait} — `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
+// מחזיר {hidden, wait}: `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
 // שאינו postback). ‏waitPRM לעולם לא נדחה.
 export function hideMessagePopupAsync() {
   try {
@@ -108,7 +108,7 @@ export function hideMessagePopup() {
 }
 
 // גרסה גנרית ל-extender כלשהו (ModalPopupExtender / AjaxModalPopup): $find(id).hide(),
-// null-safe — מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
+// null-safe: מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
 export function closeModal(extenderId) {
   try {
     if (typeof window.$find !== 'function') return false;

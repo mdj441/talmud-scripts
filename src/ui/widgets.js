@@ -153,7 +153,7 @@ export function reportBoxHtml(report, { idsWarning = true } = {}) {
   if (!report) return '';
   let html = '';
   if (idsWarning) html += `<div class="tt-hint tt-hint-warn">הדוח מכיל מזהים מלאים. לא להדביק אותו בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>`;
-  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '—')}</div>`;
+  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '-')}</div>`;
   if (report.lines && report.lines.length) {
     html += `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${report.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`;
   } else {
@@ -214,6 +214,22 @@ export function show(id, on) {
 export function setDisabled(id, disabled) {
   const el = $el(id);
   if (el) el.disabled = !!disabled;
+}
+
+// כפתור שמוחק (הכרעת 2.11.2026): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"כן, X" והכפתור מאדים), לחיצה שנייה
+// בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
+export function bindConfirmClick(target, { label, confirmLabel, onConfirm, ms = 6000 }) {
+  const el = typeof target === 'string' ? $el(target) : target;
+  if (!el) return () => {};
+  let timer = null;
+  const disarm = () => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); };
+  el.addEventListener('click', () => {
+    if (timer !== null) { disarm(); onConfirm(); return; }
+    el.textContent = confirmLabel;
+    el.classList.add('tt-btn-armed');
+    timer = setTimeout(disarm, ms);
+  });
+  return disarm;
 }
 
 // מסכת תאריך DD/MM/YYYY בזמן הקלדה

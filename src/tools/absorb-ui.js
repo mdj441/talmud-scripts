@@ -23,7 +23,7 @@ import {
   absorbIsBusy, absorbSavedQueueInfo, absorbDiscardSavedQueue, absorbLastResults,
 } from './absorb-flow.js';
 import {
-  esc, buttonHtml, buttonsRowHtml, fieldHtml, resultsTableHtml, tagHtml, zoneHtml, dateFieldHtml, bindDateFields, flash, setHtml, setText, show, setDisabled,
+  esc, buttonHtml, buttonsRowHtml, fieldHtml, resultsTableHtml, tagHtml, zoneHtml, dateFieldHtml, bindDateFields, bindConfirmClick, dmyToIso, flash, setHtml, setText, show, setDisabled,
   bindDateMask, todayDMY,
 } from '../ui/widgets.js';
 import { createGrid, gridSortRows } from '../ui/grid.js';
@@ -50,6 +50,11 @@ let total = 0;
 let awaitingErrorConfirm = false;
 let resFilter = 'all'; // תגיות התוצאות: all | ok | exists | verify | bad | stopped
 let resSort = null;
+// ביקורת 2.11: השורות כפי שרצו (עם לידה, ארץ ופרטי תלמיד חדש), כי הטבלה מתרוקנת בסיום הריצה ו"תקן והרץ שוב" /
+// "אשר המשך והרץ שוב" בונים ממנה, לא מהתוצאות הדלות
+let lastRunRows = [];
+let stageBeforeRun = 'prep'; // ריצה שנחסמה (לשונית אחרת) חוזרת לשלב שממנו יצאה
+let awaitingErrorFilter = 'all'; // התגית שהייתה פעילה כש"התחל" ביקש אישור על אדומות; החלפת תגית מבטלת את הבקשה
 
 const RESULT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
@@ -229,9 +234,10 @@ function gridColumns() {
       ? { key: 'branch', label: 'סניף', kind: 'select', width: '58px', options: () => [['', '']].concat(branches.map((b) => [b, b])) }
       : { key: 'branch', label: 'סניף', kind: 'input', width: '56px', mono: true, placeholder: 'סניף', list: `${P}-dl-branches` },
     { key: 'studyType', label: 'סוג לימוד', kind: 'input', width: '54px', mono: true, placeholder: 'סוג', list: `${P}-dl-studytypes` },
-    { key: 'idType', label: 'סוג מזהה', kind: 'select', width: '66px', options: () => ID_TYPES, value: (f, row) => (rowIsBlank(row) ? 'tz' : absorbEffectiveIdType(f)), sortValue: (f) => absorbEffectiveIdType(f) },
+    // שורה ריקה: הבחירה הידנית נשמרת (ביקורת 2.11: קודם אופסה ונדרסה, והתיבה קפצה ל"ת.ז.")
+    { key: 'idType', label: 'סוג מזהה', kind: 'select', width: '66px', options: () => ID_TYPES, value: (f, row) => (rowIsBlank(row) ? (f.idType || 'tz') : absorbEffectiveIdType(f)), sortValue: (f) => absorbEffectiveIdType(f) },
     { key: 'identifier', label: 'מספר', kind: 'input', width: '96px', mono: true, placeholder: 'מספר' },
-    { key: 'birthDate', label: 'תאריך לידה', kind: 'date', width: '86px', placeholder: (f, row) => (needBirth(f, row) ? 'יום/חודש/שנה' : ''), off: (f, row) => !needBirth(f, row), need: (f) => passport(f) && !String(f.birthDate || '').trim() },
+    { key: 'birthDate', label: 'תאריך לידה', kind: 'date', width: '86px', placeholder: (f, row) => (needBirth(f, row) ? 'יום/חודש/שנה' : ''), off: (f, row) => !needBirth(f, row), need: (f) => passport(f) && !String(f.birthDate || '').trim(), sortValue: (f) => dmyToIso(f.birthDate) || f.birthDate },
     { key: 'country', label: 'ארץ', kind: 'input', width: '90px', placeholder: (f) => (passport(f) ? 'בחר ארץ' : ''), list: `${P}-dl-countries`, off: (f) => !passport(f), need: (f) => passport(f) && !String(f.country || '').trim() },
   ];
 }
@@ -298,7 +304,7 @@ function buildGrid() {
     rowActions, subRowHtml, refreshRow,
     subOpen: (row) => !!(row.newOpen || rowHasNewFields(row)),
     onClick: onGridClick,
-    onCell: (row, k, el, type) => { if (k === 'country' && type === 'change') el.value = absorbCanonicalCountry(el.value); if (k === 'idType' && rowIsBlank(row)) row.fields.idType = ''; if (awaitingErrorConfirm) awaitingErrorConfirm = false; },
+    onCell: (row, k, el, type) => { if (k === 'country' && type === 'change') el.value = absorbCanonicalCountry(el.value); if (awaitingErrorConfirm) awaitingErrorConfirm = false; },
     onChange: (v) => { refreshStartButton(v); refreshStatus(v); },
     onStatus: (msg) => ui.status(msg),
     onFilled: (label, n) => { const v = grid.validation(); log(`[קלט] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
@@ -315,6 +321,8 @@ function setStage(s) {
   show(`${P}-prep-only`, s === 'prep');
   show(`${P}-fix-only`, s === 'fix');
   show(`${P}-back`, s === 'fix');
+  show(`${P}-restart`, s === 'fix');
+  show(`${P}-clear`, s === 'prep' && grid.filled().length > 0);
   show(`${P}-out-actions`, s === 'results');
   setText(`${P}-zone-in-title`, s === 'fix' ? 'תיקון והרצה חוזרת' : 'את מי קולטים');
   grid.setMode(s === 'fix' ? 'fix' : 'prep');
@@ -353,12 +361,30 @@ function runnable() {
 }
 
 function refreshStartButton() {
+  show(`${P}-clear`, stage === 'prep' && grid.filled().length > 0);
+  if (awaitingErrorConfirm && grid.filter() !== awaitingErrorFilter) awaitingErrorConfirm = false; // החלפת תגית = בקשה חדשה
   if (awaitingErrorConfirm) return;
   const v = runnable();
   const n = v.tasks.length;
   const shownNote = grid.filter() !== 'all' ? ' (המוצגים)' : '';
   const verb = stage === 'fix' ? 'התחל קליטה חוזרת' : 'התחל קליטה';
   setText(`${P}-start`, n ? `${verb}: ${plural(n, 'תלמיד אחד', 'N תלמידים')}${shownNote}` : verb);
+  // הכרעת 2.11: אין מי שירוץ (טבלה ריקה, רק אדומות, או תגית שמציגה רק אדומות) → הכפתור לא פעיל, לא רק בלי מספר
+  const idle = n === 0 && !absorbIsBusy() && stage !== 'run';
+  setDisabled(`${P}-start`, idle || absorbIsBusy() || stage === 'run');
+  const btn = $el(`${P}-start`);
+  if (btn) btn.title = idle ? (v.filled.length ? 'אין מי שירוץ: תקן את השורות האדומות, או בחר תגית אחרת' : 'אין שורות בטבלה') : '';
+}
+
+// "נקה" (הכרעת 2.11): מרוקן את טבלת-ההכנה אחרי לחיצה שנייה ("כן, נקה"); התוצאות לא נוגעות
+function clearTable() {
+  grid.setRows([]);
+  grid.setNotes(null);
+  grid.hidePasteBox();
+  awaitingErrorConfirm = false;
+  grid.render();
+  ui.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  log('[קלט] הטבלה נוקתה');
 }
 
 // ─── תוצאות: תגיות שמסננות, מיון, "מה לעשות" מתחת לכל שורה ───────────────────
@@ -395,8 +421,9 @@ function renderResults() {
 }
 
 // הסיכום (תגיות שמסננות + משפט) מוצג כשהריצה הסתיימה; בזמן ריצה התוצאות מצטברות בלי סיכום.
-function renderReport(report) {
+function renderReport(report, at) {
   if (!report) { show(`${P}-report`, false); setHtml(`${P}-report`, ''); setText(`${P}-zone-out-note`, ''); return; }
+  const when = at && !Number.isNaN(Date.parse(at)) ? new Date(at) : new Date(); // ביקורת 2.11: אחרי טעינת-דף, שעת הריצה ולא שעת הטעינה
   const c = absorbSummarizeKinds(results);
   const ok = c.absorbed + c.exists;
   const tag = (filter, label, n, kind) => (n ? tagHtml({ label: `${label} ${n}`, kind, button: true, filter, active: resFilter === filter }) : '');
@@ -408,7 +435,7 @@ function renderReport(report) {
     : `הסתיים: ${ok} מתוך ${results.length} הצליחו.${c.bad || c.verify ? ` ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
   setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
   show(`${P}-report`, true);
-  setText(`${P}-zone-out-note`, `ריצה מ-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
+  setText(`${P}-zone-out-note`, `ריצה מ-${when.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
 
 function onReportClick(e) {
@@ -459,8 +486,10 @@ function renderStaleQueue(info) {
 
 function setRunning(on) {
   setDisabled(`${P}-start`, !!on);
-  if (on) setStage('run'); else if (stage === 'run') setStage(results.length ? 'results' : 'prep');
+  if (on) { if (stage !== 'run') stageBeforeRun = stage; setStage('run'); }
+  else if (stage === 'run') setStage(results.length ? 'results' : (stageBeforeRun === 'fix' ? 'fix' : 'prep'));
   ui.running(!!on);
+  if (!on) refreshStartButton();
 }
 
 function startDate() {
@@ -477,12 +506,14 @@ async function start() {
   if (!v.filled.length) { ui.status(grid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
   if (v.counts.bad && !awaitingErrorConfirm) {
     awaitingErrorConfirm = true;
+    awaitingErrorFilter = grid.filter();
     setText(`${P}-start`, v.tasks.length ? `כן, התחל בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
     ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { ui.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
   awaitingErrorConfirm = false;
+  lastRunRows = grid.filled();
   renderReport(null);
   renderStaleQueue(null);
   results = [];
@@ -518,7 +549,7 @@ function fixAndRerun() {
   const attention = displayedResults().filter((r) => !isAbsorbSuccess(r.status));
   if (!attention.length) return;
   const byKey = new Map(attention.map((r) => [resultKey(r), r]));
-  const existing = grid.filled();
+  const existing = grid.filled().length ? grid.filled() : lastRunRows; // ביקורת 2.11: הטבלה ריקה אחרי הריצה; השורות שרצו נשמרו
   const source = existing.length
     ? absorbRowsNeedingAttention(existing, results).rows.filter((r) => byKey.has(rowKey(r.fields)))
     : attention.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' }));
@@ -555,6 +586,7 @@ function newRun() {
   results = [];
   resFilter = 'all';
   resSort = null;
+  lastRunRows = [];
   clearAbsorbLastResults();
   renderReport(null);
   renderResults();
@@ -572,7 +604,12 @@ function continueAndRerun() {
   if (cb) { cb.checked = true; saveContinue(true); }
   const blocked = displayedResults().filter(absorbIsOtherInstituteBlock);
   if (!blocked.length) return;
-  grid.setRows(blocked.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' })));
+  // ביקורת 2.11: השורה כפי שרצה (עם לידה וארץ לדרכון), אחרת מהתוצאה
+  const prevByKey = new Map(lastRunRows.map((r) => [rowKey(r.fields), r]));
+  grid.setRows(blocked.map((r) => {
+    const prev = prevByKey.get(resultKey(r));
+    return prev ? { fields: Object.assign(emptyFields(), prev.fields), newOpen: !!prev.newOpen } : rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' });
+  }));
   grid.setNotes(null);
   setStage('fix');
   grid.render();
@@ -642,6 +679,7 @@ function mount(container, panelUi, page) {
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-template`, label: 'הורד תבנית', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' })}
+          ${buttonHtml({ id: `${P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
         <input id="${P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${grid.pasteBoxHtml()}
@@ -657,6 +695,7 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' })}
         ${buttonHtml({ id: `${P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
+        ${buttonHtml({ id: `${P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
@@ -666,7 +705,7 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap tt-row-tight" id="${P}-out-actions">
         ${buttonHtml({ id: `${P}-keep-attention`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' })}
         ${buttonHtml({ id: `${P}-continue-rerun`, label: 'סמן "אשר המשך" והרץ שוב', kind: 'ghost', size: 'small', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה' })}
+        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט או בדיווח-באג' })}
         ${buttonHtml({ id: `${P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true, title: 'קובץ CSV עם כל העמודות, כולל "פירוט". מכיל מזהים מלאים' })}
       </div>
@@ -690,7 +729,10 @@ function mount(container, panelUi, page) {
   $el(`${P}-csv`).addEventListener('click', exportCsv);
   $el(`${P}-keep-attention`).addEventListener('click', fixAndRerun);
   $el(`${P}-continue-rerun`).addEventListener('click', continueAndRerun);
-  $el(`${P}-new-run`).addEventListener('click', newRun);
+  // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
+  bindConfirmClick(`${P}-new-run`, { label: 'קליטה חדשה', confirmLabel: 'כן, קליטה חדשה', onConfirm: newRun });
+  bindConfirmClick(`${P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: newRun });
+  bindConfirmClick(`${P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: clearTable });
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
@@ -724,8 +766,9 @@ function mount(container, panelUi, page) {
       renderStaleQueue(info);
       ui.open();
     },
-    onLocked: (msg) => { setRunning(false); ui.status(msg); ui.open(); },
+    onLocked: (msg) => { setRunning(false); ui.status(msg); setHtml(`${P}-stale`, esc(msg)); show(`${P}-stale`, true); ui.open(); }, // מקרה 22: תיבה צהובה, לא רק שורת-מצב
     onDone: (all, report) => {
+      if (grid.filled().length) lastRunRows = grid.filled(); // אחרי טעינת-דף הטבלה נבנתה מהתור (onResume), עם כל השדות
       results = all.slice(); resFilter = 'all'; resSort = null; grid.setRows([]); grid.setNotes(null);
       renderResults(); renderReport(report); setRunning(false); setStage('results'); ui.progress(all.length, all.length);
       const c = absorbSummarizeKinds(results);
@@ -747,7 +790,7 @@ function mount(container, panelUi, page) {
     if (last && last.results.length) {
       results = last.results.slice();
       renderResults();
-      renderReport(last.report);
+      renderReport(last.report, last.at);
       setStage('results');
       ui.status(`תוצאות הריצה האחרונה (${results.length} תלמידים)`);
     }

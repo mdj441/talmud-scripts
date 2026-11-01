@@ -1,4 +1,4 @@
-// ייצוא/העתקה — פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
+// ייצוא/העתקה: פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
 // toCsv טהורה (נבדקת ביחידה); downloadText/copyTextToClipboard נוגעות ב-DOM ולכן
 // כל הגישה ל-document/window/navigator היא רק בתוך גופי הפונקציות (import תקין ב-Node).
 
@@ -7,7 +7,7 @@ const CSV_BOM = '﻿';
 const CSV_EOL = '\r\n';
 
 // טהורה: מערך-שורות של תאים → טקסט CSV. מצטט רק תאים שדורשים זאת (פסיק / מרכאות /
-// שורה חדשה), ומכפיל מרכאות פנימיות — RFC 4180.
+// שורה חדשה), ומכפיל מרכאות פנימיות: RFC 4180.
 export function toCsv(rows) {
   if (!Array.isArray(rows)) return '';
   return rows.map((row) => (Array.isArray(row) ? row : [row]).map(csvCell).join(',')).join(CSV_EOL);
@@ -18,7 +18,7 @@ function csvCell(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// מוריד טקסט כקובץ (Blob + <a download>). לעולם לא זורק — מחזיר false בכישלון.
+// מוריד טקסט כקובץ (Blob + <a download>). לעולם לא זורק: מחזיר false בכישלון.
 export function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {
   try {
     const url = URL.createObjectURL(new Blob([text], { type: mime }));
@@ -41,7 +41,7 @@ export function downloadCsv(filename, rows) {
   return downloadText(filename, CSV_BOM + toCsv(rows), 'text/csv;charset=utf-8');
 }
 
-// Promise<boolean> — לעולם לא נדחה. clipboard API ואם הוא חסום — textarea+execCommand.
+// Promise<boolean>: לעולם לא נדחה. clipboard API ואם הוא חסום: textarea+execCommand.
 export function copyTextToClipboard(text) {
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {

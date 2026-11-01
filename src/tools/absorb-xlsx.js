@@ -1,7 +1,7 @@
-// טעינת רשימת תלמידים מקובץ אקסל (.xlsx/.xls) — ממיר את הגיליון לטקסט מופרד-טאבים
+// טעינת רשימת תלמידים מקובץ אקסל (.xlsx/.xls): ממיר את הגיליון לטקסט מופרד-טאבים
 // שנכנס ל-parseAbsorbInput (src/tools/absorb-parse.js), כך שיש מסלול פרסור אחד לכל
-// המקורות (הדבקה ידנית או קובץ אקסל). אין גישה ל-globalThis.XLSX ברמת המודול — רק
-// בתוך גוף loadXlsxFile — כדי שהמודול הזה ייבא נקי גם ב-Node (בדיקות, בלי דפדפן/ספרייה).
+// המקורות (הדבקה ידנית או קובץ אקסל). אין גישה ל-globalThis.XLSX ברמת המודול: רק
+// בתוך גוף loadXlsxFile: כדי שהמודול הזה ייבא נקי גם ב-Node (בדיקות, בלי דפדפן/ספרייה).
 
 function xlsxCellToString(v) {
   if (v === null || v === undefined) return '';
@@ -36,7 +36,7 @@ export function sheetRowsToText(rows) {
 export async function loadXlsxFile(file) {
   const XLSX = globalThis.XLSX;
   if (!XLSX) {
-    throw new Error('ספריית SheetJS (XLSX) לא נטענה — בדוק חיבור לאינטרנט ונסה שוב');
+    throw new Error('ספריית SheetJS (XLSX) לא נטענה: בדוק חיבור לאינטרנט ונסה שוב');
   }
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array', cellDates: true });

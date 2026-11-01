@@ -1,4 +1,4 @@
-// קליטה — נגיעות ב-DOM של האתר: מזהי הפקדים, כתיבה לשדות בסדר-postback קשיח, חיפוש עם
+// קליטה: נגיעות ב-DOM של האתר: מזהי הפקדים, כתיבה לשדות בסדר-postback קשיח, חיפוש עם
 // עדות-טריות, חלונית ההודעה, מודאל הקליטה, דף תלמיד-חדש. כל postback עובר דרך prm.js.
 // אין גישה ל-document/window ברמת המודול.
 
@@ -206,7 +206,7 @@ async function searchOnce(input, btn, value, gen) {
 export async function absorbSearch(input, btn, value, gen) {
   let res = await searchOnce(input, btn, value, gen);
   if (res.executed) return res;
-  log('[חיפוש] אין עדות שהחיפוש רץ — ניסיון נוסף');
+  log('[חיפוש] אין עדות שהחיפוש רץ: ניסיון נוסף');
   await sleepCheckStop(500, gen);
   res = await searchOnce(input, btn, value, gen);
   if (!res.executed) log('[חיפוש] גם הניסיון השני לא הופעל');
@@ -220,7 +220,7 @@ export function absorbSearchFailReason(res) {
   if (!res) return 'החיפוש לא הופעל';
   if (!res.started) return 'לחיצת החיפוש לא הפעילה בקשה לשרת' + (res.reason ? ` (${res.reason})` : '');
   if (!res.ok) return 'החיפוש נכשל או פג-זמן בשרת' + (res.reason ? ` (${res.reason})` : '');
-  if (res.countFresh === false) return 'תווית הספירה לא התרעננה — מה שמוצג אינו תוצאת החיפוש הזה';
+  if (res.countFresh === false) return 'תווית הספירה לא התרעננה: מה שמוצג אינו תוצאת החיפוש הזה';
   return 'החיפוש רץ אך תוצאותיו לא התעדכנו בדף';
 }
 
@@ -236,7 +236,7 @@ export async function absorbHidePopup(gen) {
     await Promise.race([hide.wait, sleep(POPUP_HIDE_MS)]);
     await sleepCheckStop(150, gen);
   }
-  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית בלי ללחוץ "המשך" — ממשיכים');
+  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית בלי ללחוץ "המשך": ממשיכים');
   return hide;
 }
 
@@ -245,15 +245,15 @@ export function absorbLogPopup(where, pop) {
   log(`[הודעה] ${where}: ${maskIdsInText(pop.text)} · סוג=${pop.kind || '?'} · כפתורים=[${buttons}]`);
 }
 
-// קורא חלונית אם יש, סוגר אותה, ומחזיר {pop, blocked} — blocked = בקשת-אישור ("המשך" שאינו הצלחה).
+// קורא חלונית אם יש, סוגר אותה, ומחזיר {pop, blocked}: blocked = בקשת-אישור ("המשך" שאינו הצלחה).
 export async function absorbReadAndHidePopup(where, gen) {
   const pop = readMessagePopup();
   if (!pop) return { pop: null, blocked: false };
   absorbLogPopup(where, pop);
   await absorbHidePopup(gen);
   const blocked = !!pop.hasContinue && pop.kind !== 'success' && pop.kind !== 'error';
-  if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה — ממשיכים לאימות בגריד');
-  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר — השורה תסומן "שגיאה"');
+  if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה: ממשיכים לאימות בגריד');
+  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר: השורה תסומן "שגיאה"');
   await sleepCheckStop(200, gen);
   return { pop, blocked };
 }
@@ -285,7 +285,7 @@ export function absorbNewStudentPageMatches(identity) {
   return !!val && absorbNormalizeId(val) === absorbNormalizeId(identity);
 }
 
-// ממתין לסיום ה-postback (או לתקציב). ניווט מלא מפרק את הדף — הריצה ממשיכה אחרי הטעינה.
+// ממתין לסיום ה-postback (או לתקציב). ניווט מלא מפרק את הדף: הריצה ממשיכה אחרי הטעינה.
 export async function absorbWaitOutcome(prmWait, budgetMs, gen) {
   let prmResult = null;
   prmWait.then((r) => { prmResult = r || { ok: true }; });

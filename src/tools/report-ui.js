@@ -171,7 +171,7 @@ function reportUiMount(container, panelUi, page) {
   reportDone = reportRows.length > 0;
   reportRenderRows();
   if (reportHasPendingRun()) { reportSetStatus('נמצאה ריצה פתוחה. ממשיך…'); reportSetRunning(true); }
-  else reportSetStatus(fits ? (branches.length ? 'מוכן. "התחל" מדווח לכל הסניפים שבעץ' : 'אין סניפים בעץ של הדף הזה') : 'הדיווח רץ מדף מוסד');
+  else reportSetStatus(fits ? (branches.length ? 'מוכן. "התחל" מדווח לכל הסניפים שברשימה' : 'אין סניפים ברשימת הסניפים של הדף הזה') : 'הדיווח רץ מדף מוסד');
   Promise.resolve().then(() => reportResumeIfPending()).catch((e) => {
     log('[דיווח] ההמשך נכשל: ' + (e && e.message));
     reportSetRunning(false);

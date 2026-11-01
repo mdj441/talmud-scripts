@@ -161,12 +161,18 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), true, 'בשלב התיקון טבלת-התוצאות לא מוצגת');
       assert.equal(await page.$eval('#tt-absorb-zone-in-title', (el) => el.textContent.trim()), 'תיקון והרצה חוזרת');
       assert.match(await page.textContent('#tt-absorb-start'), /התחל קליטה חוזרת: תלמיד אחד/);
-      // "חזרה לתוצאות" ו"קליטה חדשה"
+      assert.equal(await page.$eval('#tt-absorb-restart', (b) => b.hidden), false, '"התחלה מחדש" מוצג בשלב התיקון (הכרעת 2.11)');
+      assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), true, '"נקה" לא מוצג בשלב התיקון');
+      // "חזרה לתוצאות" ו"קליטה חדשה" (הכרעת 2.11: מחיקת תוצאות דורשת לחיצה שנייה)
       await page.click('#tt-absorb-back');
       assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), false);
       await page.click('#tt-absorb-new-run');
+      assert.equal(await page.textContent('#tt-absorb-new-run'), 'כן, קליטה חדשה', 'לחיצה ראשונה רק דורכת');
+      assert.ok(await page.$('#tt-absorb-results table'), 'התוצאות עדיין מוצגות אחרי לחיצה אחת');
+      await page.click('#tt-absorb-new-run');
       assert.equal(await page.$eval('#tt-absorb-zone-in', (el) => el.hidden), false, 'קליטה חדשה חוזרת להכנה');
       assert.equal(await page.$('#tt-absorb-results table'), null, 'התוצאות נוקו');
+      assert.equal(await page.$eval('#tt-absorb-start', (b) => b.disabled), true, 'טבלה ריקה: "התחל קליטה" לא פעיל');
     } finally { await context.close(); }
   });
 
@@ -508,6 +514,99 @@ describe('קליטת תלמידים — טבלת ההזנה', () => {
       await page.click('#tt-absorb-grid th[data-sort="identifier"]');
       const order2 = await page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
       assert.deepEqual(order2, order1.slice().reverse(), 'לחיצה שנייה הופכת את הסדר');
+    } finally { await context.close(); }
+  });
+
+  test('2.11.2026: "הדבק מאקסל" קורא מהלוח; "התחל" לא פעיל כשאין מי שירוץ; לוח-השנה ממלא את השדה; "נקה" בשתי לחיצות', async () => {
+    const { context, page } = await openSession(browser2, { script: script2 });
+    try {
+      await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: SITE });
+      await page.goto(URLS.institute(491));
+      await page.waitForSelector('#tt-panel');
+      const cell = (i, k) => `#tt-absorb-grid input[data-i="${i}"][data-k="${k}"]`;
+      const startDisabled = () => page.$eval('#tt-absorb-start', (b) => b.disabled);
+      const ids = () => page.$$eval('#tt-absorb-grid tr.tt-r-main[data-i] input[data-k="identifier"]', (els) => els.map((e) => e.value).filter(Boolean));
+      assert.equal(await startDisabled(), true, 'טבלה ריקה: "התחל קליטה" לא פעיל (הכרעת 2.11)');
+      assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), true, '"נקה" מוסתר כשאין שורות');
+      // "הדבק מאקסל" קורא מהלוח (עד עכשיו כוסה רק בסקריפט-הצילומים)
+      await page.evaluate((t) => navigator.clipboard.writeText(t), `00${T}600${T}034567890\n16${T}600${T}AB1234567\n16${T}600${T}CD7654321`);
+      await page.click('#tt-absorb-paste-btn');
+      await page.waitForSelector(cell(2, 'studyType'));
+      assert.deepEqual(await ids(), ['034567890', 'AB1234567', 'CD7654321'], 'הלוח מולא לטבלה');
+      assert.equal(await page.$eval('#tt-absorb-pastebox', (b) => b.hidden), true, 'תיבת-ההדבקה נשארת סגורה כשהלוח נקרא');
+      assert.match(await page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="1"]'), /דרכון: חסרים תאריך לידה, ארץ/);
+      assert.equal(await startDisabled(), false);
+      assert.match(await page.textContent('#tt-absorb-start'), /התחל קליטה: תלמיד אחד/);
+      // תגית "לא ירוצו": רק אדומות מוצגות → אין מי שירוץ → לא פעיל, בלי מספר
+      await page.click('#tt-absorb-tags [data-filter="bad"]');
+      assert.equal(await startDisabled(), true, 'תגית שמציגה רק אדומות: "התחל" לא פעיל');
+      assert.equal(await page.textContent('#tt-absorb-start'), 'התחל קליטה');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-r-main[data-i="0"]', (tr) => tr.hidden), true, 'השורה הירוקה מוסתרת תחת "לא ירוצו"');
+      // ביקורת 2.11: השורה שעורכים לא נעלמת באמצע ההקלדה כשהיא מפסיקה להתאים לתגית
+      await page.fill(cell(1, 'country'), 'צרפת');
+      await page.fill(cell(1, 'birthDate'), '12/11/2004');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-rowmsg[data-msg="1"]', (tr) => tr.hidden), true, 'השורה תקינה עכשיו');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-r-main[data-i="1"]', (tr) => tr.hidden), false, 'השורה שבפוקוס נשארת גלויה גם כשאינה אדומה');
+      assert.match(await page.textContent('#tt-absorb-tags [data-filter="bad"]'), /לא ירוצו 1/);
+      await page.click('#tt-absorb-tags [data-filter="bad"]'); // הפוקוס עבר לתגית: עכשיו השורה שתוקנה מוסתרת
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-r-main[data-i="1"]', (tr) => tr.hidden), true);
+      // ביקורת 2.11: כשהאדומה האחרונה תוקנה, התגית חוזרת ל"הכל" במקום להשאיר טבלה ריקה
+      await page.fill(cell(2, 'country'), 'צרפת');
+      await page.$eval('#tt-absorb-grid tr.tt-r-main[data-i="2"] .tt-cell-birthDate .tt-date-native', (n) => { n.value = '2004-11-12'; n.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.equal(await page.$eval(cell(2, 'birthDate'), (e) => e.value), '12/11/2004', 'לוח-השנה מילא את תא תאריך-הלידה');
+      assert.ok(await page.$eval('#tt-absorb-tags [data-filter="all"]', (b) => b.classList.contains('tt-tag-active')), 'התגית חזרה ל"הכל"');
+      assert.equal(await page.$eval('#tt-absorb-grid tr.tt-r-main[data-i="0"]', (tr) => tr.hidden), false);
+      assert.equal(await startDisabled(), false);
+      assert.match(await page.textContent('#tt-absorb-start'), /התחל קליטה: 3 תלמידים$/);
+      // לוח-השנה של תאריך הקליטה: הבחירה בלוח של הדפדפן חוזרת לשדה-הטקסט כיום/חודש/שנה
+      await page.click('#tt-absorb-zone-in [data-cal="tt-absorb-start-date"]'); // הכפתור לא זורק גם כשאין לוח גלוי
+      await page.$eval('#tt-absorb-start-date', (inp) => { const n = inp.parentElement.querySelector('.tt-date-native'); n.value = '2026-09-01'; n.dispatchEvent(new Event('change', { bubbles: true })); });
+      assert.equal(await page.$eval('#tt-absorb-start-date', (e) => e.value), '01/09/2026');
+      // אפיון סעיף 5: שורת-המצב מתרעננת אחרי מחיקת שורה
+      await page.click('#tt-absorb-grid button[data-del="0"]');
+      assert.deepEqual(await ids(), ['AB1234567', 'CD7654321']);
+      assert.match(await page.textContent('#tt-absorb-status'), /2 תלמידים מוכנים/);
+      // ביקורת 2.11: תיבת-ההדבקה לא מוחקת את הטבלה על תו בודד, ולא על הדבקה בלי שורות (כותרת בלבד)
+      await fillPasteBox(page, ABSORB_SEL.input, 'x');
+      assert.deepEqual(await ids(), ['AB1234567', 'CD7654321'], 'תו בודד בתיבה לא מחק את הטבלה');
+      await page.fill(ABSORB_SEL.input, `סניף${T}סוג לימוד${T}ת.ז./דרכון\n`);
+      assert.deepEqual(await ids(), ['AB1234567', 'CD7654321'], 'כותרת בלבד לא מחקה את הטבלה');
+      assert.match(await page.textContent('#tt-absorb-status'), /לא זוהו שורות/);
+      await page.evaluate((s) => { const b = document.querySelector(s); if (b) b.hidden = true; }, '#tt-absorb-pastebox');
+      // "נקה": לחיצה ראשונה דורכת ("כן, נקה"), שנייה מרוקנת
+      assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), false);
+      await page.click('#tt-absorb-clear');
+      assert.equal(await page.textContent('#tt-absorb-clear'), 'כן, נקה');
+      assert.deepEqual(await ids(), ['AB1234567', 'CD7654321'], 'לחיצה אחת לא מוחקת');
+      await page.click('#tt-absorb-clear');
+      assert.deepEqual(await ids(), [], 'לחיצה שנייה מרוקנת');
+      assert.equal(await startDisabled(), true);
+      assert.equal(await page.$eval('#tt-absorb-clear', (b) => b.hidden), true);
+      assert.match(await page.textContent('#tt-absorb-status'), /הטבלה נוקתה/);
+      // אפיון סעיף 5: לשונית ההודעות בדף מוסד = תיבה עם "עבור לדף ההודעות"; הצד נזכר ב-localStorage
+      await page.click('#tt-tab-messages');
+      assert.ok(await page.$('#tt-messages-goto:not([hidden])'), 'כפתור "עבור לדף ההודעות" בדף מוסד');
+      await page.click('#tt-side');
+      const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('tt.ui') || '{}'));
+      assert.equal(saved.side, 'right', 'הצד נשמר');
+    } finally { await context.close(); }
+  });
+
+  test('ביקורת 2.11: דרכון שנחסם "רשום במוסד אחר" → "סמן אשר המשך והרץ שוב" שומר לידה וארץ, והריצה החוזרת יוצאת לדרך → "נקלט"', async () => {
+    const warn = 'אזהרה תלמיד זה רשום כבר במוסד אחר. אם לתלמיד קיימים לימודים של בוקר, אחה"צ, שירות אזרחי או יום שלם - הם יסתיימו החל מרגע זה האם אתה בטוח שברצונך להמשיך ולרשום אותו במוסדך ?';
+    const { context, page } = await openSession(browser2, { script: script2, scenario: { blocked: { AB1234567: warn } } });
+    try {
+      const run = await runAbsorb(page, `16${T}600${T}AB1234567${T}${T}${T}05/05/1994${T}צרפת`, { startUrl: URLS.institute(491), continueOther: false });
+      assert.equal(run.results[0].status, 'נחסם: רשום במוסד אחר', run.log);
+      await page.click('#tt-absorb-continue-rerun');
+      // השורה בשלב התיקון נבנית מהשורה שרצה (עם לידה וארץ), לא מהתוצאה הדלה; לכן אינה אדומה והריצה מתחילה
+      // הריצה מתחילה מיד והטבלה מוסתרת בשלב "ריצה", ולכן קוראים את הערכים בלי לחכות לנראות
+      const vals = await page.evaluate(() => ['identifier', 'birthDate', 'country'].map((k) => { const e = document.querySelector(`#tt-absorb-grid input[data-i="0"][data-k="${k}"]`); return e ? e.value : null; }));
+      assert.deepEqual(vals, ['AB1234567', '05/05/1994', 'צרפת'], 'השורה בתיקון שומרת מספר, תאריך לידה וארץ');
+      assert.doesNotMatch(await page.textContent('#tt-absorb-status'), /לא תרוץ/, 'הריצה החוזרת יצאה לדרך ולא נעצרה על שורה אדומה');
+      await waitForRunDone(page);
+      const again = await readResults(page);
+      assert.equal(again[0].status, 'נקלט', await readLog(page));
     } finally { await context.close(); }
   });
 });

@@ -128,6 +128,7 @@ export const PANEL_CSS = `
 .tt-btn-subtle:hover{background:var(--tt-accent-soft);border-color:transparent;text-decoration-color:var(--tt-accent)}
 .tt-btn-sm{padding:3px 8px;font-size:12px}
 .tt-btn[hidden]{display:none}
+.tt-btn.tt-btn-armed{color:var(--tt-bad);border-color:var(--tt-bad);text-decoration-color:var(--tt-bad);font-weight:600}
 .tt-btn-stop{background:var(--tt-bad);border-color:var(--tt-bad);color:#fff;font-weight:700;font-size:14px;padding:9px 22px}
 .tt-btn-stop:hover{background:#86190f;border-color:#86190f}
 .tt-runline{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid #efc3bb;border-radius:8px;background:#fff;margin:8px 0}

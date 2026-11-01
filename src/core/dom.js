@@ -1,5 +1,5 @@
-// עוזרי DOM כלליים — פורט מ"תלמוד - עזיבת תלמידים" v5 (‏$el:44, sleep:45, waitFor:135, isVisible:279).
-// חשוב: אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות, כדי שהמודול
+// עוזרי DOM כלליים: פורט מ"תלמוד - עזיבת תלמידים" v5 (‏$el:44, sleep:45, waitFor:135, isVisible:279).
+// חשוב: אין גישה ל-document/window ברמת המודול: רק בתוך גופי הפונקציות, כדי שהמודול
 // יהיה ניתן ל-import ב-Node (בדיקות) בלי סביבת דפדפן.
 
 export function $el(id) {
@@ -12,7 +12,7 @@ export function sleep(ms) {
 
 // getClientRects().length, לא offsetParent: ה-ModalPopupExtender מציג את החלונית עם
 // position:fixed, ועבורה offsetParent הוא תמיד null גם כשהיא גלויה לגמרי.
-// getClientRects() מחזיר תיבות לאלמנטים מעובדים (כולל fixed) וכלום ל-display:none —
+// getClientRects() מחזיר תיבות לאלמנטים מעובדים (כולל fixed) וכלום ל-display:none:
 // בדיוק האות שאנחנו רוצים.
 export function isVisible(el) {
   if (!el) return false;

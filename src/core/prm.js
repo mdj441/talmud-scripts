@@ -1,6 +1,6 @@
-// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager — פורט מ"תלמוד - עזיבת תלמידים"
+// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager: פורט מ"תלמוד - עזיבת תלמידים"
 // v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
-// אין גישה ל-Sys/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין גם ב-Node).
+// אין גישה ל-Sys/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין גם ב-Node).
 
 export function getPRM() {
   try {
@@ -11,10 +11,10 @@ export function getPRM() {
 }
 
 // שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
-// לעולם לא נזרק/נדחה — "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
+// לעולם לא נזרק/נדחה: "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
 // {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
 // ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
-// "הפעולה לא הפעילה שום בקשה לשרת" — לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
+// "הפעולה לא הפעילה שום בקשה לשרת": לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
 // אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
 export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
   return new Promise((resolve) => {
@@ -51,7 +51,7 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
 
     const startTimer = setTimeout(() => {
       if (!started && !prm._isInAsyncPostBack) {
-        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback — ממשיכים
+        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback: ממשיכים
       }
     }, startTimeoutMs);
 
@@ -67,7 +67,7 @@ export function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) 
 // את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
 // נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
 export function firePostback(target, arg = '', opts) {
-  const wait = waitPRM(opts); // (1) registers wait — add_endRequest is wired synchronously inside
+  const wait = waitPRM(opts); // (1) registers wait: add_endRequest is wired synchronously inside
   setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
   return wait;
 }

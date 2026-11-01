@@ -1,4 +1,4 @@
-// קליטה — החלק הטהור: סטטוסים, ניתוח הגריד, תוצאות (TSV/CSV), דוח "מה נשאר", הכרעות קטנות.
+// קליטה: החלק הטהור: סטטוסים, ניתוח הגריד, תוצאות (TSV/CSV), דוח "מה נשאר", הכרעות קטנות.
 // אין כאן DOM בכלל; הכל נבדק ביחידה (test/absorb-pure.test.js).
 
 import { padId9 } from '../core/identity.js';
@@ -67,7 +67,7 @@ export function absorbIsOtherInstituteBlock(result) {
 export const ABSORB_TSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'מה לעשות'];
 export const ABSORB_CSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'פירוט', 'מה לעשות'];
 export const ABSORB_TEMPLATE_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'שם פרטי', 'שם משפחה', 'תאריך לידה', 'ארץ', 'מגדר', 'מצב משפחתי'];
-export const ABSORB_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // מעל זה — אין המשך אוטומטי של תור שמור
+export const ABSORB_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // מעל זה: אין המשך אוטומטי של תור שמור
 
 // "נחסם: <טקסט>" → "נחסם".
 export function absorbStatusKey(status) {
@@ -146,14 +146,14 @@ export function buildResultsCsvRows(results) {
 export function summarizeAbsorbResults(results) {
   const counts = {};
   for (const r of Array.isArray(results) ? results : []) {
-    const key = absorbStatusKey(r && r.status) || '—';
+    const key = absorbStatusKey(r && r.status) || '-';
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
 }
 
 // דוח "מה נשאר": שורה אופרטיבית לכל תוצאה שאינה הצלחה + סיכום.
-// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה — כל שורה
+// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה: כל שורה
 // שהתוצאה שלה (אותו סניף, סוג-לימוד ומזהה) אינה הצלחה. שורה בלי תוצאה (לא רצה) נשארת. מחזירה
 // {rows, needsExtra}: needsExtra = יש "תלמיד חדש" שדורש שם/משפחה/תאריך לידה (לפתוח את העמודות).
 export function absorbRowsNeedingAttention(rows, results) {
@@ -178,7 +178,7 @@ export function buildRemainingReport(results) {
   const counts = summarizeAbsorbResults(list);
   const lines = list
     .filter((r) => !isAbsorbSuccess(r && r.status))
-    .map((r) => [r.branch, r.studyType, r.identity, r.status, r.action || '—'].map(flatCell).join(' · '));
+    .map((r) => [r.branch, r.studyType, r.identity, r.status, r.action || '-'].map(flatCell).join(' · '));
   const summary = Object.keys(counts).map((k) => `${k}=${counts[k]}`).join(' · ');
   return { lines, summary, counts };
 }

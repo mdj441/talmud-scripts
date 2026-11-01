@@ -5,7 +5,7 @@ import { isValidIsraeliId, isIsraelCountry } from '../src/core/identity.js';
 import { parseAbsorbInput } from '../src/tools/absorb-parse.js';
 import { ABSORB_STATUS, absorbResultKind, absorbSummarizeKinds, absorbShortStatus, absorbIsOtherInstituteBlock, isAbsorbSuccess } from '../src/tools/absorb-report.js';
 import { absorbAutoIdType, absorbEffectiveIdType, absorbRowsToText, absorbValidateRows, absorbFriendlyError, absorbCanonicalCountry, ABSORB_STEPS } from '../src/tools/absorb-ui.js';
-import { stepClasses, stepsHtml, tagHtml, resultsTableHtml, zoneHtml, fitBoxHtml } from '../src/ui/widgets.js';
+import { stepClasses, stepsHtml, tagHtml, resultsTableHtml, zoneHtml, fitBoxHtml, bindConfirmClick } from '../src/ui/widgets.js';
 import { panelSide, otherSide, sideButtonLabel, initialTabFor, PANEL_WARNING, PANEL_CSS } from '../src/ui/panel.js';
 import { messagesTool } from '../src/tools/messages-ui.js';
 import { departTool } from '../src/tools/depart-ui.js';
@@ -244,4 +244,34 @@ test('לוח-שנה: המרות תאריך והרכב השדה', () => {
   assert.equal(isoToDmy('bad'), '');
   const html = dateFieldHtml({ id: 'd1', placeholder: 'יום/חודש/שנה' });
   assert.ok(html.includes('id="d1"') && html.includes('type="date"') && html.includes('data-cal="d1"'));
+});
+
+// ─── כפתור שמוחק: שתי לחיצות (הכרעת 2.11.2026) ───────────────────────────────
+test('bindConfirmClick: לחיצה ראשונה דורכת ("כן, נקה" + tt-btn-armed), שנייה מבצעת; בלי שנייה חוזר לעצמו אחרי ms', async () => {
+  const fake = () => {
+    const el = { textContent: 'נקה', cls: new Set(), fn: null };
+    el.classList = { add: (c) => el.cls.add(c), remove: (c) => el.cls.delete(c) };
+    el.addEventListener = (type, fn) => { if (type === 'click') el.fn = fn; };
+    el.click = () => el.fn();
+    return el;
+  };
+  let n = 0;
+  const a = fake();
+  bindConfirmClick(a, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: () => n++, ms: 30 });
+  a.click();
+  assert.equal(a.textContent, 'כן, נקה');
+  assert.ok(a.cls.has('tt-btn-armed'));
+  assert.equal(n, 0, 'לחיצה אחת לא מבצעת');
+  a.click();
+  assert.equal(n, 1, 'לחיצה שנייה מבצעת');
+  assert.equal(a.textContent, 'נקה');
+  assert.ok(!a.cls.has('tt-btn-armed'));
+  const b = fake();
+  bindConfirmClick(b, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: () => n++, ms: 30 });
+  b.click();
+  await new Promise((r) => setTimeout(r, 70));
+  assert.equal(b.textContent, 'נקה', 'אחרי שפג הזמן הכפתור חוזר לעצמו');
+  b.click();
+  assert.equal(n, 1, 'אחרי שפג: הלחיצה רק דורכת שוב');
+  assert.equal(typeof bindConfirmClick(null, { label: 'x', confirmLabel: 'y', onConfirm: () => {} }), 'function', 'בלי אלמנט: לא זורק');
 });

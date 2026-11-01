@@ -1,4 +1,4 @@
-// קליטה — הזרימה: לכל תלמיד (1) להגיע לדף סוג-הלימוד הנכון, (2) חיפוש מקדים, (3) "קליטה" +
+// קליטה: הזרימה: לכל תלמיד (1) להגיע לדף סוג-הלימוד הנכון, (2) חיפוש מקדים, (3) "קליטה" +
 // חלונית הודעה, (4) מילוי המודאל, (5) אישור, (6) דף תלמיד-חדש אם צריך, (7) אימות מול הגריד.
 // ניווט מלא טוען דף חדש; המצב נשמר ב-sessionStorage וההמשך (resume) קורה אחרי הטעינה.
 // אין גישה ל-document/window ברמת המודול.
@@ -32,8 +32,8 @@ const STUDENT_TIMEOUT_MS = 60000;
 const CONFIRM_BUDGET_MS = 25000;
 const SAVE_BUDGET_MS = 30000;
 const NAV_WATCHDOG_MS = 12000;
-const NAVIGATED = { __navigated: true }; // ניווט מלא נורה — ההמשך אחרי טעינת הדף
-const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — לתלמיד הבא
+const NAVIGATED = { __navigated: true }; // ניווט מלא נורה: ההמשך אחרי טעינת הדף
+const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה: לתלמיד הבא
 
 // ─── טקסטי "מה לעשות" (ממצא 12): תמיד עם "איך", לא רק "מה" ───────────────────
 const SUPPORT_URL = 'https://github.com/mdj441/talmud-scripts/issues';
@@ -94,7 +94,7 @@ function clearWatchdog() {
   if (watchdogTimer !== null) { try { clearTimeout(watchdogTimer); } catch (e) { /* noop */ } watchdogTimer = null; }
 }
 
-// ניווט שהוכרז ולא הביא טעינת דף תוך 12 שניות: אם הדף בכל זאת מתאים למשימה — ממשיכים;
+// ניווט שהוכרז ולא הביא טעינת דף תוך 12 שניות: אם הדף בכל זאת מתאים למשימה: ממשיכים;
 // אחרת התלמיד מקבל "שגיאה" עם הוראה ידנית, והאצווה ממשיכה. לעולם לא קופאים על "ממתין".
 function armWatchdog(taskIdx) {
   clearWatchdog();
@@ -108,9 +108,9 @@ function armWatchdog(taskIdx) {
     const fits = !!task && ((page.kind === 'studyType' && page.branch === b && page.studyType === String(task.studyType) && absorbBranchSourceTrusted(page.branchSource))
       || (page.kind === 'institute' && page.branch === b && page.branchSource === 'h1'));
     if (fits) {
-      log('[ניווט] הדף התעדכן בלי טעינה מלאה — ממשיכים במקום');
+      log('[ניווט] הדף התעדכן בלי טעינה מלאה: ממשיכים במקום');
     } else {
-      log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(NAV_WATCHDOG_MS / 1000)} שניות — התלמיד מסומן ומדלגים`);
+      log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(NAV_WATCHDOG_MS / 1000)} שניות: התלמיד מסומן ומדלגים`);
       if (task && absorbShouldRecord(S.lastRecordedIdx, taskIdx)) {
         recordResult(makeAbsorbResult(task, ABSORB_STATUS.ERROR, 'הניווט לדף סוג-הלימוד לא הביא טעינת דף', manualStudyTypeAction(task.branch, task.studyType)), null, taskIdx);
       }
@@ -151,7 +151,7 @@ async function ensureStudyTypePage(task, gen) {
       return {
         ok: false, reason: res.reason,
         action: /בעץ/.test(String(res.reason || ''))
-          ? `סניף ${branch} לא נמצא בעץ-הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
+          ? `סניף ${branch} לא נמצא ברשימת הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
           : `סוג לימוד ${code} לא נמצא בסניף ${branch} (או מסומן "סגור"). בדוק בדף המוסד, בלשונית "סוגי לימוד למוסד". אם הוא שם, תקן את השורה ולחץ "תקן והרץ שוב"`,
       };
     }
@@ -169,7 +169,7 @@ async function ensureStudyTypePage(task, gen) {
 
 // יוצאים מדף תלמיד-חדש לדף סוג-הלימוד: דרך העץ אם יש בדף, אחרת דרך דף המוסדות (ומשם העץ והגריד אחרי הטעינה).
 async function leaveNewStudentPage(task, recorded, gen) {
-  if (absorbIsCancelled(gen)) { log('[תלמיד חדש] ניסיון שבוטל — לא יוצאים מהדף'); return CONTINUE; }
+  if (absorbIsCancelled(gen)) { log('[תלמיד חדש] ניסיון שבוטל: לא יוצאים מהדף'); return CONTINUE; }
   saveAbsorbState();
   beginNavigation();
   const res = await gotoStudyType(task.branch, task.studyType);
@@ -214,7 +214,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   if (!birthDate) missing.push('תאריך לידה');
 
   if (missing.length) {
-    log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}) — לא שומרים`);
+    log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}): לא שומרים`);
     const digitsOnly = /^\d+$/.test(String(identity || ''));
     const res = mk(ABSORB_STATUS.NEW_STUDENT_MISSING, `חסר: ${missing.join(', ')}`,
       `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם מדובר בדרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
@@ -287,8 +287,8 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
       saveAbsorbState();
       return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
     }
-    // נשארנו בדף (עם או בלי הודעת הצלחה) — האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
-    log('[תלמיד חדש] נשארנו בדף אחרי השמירה — עוברים לרשימת התלמידים לאימות');
+    // נשארנו בדף (עם או בלי הודעת הצלחה): האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
+    log('[תלמיד חדש] נשארנו בדף אחרי השמירה: עוברים לרשימת התלמידים לאימות');
     beginNavigation();
     const res = await gotoStudyType(task.branch, task.studyType);
     if (res && res.ok !== false) return NAVIGATED;
@@ -296,7 +296,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [pendingSaveNote(), 'השמירה בוצעה אך לא ניתן היה לחזור לרשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(task.studyType, task.branch));
   }
 
-  // הדף התחלף בלי טעינה מלאה (נדיר): אם זה דף סוג-הלימוד — מאמתים כאן.
+  // הדף התחלף בלי טעינה מלאה (נדיר): אם זה דף סוג-הלימוד: מאמתים כאן.
   return verifyAfterNewStudent(task, identity, mk, gen);
 }
 
@@ -344,7 +344,7 @@ export async function processStudent(task, gen) {
   // נחתנו בדף תלמיד-חדש (אחרי "אישור" במודאל שטען דף חדש)
   if (getPage().kind === 'newStudent') {
     if (absorbNewStudentPageMatches(identity)) return handleNewStudentPage(task, identity, mk, gen, myIdx);
-    log('[תלמיד חדש] הדף שייך למזהה אחר — יוצאים ממנו');
+    log('[תלמיד חדש] הדף שייך למזהה אחר: יוצאים ממנו');
     const left = await leaveNewStudentPage(task, null, gen);
     if (left === NAVIGATED) return NAVIGATED;
     return mk(ABSORB_STATUS.ERROR, 'נפתח דף תלמיד-חדש של מזהה אחר ולא ניתן היה לצאת ממנו', manualStudyTypeAction(branch, code));
@@ -370,7 +370,7 @@ export async function processStudent(task, gen) {
   let pre = await absorbSearch(searchInput, searchBtn, identity, gen);
   let decision = absorbPrecheckDecision(pre);
   if (decision === 'retry') {
-    log('[חיפוש] התווית מדווחת תוצאות אך הרשימה לא התרעננה — חיפוש חוזר');
+    log('[חיפוש] התווית מדווחת תוצאות אך הרשימה לא התרעננה: חיפוש חוזר');
     await sleepCheckStop(500, gen);
     pre = await absorbSearch(searchInput, searchBtn, identity, gen);
     decision = absorbPrecheckDecision(pre);
@@ -403,7 +403,7 @@ export async function processStudent(task, gen) {
     return mk(ABSORB_STATUS.VERIFY, [savedNote, `ברשימה שורה אחת עם מזהה אחר: ${preGrid.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
   }
   if (justSaved) {
-    // נשמר בדף תלמיד-חדש אך לא ברשימה — לא קולטים שוב, מדווחים לבדיקה ידנית.
+    // נשמר בדף תלמיד-חדש אך לא ברשימה: לא קולטים שוב, מדווחים לבדיקה ידנית.
     S.justSaved = null;
     return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [savedNote, 'התלמיד נשמר בדף תלמיד-חדש אך לא נמצא ברשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(code, branch));
   }
@@ -525,8 +525,8 @@ export async function processStudent(task, gen) {
       // סבב רטוב 31.10.2026: "עצור" אחרי שה-postback של "קליטה" כבר יצא משאיר את חלון הקליטה פתוח
       // (עם רקע שחוסם את הדף, כולל העץ). סגירה ב"ביטול" היא בטוחה: שום דבר לא נשלח. שאר הדף: לא נוגעים.
       if (absorbIsCancelled(gen)) {
-        if (absorbModalVisible()) { log('[מודאל] ניסיון שבוטל — סוגרים את חלון הקליטה ב"ביטול", לא נוגעים בשאר הדף'); await absorbCloseAcceptModal(); }
-        else log('[מודאל] ניסיון שבוטל — לא נוגעים בדף');
+        if (absorbModalVisible()) { log('[מודאל] ניסיון שבוטל: סוגרים את חלון הקליטה ב"ביטול", לא נוגעים בשאר הדף'); await absorbCloseAcceptModal(); }
+        else log('[מודאל] ניסיון שבוטל: לא נוגעים בדף');
       } else if (absorbModalVisible()) await absorbCloseAcceptModal();
     } catch (e) { /* אצווה לא נתקעת */ }
   }
@@ -555,7 +555,7 @@ async function absorbAfterConfirmPopup(gen) {
   log(`[הודעה] אחרי אישור: ${pop.text} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
   log('[המשך] "אשר המשך" מסומן בפאנל: לוחצים "המשך" (מעבר בין מוסדות; לימודיו במוסד האחר מסתיימים)');
   const pressed = pressMessagePopupContinueAsync();
-  if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא — נשאר "נחסם"'); return { pop, blocked: true }; }
+  if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא: נשאר "נחסם"'); return { pop, blocked: true }; }
   if (pressed.wait) await pressed.wait;
   await sleepCheckStop(300, gen);
   const after = await absorbReadAndHidePopup('אחרי המשך', gen);
@@ -567,7 +567,7 @@ async function absorbAfterConfirmPopup(gen) {
 function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
     const clearAll = () => { clearTimeout(timer); clearInterval(poller); };
-    const timer = setTimeout(() => { clearAll(); reject(new Error(`תהליך תקוע — חרג מ-${Math.round(ms / 1000)} שניות`)); }, ms);
+    const timer = setTimeout(() => { clearAll(); reject(new Error(`תהליך תקוע: חרג מ-${Math.round(ms / 1000)} שניות`)); }, ms);
     const poller = setInterval(() => { if (absorbIsStopped()) { clearAll(); reject(absorbStopError('timeout-poller')); } }, 200);
     promise.then((val) => { clearAll(); resolve(val); }, (err) => { clearAll(); reject(err); });
   });
@@ -584,14 +584,14 @@ export async function processStudentSafe(task) {
     log(`[ניסיון 1] ${isAbsorbCancelError(err) ? 'בוטל' : 'נכשל'}: ${err && err.message}`);
     await absorbCloseAcceptModal();
     if (absorbIsStopped()) throw absorbStopError('between-attempts');
-    if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) { log('[ניסיון 2] לא נדרש — התוצאה לשורה הזו כבר נרשמה'); return CONTINUE; }
+    if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) { log('[ניסיון 2] לא נדרש: התוצאה לשורה הזו כבר נרשמה'); return CONTINUE; }
     try {
       await sleep(1000);
       log(`[ניסיון 2] ${maskId(task.identity)}`);
       return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
     } catch (err2) {
       if (isAbsorbStopError(err2)) throw err2;
-      log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message} — מדלגים`);
+      log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message}: מדלגים`);
       await absorbCloseAcceptModal();
       if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) return CONTINUE;
       return errResult(`2 ניסיונות: ${err2 && err2.message}`);
@@ -602,7 +602,7 @@ export async function processStudentSafe(task) {
 // ─── התור ───────────────────────────────────────────────────────────────────
 function recordResult(result, gen, idx) {
   const at = typeof idx === 'number' ? idx : S.curIdx;
-  if (absorbIsCancelled(gen)) { log('[תוצאה] ניסיון שבוטל ניסה לרשום תוצאה — מתעלמים'); return false; }
+  if (absorbIsCancelled(gen)) { log('[תוצאה] ניסיון שבוטל ניסה לרשום תוצאה: מתעלמים'); return false; }
   if (!absorbShouldRecord(S.lastRecordedIdx, at)) { log(`[תוצאה] לשורה ${at + 1} כבר נרשמה תוצאה`); return false; }
   S.lastRecordedIdx = at;
   S.results.push(result);
@@ -667,12 +667,12 @@ export async function runQueue() {
   clearWatchdog();
   watchUnload();
   startLockRefresh();
-  log(`🚀 ריצה — ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
+  log(`🚀 ריצה: ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
   hook('onStart', S.queue, S.curIdx);
 
   while (S.curIdx < S.queue.length) {
     if (absorbIsStopped()) {
-      log('⛔ נעצר — ממלאים את שארית התור');
+      log('⛔ נעצר: ממלאים את שארית התור');
       fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
@@ -692,7 +692,7 @@ export async function runQueue() {
 
     if (result === NAVIGATED || (result && result.__navigated)) {
       S.running = false;
-      log('… טעינת דף — ההמשך אחרי הטעינה');
+      log('… טעינת דף: ההמשך אחרי הטעינה');
       armWatchdog(taskIdx);
       return;
     }
@@ -789,7 +789,7 @@ export async function absorbResumeIfPending(opts) {
 
   const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: false, reason: '' };
   if (!force && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות — לא ממשיכים אוטומטית`);
+    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות: לא ממשיכים אוטומטית`);
     hook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
     return false;
   }
@@ -814,7 +814,7 @@ export async function absorbResumeIfPending(opts) {
 
   if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
     S.justSaved = S.pendingSave.identity;
-    log('[המשך] תלמיד חדש נשמר לפני הטעינה — נאמת ברשימה');
+    log('[המשך] תלמיד חדש נשמר לפני הטעינה: נאמת ברשימה');
     saveAbsorbState();
   } else {
     S.pendingSave = null;
@@ -824,13 +824,13 @@ export async function absorbResumeIfPending(opts) {
   log(`[המשך] שורה ${S.curIdx + 1}/${S.queue.length} · טעינה ${landings} · דף ${getPage().kind}`);
   if (landings > ABSORB_MAX_LANDINGS) {
     const stuck = S.queue[S.curIdx];
-    log(`⚠️ תלמיד ${maskId(stuck.identity)} — ${landings} טעינות דף בלי סיום; מדלגים`);
+    log(`⚠️ תלמיד ${maskId(stuck.identity)}: ${landings} טעינות דף בלי סיום; מדלגים`);
     recordResult(makeAbsorbResult(stuck, ABSORB_STATUS.SKIPPED, `לולאת ניווט: ${landings} טעינות דף ללא התקדמות`, manualStudyTypeAction(stuck.branch, stuck.studyType)));
     if (S.curIdx >= S.queue.length) { finishRun(); return false; }
   }
 
   hook('onResume', S.queue, S.results, S.curIdx);
-  S.running = true; // לפני ההמתנה — שלחיצת "התחל" בשנייה הזו לא תפתח ריצה מקבילה
+  S.running = true; // לפני ההמתנה: שלחיצת "התחל" בשנייה הזו לא תפתח ריצה מקבילה
   try {
     await sleep(900); // MS AJAX מסיים לאתחל
     await runQueue();

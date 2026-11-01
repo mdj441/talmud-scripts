@@ -105,6 +105,9 @@ export function createGrid(cfg) {
     const list = filled();
     const v = cfg.validate(list);
     st.v = v;
+    // ביקורת 2.11: כשהתגית הפעילה התרוקנה (תיקנו את כל האדומות) חוזרים ל"הכל", אחרת הטבלה נראית ריקה
+    if (st.filter !== 'all' && !v.counts[st.filter]) st.filter = 'all';
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
     let filledIdx = -1;
     st.rows.forEach((row, i) => {
       const tr = document.querySelector(`#${id}-grid tr.tt-r-main[data-i="${i}"]`);
@@ -139,7 +142,8 @@ export function createGrid(cfg) {
       }
       if (sub) sub.hidden = blank || !(cfg.subOpen && cfg.subOpen(row));
       if (cfg.refreshRow) cfg.refreshRow(tr, sub, row, i);
-      const visible = gridRowMatchesFilter(st.filter, level, blank);
+      // השורה שעורכים עכשיו לא נעלמת באמצע ההקלדה כשהיא מפסיקה להתאים לתגית (ביקורת 2.11)
+      const visible = gridRowMatchesFilter(st.filter, level, blank) || !!(active && tr.contains(active));
       tr.hidden = !visible;
       if (msg && !visible) msg.hidden = true;
       if (sub && !visible) sub.hidden = true;
@@ -191,11 +195,14 @@ export function createGrid(cfg) {
 
   function applyText(text, label) {
     const rows = cfg.fromText(text);
+    // ביקורת 2.11: טקסט בלי שורות (תו בודד בתיבה, קובץ ריק, כותרת בלבד) לא מוחק את מה שכבר בטבלה
+    if (!rows.length) { if (cfg.onStatus) cfg.onStatus('לא זוהו שורות. בכל שורה צריכים להיות סניף ומספר, מופרדים בטאב או בפסיק'); return false; }
     st.rows = rows;
     st.filter = 'all';
     st.sort = null;
     render();
     if (cfg.onFilled) cfg.onFilled(label, rows.length);
+    return true;
   }
 
   function showPasteBox(msg) {
@@ -257,6 +264,7 @@ export function createGrid(cfg) {
     if (st.rows.every(isBlank) || Number.isNaN(target)) st.rows = parsed;
     else st.rows.splice(target, parsed.length, ...parsed);
     st.filter = 'all';
+    st.sort = null; // ביקורת 2.11: אחרת החץ בכותרת נשאר והשורות החדשות לא ממוינות
     render();
     if (cfg.onFilled) cfg.onFilled('הדבקה', parsed.length);
   }
@@ -280,7 +288,8 @@ export function createGrid(cfg) {
     const tags = $el(`${id}-tags`);
     if (tags) tags.addEventListener('click', onTagsClick);
     const ta = $el(cfg.inputId);
-    if (ta) ta.addEventListener('input', function () { if (String(this.value).trim()) { applyText(this.value, 'הדבקה'); if (cfg.fromText(this.value).length) { hidePasteBox(); this.value = ''; } } });
+    // התיבה היא להדבקה בלבד: מגיבים רק לטקסט עם שורה שלמה (טאב או שורה חדשה), לא לכל תו שמוקלד (ביקורת 2.11)
+    if (ta) ta.addEventListener('input', function () { const v = String(this.value); if (v.trim() && /[\t\r\n]/.test(v)) { if (applyText(v, 'הדבקה')) { hidePasteBox(); this.value = ''; } } });
   }
 
   // ה-HTML של תיבת-ההדבקה (מוסתרת כברירת-מחדל): הכלי מניח אותה היכן שהוא רוצה

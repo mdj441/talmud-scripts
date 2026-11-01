@@ -17,8 +17,8 @@
   'use strict';
 
 // ─── src/core/dom.js ───
-// עוזרי DOM כלליים — פורט מ"תלמוד - עזיבת תלמידים" v5 (‏$el:44, sleep:45, waitFor:135, isVisible:279).
-// חשוב: אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות, כדי שהמודול
+// עוזרי DOM כלליים: פורט מ"תלמוד - עזיבת תלמידים" v5 (‏$el:44, sleep:45, waitFor:135, isVisible:279).
+// חשוב: אין גישה ל-document/window ברמת המודול: רק בתוך גופי הפונקציות, כדי שהמודול
 // יהיה ניתן ל-import ב-Node (בדיקות) בלי סביבת דפדפן.
 
 function $el(id) {
@@ -31,7 +31,7 @@ function sleep(ms) {
 
 // getClientRects().length, לא offsetParent: ה-ModalPopupExtender מציג את החלונית עם
 // position:fixed, ועבורה offsetParent הוא תמיד null גם כשהיא גלויה לגמרי.
-// getClientRects() מחזיר תיבות לאלמנטים מעובדים (כולל fixed) וכלום ל-display:none —
+// getClientRects() מחזיר תיבות לאלמנטים מעובדים (כולל fixed) וכלום ל-display:none:
 // בדיוק האות שאנחנו רוצים.
 function isVisible(el) {
   if (!el) return false;
@@ -60,9 +60,9 @@ function waitFor(predicate, { timeout = 5000, interval = 30 } = {}) {
 }
 
 // ─── src/core/prm.js ───
-// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager — פורט מ"תלמוד - עזיבת תלמידים"
+// המתנה ל-postback א-סינכרוני של MS AJAX ScriptManager: פורט מ"תלמוד - עזיבת תלמידים"
 // v5 (‏getPRM:83, waitPRM:87). מבוסס-event (add_beginRequest/add_endRequest), לא פולינג.
-// אין גישה ל-Sys/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין גם ב-Node).
+// אין גישה ל-Sys/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין גם ב-Node).
 
 function getPRM() {
   try {
@@ -73,10 +73,10 @@ function getPRM() {
 }
 
 // שינוי סמנטי מכוון מול depart-v5 (שם waitPRM נדחה/reject בשגיאת postback): כאן
-// לעולם לא נזרק/נדחה — "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
+// לעולם לא נזרק/נדחה: "אצווה לא נתקעת" (global-constraints). תמיד resolve עם
 // {ok:true} או {ok:false, reason}, כדי שהקורא ידווח ויימשך לפריט הבא בלי try/catch חוסם.
 // ‏`started` (תוספת) = האם נצפה beginRequest בפועל. {ok:true, started:false} פירושו
-// "הפעולה לא הפעילה שום בקשה לשרת" — לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
+// "הפעולה לא הפעילה שום בקשה לשרת": לחיצה שנבלעה, ולא ניווט/עדכון שהצליח. בלעדיו
 // אי-אפשר להבחין בין השניים, וזה מקור באגים C1/C4 (ניווט מדומה, חיפוש שלא רץ).
 function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
   return new Promise((resolve) => {
@@ -113,7 +113,7 @@ function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
 
     const startTimer = setTimeout(() => {
       if (!started && !prm._isInAsyncPostBack) {
-        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback — ממשיכים
+        finish({ ok: true }); // הפעולה שנורתה לא הפעילה postback: ממשיכים
       }
     }, startTimeoutMs);
 
@@ -129,13 +129,13 @@ function waitPRM({ startTimeoutMs = 2500, totalTimeoutMs = 20000 } = {}) {
 // את ההמתנה (וה-add_endRequest שבתוכה) *לפני* ש-__doPostBack נקרא, והקריאה עצמה
 // נדחית ל-setTimeout(fn, 0) כדי שה-handlers כבר יהיו רשומים כש-PRM מתחיל postback.
 function firePostback(target, arg = '', opts) {
-  const wait = waitPRM(opts); // (1) registers wait — add_endRequest is wired synchronously inside
+  const wait = waitPRM(opts); // (1) registers wait: add_endRequest is wired synchronously inside
   setTimeout(() => { window.__doPostBack(target, arg); }, 0); // (2) deferred, after registration
   return wait;
 }
 
 // ─── src/core/csv.js ───
-// ייצוא/העתקה — פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
+// ייצוא/העתקה: פורט מ"תלמוד - קליטת תלמידים" v3.2 (exportCSV:713, copyLog:735).
 // toCsv טהורה (נבדקת ביחידה); downloadText/copyTextToClipboard נוגעות ב-DOM ולכן
 // כל הגישה ל-document/window/navigator היא רק בתוך גופי הפונקציות (import תקין ב-Node).
 
@@ -144,7 +144,7 @@ const CSV_BOM = '﻿';
 const CSV_EOL = '\r\n';
 
 // טהורה: מערך-שורות של תאים → טקסט CSV. מצטט רק תאים שדורשים זאת (פסיק / מרכאות /
-// שורה חדשה), ומכפיל מרכאות פנימיות — RFC 4180.
+// שורה חדשה), ומכפיל מרכאות פנימיות: RFC 4180.
 function toCsv(rows) {
   if (!Array.isArray(rows)) return '';
   return rows.map((row) => (Array.isArray(row) ? row : [row]).map(csvCell).join(',')).join(CSV_EOL);
@@ -155,7 +155,7 @@ function csvCell(value) {
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-// מוריד טקסט כקובץ (Blob + <a download>). לעולם לא זורק — מחזיר false בכישלון.
+// מוריד טקסט כקובץ (Blob + <a download>). לעולם לא זורק: מחזיר false בכישלון.
 function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {
   try {
     const url = URL.createObjectURL(new Blob([text], { type: mime }));
@@ -178,7 +178,7 @@ function downloadCsv(filename, rows) {
   return downloadText(filename, CSV_BOM + toCsv(rows), 'text/csv;charset=utf-8');
 }
 
-// Promise<boolean> — לעולם לא נדחה. clipboard API ואם הוא חסום — textarea+execCommand.
+// Promise<boolean>: לעולם לא נדחה. clipboard API ואם הוא חסום: textarea+execCommand.
 function copyTextToClipboard(text) {
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
@@ -206,10 +206,10 @@ function csvCopyFallback(text) {
 }
 
 // ─── src/core/log.js ───
-// יומן פעילות משותף. טבעת של 400 שורות שנשמרת ב-sessionStorage אחרי כל שורה — כך היומן
+// יומן פעילות משותף. טבעת של 400 שורות שנשמרת ב-sessionStorage אחרי כל שורה: כך היומן
 // שורד טעינות-דף (ניווט מלא) ומציג את כל הריצה, לא רק את הטעינה האחרונה (W7, בדיקה רטובה
 // 10.9.2026). maskId חוסם דליפת ת.ז. ליומן: היומן ממוסך תמיד; הטבלה והדוח מציגים מזהה מלא.
-// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות (import תקין ב-Node).
+// אין גישה ל-document/window ברמת המודול: רק בתוך גופי הפונקציות (import תקין ב-Node).
 
 
 const LOG_MAX_LINES = 400;
@@ -218,14 +218,14 @@ const logLines = [];
 let logListener = null;
 let restored = false;
 
-// ת.ז. אמיתית לעולם לא נכתבת ליומן מלאה. מתחת ל-5 תווים אין מה למסך — מוחזר כמות שהוא.
+// ת.ז. אמיתית לעולם לא נכתבת ליומן מלאה. מתחת ל-5 תווים אין מה למסך: מוחזר כמות שהוא.
 function maskId(id) {
   const s = String(id == null ? '' : id);
   if (s.length < 5) return s;
   return '*'.repeat(s.length - 3) + s.slice(-3);
 }
 
-// לטקסט חופשי שעלול להכיל ת.ז. — ממסך כל רצף של 5+ ספרות.
+// לטקסט חופשי שעלול להכיל ת.ז.: ממסך כל רצף של 5+ ספרות.
 function maskIdsInText(text) {
   return String(text == null ? '' : text).replace(/\d{5,}/g, (m) => maskId(m));
 }
@@ -246,12 +246,12 @@ function restoreLog() {
       if (logListener) { try { logListener(''); } catch (e) { /* noop */ } }
       return parsed.length;
     }
-  } catch (e) { /* יומן פגום — מתחילים נקי */ }
+  } catch (e) { /* יומן פגום: מתחילים נקי */ }
   return 0;
 }
 
 function log(msg) {
-  if (!restored) restoreLog(); // הטעינה הראשונה קודמת לכתיבה הראשונה — אחרת היומן הקודם נדרס
+  if (!restored) restoreLog(); // הטעינה הראשונה קודמת לכתיבה הראשונה: אחרת היומן הקודם נדרס
   const stamp = new Date().toTimeString().slice(0, 8);
   const line = `${stamp} ${msg}`;
   logLines.push(line);
@@ -267,7 +267,7 @@ function getLogText() {
 }
 
 function clearLog() {
-  restored = true; // ניקוי מפורש — אין מה לשחזר
+  restored = true; // ניקוי מפורש: אין מה לשחזר
   logLines.length = 0;
   persist();
   if (logListener) { try { logListener(''); } catch (e) { /* אצווה לא נתקעת */ } }
@@ -881,7 +881,7 @@ function reportBoxHtml(report, { idsWarning = true } = {}) {
   if (!report) return '';
   let html = '';
   if (idsWarning) html += `<div class="tt-hint tt-hint-warn">הדוח מכיל מזהים מלאים. לא להדביק אותו בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>`;
-  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '—')}</div>`;
+  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '-')}</div>`;
   if (report.lines && report.lines.length) {
     html += `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${report.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`;
   } else {
@@ -942,6 +942,22 @@ function show(id, on) {
 function setDisabled(id, disabled) {
   const el = $el(id);
   if (el) el.disabled = !!disabled;
+}
+
+// כפתור שמוחק (הכרעת 2.11.2026): לחיצה ראשונה "דורכת" אותו (הנוסח הופך ל-"כן, X" והכפתור מאדים), לחיצה שנייה
+// בתוך ms מבצעת; בלי לחיצה שנייה הוא חוזר לעצמו. target: מזהה או האלמנט עצמו (לבדיקות). מחזיר disarm().
+function bindConfirmClick(target, { label, confirmLabel, onConfirm, ms = 6000 }) {
+  const el = typeof target === 'string' ? $el(target) : target;
+  if (!el) return () => {};
+  let timer = null;
+  const disarm = () => { if (timer === null) return; clearTimeout(timer); timer = null; el.textContent = label; el.classList.remove('tt-btn-armed'); };
+  el.addEventListener('click', () => {
+    if (timer !== null) { disarm(); onConfirm(); return; }
+    el.textContent = confirmLabel;
+    el.classList.add('tt-btn-armed');
+    timer = setTimeout(disarm, ms);
+  });
+  return disarm;
 }
 
 // מסכת תאריך DD/MM/YYYY בזמן הקלדה
@@ -1088,6 +1104,7 @@ const PANEL_CSS = `
 .tt-btn-subtle:hover{background:var(--tt-accent-soft);border-color:transparent;text-decoration-color:var(--tt-accent)}
 .tt-btn-sm{padding:3px 8px;font-size:12px}
 .tt-btn[hidden]{display:none}
+.tt-btn.tt-btn-armed{color:var(--tt-bad);border-color:var(--tt-bad);text-decoration-color:var(--tt-bad);font-weight:600}
 .tt-btn-stop{background:var(--tt-bad);border-color:var(--tt-bad);color:#fff;font-weight:700;font-size:14px;padding:9px 22px}
 .tt-btn-stop:hover{background:#86190f;border-color:#86190f}
 .tt-runline{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid #efc3bb;border-radius:8px;background:#fff;margin:8px 0}
@@ -1713,9 +1730,9 @@ function resolveCountry(input) {
   if (alias) return alias;
   // ‏B3: התאמת-קידומת מותרת רק כשהיא חד-משמעית. הגרסה הקודמת החזירה את ההתאמה
   // ה*ראשונה* וגם התאימה בכיוון ההפוך (s מתחיל בשם ארץ), ולכן "א" → 710 (ארצות
-  // הברית) ו"ניגריה הצפונית" → 211 (ניגר) — ערך אמיתי, ארץ שגויה, בלי שום סימן
+  // הברית) ו"ניגריה הצפונית" → 211 (ניגר): ערך אמיתי, ארץ שגויה, בלי שום סימן
   // (בדיקת קיום-האופציה במודאל לא יכולה לתפוס את זה). דורשים 3+ תווים, כיוון אחד
-  // בלבד (שם הארץ מתחיל בקלט), ומועמד יחיד — אחרת null ("ארץ לא מוכרת" בפרסור).
+  // בלבד (שם הארץ מתחיל בקלט), ומועמד יחיד: אחרת null ("ארץ לא מוכרת" בפרסור).
   if (s.length < 3) return null;
   const hits = COUNTRIES.filter(c => c.he.startsWith(s));
   return hits.length === 1 ? hits[0].value : null;
@@ -1904,7 +1921,7 @@ function rowToTask({ cells, lineNo, raw, columnMap }) {
 
   if (!columnMap) {
     // בלי שורת-כותרת: 3 תאים = בסיס; 4–5 תאים = הפורמט הישן לדרכון (תאריך לידה, ארץ);
-    // 6+ תאים = סדר-התבנית (שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי) —
+    // 6+ תאים = סדר-התבנית (שם פרטי, שם משפחה, תאריך לידה, ארץ, מגדר, מצב משפחתי):
     // כך העתקה מהתבנית של האקסל עובדת גם בלי הכותרת וגם עם תאים ריקים (W6).
     const rest = cells.slice(3).map((c) => (c ?? '').trim());
     const opt = (i) => (rest.length > i && rest[i] !== '' ? rest[i] : undefined);
@@ -2030,10 +2047,10 @@ function parseAbsorbInput(text) {
 }
 
 // ─── src/tools/absorb-xlsx.js ───
-// טעינת רשימת תלמידים מקובץ אקסל (.xlsx/.xls) — ממיר את הגיליון לטקסט מופרד-טאבים
+// טעינת רשימת תלמידים מקובץ אקסל (.xlsx/.xls): ממיר את הגיליון לטקסט מופרד-טאבים
 // שנכנס ל-parseAbsorbInput (src/tools/absorb-parse.js), כך שיש מסלול פרסור אחד לכל
-// המקורות (הדבקה ידנית או קובץ אקסל). אין גישה ל-globalThis.XLSX ברמת המודול — רק
-// בתוך גוף loadXlsxFile — כדי שהמודול הזה ייבא נקי גם ב-Node (בדיקות, בלי דפדפן/ספרייה).
+// המקורות (הדבקה ידנית או קובץ אקסל). אין גישה ל-globalThis.XLSX ברמת המודול: רק
+// בתוך גוף loadXlsxFile: כדי שהמודול הזה ייבא נקי גם ב-Node (בדיקות, בלי דפדפן/ספרייה).
 
 function xlsxCellToString(v) {
   if (v === null || v === undefined) return '';
@@ -2068,7 +2085,7 @@ function sheetRowsToText(rows) {
 async function loadXlsxFile(file) {
   const XLSX = globalThis.XLSX;
   if (!XLSX) {
-    throw new Error('ספריית SheetJS (XLSX) לא נטענה — בדוק חיבור לאינטרנט ונסה שוב');
+    throw new Error('ספריית SheetJS (XLSX) לא נטענה: בדוק חיבור לאינטרנט ונסה שוב');
   }
   const buf = await file.arrayBuffer();
   const wb = XLSX.read(buf, { type: 'array', cellDates: true });
@@ -2082,7 +2099,7 @@ async function loadXlsxFile(file) {
 }
 
 // ─── src/tools/absorb-report.js ───
-// קליטה — החלק הטהור: סטטוסים, ניתוח הגריד, תוצאות (TSV/CSV), דוח "מה נשאר", הכרעות קטנות.
+// קליטה: החלק הטהור: סטטוסים, ניתוח הגריד, תוצאות (TSV/CSV), דוח "מה נשאר", הכרעות קטנות.
 // אין כאן DOM בכלל; הכל נבדק ביחידה (test/absorb-pure.test.js).
 
 
@@ -2149,7 +2166,7 @@ function absorbIsOtherInstituteBlock(result) {
 const ABSORB_TSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'מה לעשות'];
 const ABSORB_CSV_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'סטטוס', 'פירוט', 'מה לעשות'];
 const ABSORB_TEMPLATE_HEADER = ['סניף', 'סוג לימוד', 'ת.ז./דרכון', 'שם פרטי', 'שם משפחה', 'תאריך לידה', 'ארץ', 'מגדר', 'מצב משפחתי'];
-const ABSORB_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // מעל זה — אין המשך אוטומטי של תור שמור
+const ABSORB_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // מעל זה: אין המשך אוטומטי של תור שמור
 
 // "נחסם: <טקסט>" → "נחסם".
 function absorbStatusKey(status) {
@@ -2228,14 +2245,14 @@ function buildResultsCsvRows(results) {
 function summarizeAbsorbResults(results) {
   const counts = {};
   for (const r of Array.isArray(results) ? results : []) {
-    const key = absorbStatusKey(r && r.status) || '—';
+    const key = absorbStatusKey(r && r.status) || '-';
     counts[key] = (counts[key] || 0) + 1;
   }
   return counts;
 }
 
 // דוח "מה נשאר": שורה אופרטיבית לכל תוצאה שאינה הצלחה + סיכום.
-// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה — כל שורה
+// טהורה (31.10.2026, זרימת-התיקון): אילו שורות-טבלה דורשות טיפול לפי תוצאות הריצה האחרונה: כל שורה
 // שהתוצאה שלה (אותו סניף, סוג-לימוד ומזהה) אינה הצלחה. שורה בלי תוצאה (לא רצה) נשארת. מחזירה
 // {rows, needsExtra}: needsExtra = יש "תלמיד חדש" שדורש שם/משפחה/תאריך לידה (לפתוח את העמודות).
 function absorbRowsNeedingAttention(rows, results) {
@@ -2260,7 +2277,7 @@ function buildRemainingReport(results) {
   const counts = summarizeAbsorbResults(list);
   const lines = list
     .filter((r) => !isAbsorbSuccess(r && r.status))
-    .map((r) => [r.branch, r.studyType, r.identity, r.status, r.action || '—'].map(flatCell).join(' · '));
+    .map((r) => [r.branch, r.studyType, r.identity, r.status, r.action || '-'].map(flatCell).join(' · '));
   const summary = Object.keys(counts).map((k) => `${k}=${counts[k]}`).join(' · ');
   return { lines, summary, counts };
 }
@@ -2342,7 +2359,7 @@ function manualStudyTypeAction(branch, code) {
 }
 
 // ─── src/tools/absorb-state.js ───
-// קליטה — מצב הריצה: התור (sessionStorage, שורד טעינת-דף), דגל עצירה, "דורות" של ניסיונות,
+// קליטה: מצב הריצה: התור (sessionStorage, שורד טעינת-דף), דגל עצירה, "דורות" של ניסיונות,
 // ומונה נחיתות לכל תלמיד (רשת-ביטחון נגד לולאת ניווט). אין DOM כאן.
 
 
@@ -2357,7 +2374,7 @@ const CANCEL_PREFIX = '__CANCELLED__@';
 // דף תלמיד-חדש → חזרה לסוג-הלימוד = 5 טעינות. מעל 8 = לולאה.
 const ABSORB_MAX_LANDINGS = 8;
 
-// המצב החי של הריצה (מודול אחד, אובייקט אחד — הזרימה והפאנל קוראים ממנו).
+// המצב החי של הריצה (מודול אחד, אובייקט אחד: הזרימה והפאנל קוראים ממנו).
 const S = {
   queue: [],
   results: [],
@@ -2373,7 +2390,7 @@ const S = {
   // ממצא ב-9: {idx, identity} של "אישור" במודאל שנלחץ. אם "אישור" הוא טעינה מלאה של אותו דף, ההמשך
   // מוצא את התלמיד ברשימה ומדווח "נקלט" (לא "כבר קיים"). נשמר עם המצב; נמחק ברישום התוצאה.
   pendingConfirm: null,
-  // סבב רטוב 31.10.2026: בעל-המערכת סימן בפאנל "אשר המשך" — על אזהרת "תלמיד זה רשום כבר במוסד אחר"
+  // סבב רטוב 31.10.2026: בעל-המערכת סימן בפאנל "אשר המשך": על אזהרת "תלמיד זה רשום כבר במוסד אחר"
   // לוחצים "המשך" (מעבר בין מוסדות). נקבע בהתחלת הריצה ונשמר עם המצב (הריצה שורדת טעינות-דף).
   continueOtherInstitute: false,
   generation: 0,
@@ -2593,20 +2610,20 @@ function releaseRunLock() {
 const RUN_LOCK_BUSY_MESSAGE = 'ריצה פעילה בלשונית אחרת של תלמו"ד. סגור אותה או המתן';
 
 // ─── src/core/popup.js ───
-// חלונית ההודעה המשותפת של האתר (ucMessagePopUp) — פורט מ"תלמוד - עזיבת תלמידים" v5
+// חלונית ההודעה המשותפת של האתר (ucMessagePopUp): פורט מ"תלמוד - עזיבת תלמידים" v5
 // (‏getMessagePopup:290, hideMessagePopup:303). אותה בקרה משמשת בכל האתר (למשל ולידציה
 // "תאריך העזיבה לא יכול להיות לפני תאריך הקליטה..."). לעולם לא לוחצים על "המשך" (btnMOK)
-// בשקט — הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
-// אין גישה ל-document/window ברמת המודול — רק בתוך גופי הפונקציות.
+// בשקט: הפעולה היחידה המותרת ל-hide היא ה-ModalPopupExtender.hide()/btnMCancel ("אישור").
+// אין גישה ל-document/window ברמת המודול: רק בתוך גופי הפונקציות.
 
 
 // ‏W3 (בדיקה רטובה 10.9.2026, F4): סיווג טהור של ההודעה. האתר מציג את הודעת-ההצלחה
-// "הצלחה קליטת תלמיד הצליחה" באותה בקרה ועם כפתור "המשך" גלוי — ולכן hasContinue לבדו
+// "הצלחה קליטת תלמיד הצליחה" באותה בקרה ועם כפתור "המשך" גלוי: ולכן hasContinue לבדו
 // סיווג הצלחה כ"נחסם" ודילג על אימות-הגריד. טקסט הצלחה מנצח את הכפתורים; "לא הצליח" /
-// "נכשל" אינם הצלחה (נופלים לסיווג לפי הכפתורים — fail-safe).
-//   'success' — אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
-//   'confirm' — יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
-//   'info'    — רק "אישור" (שגיאה/ולידציה); 'unknown' — אין מידע.
+// "נכשל" אינם הצלחה (נופלים לסיווג לפי הכפתורים: fail-safe).
+//   'success': אינפורמטיבית; הקורא סוגר (hide, לא "המשך") וממשיך לאימות מול הגריד;
+//   'confirm': יש "המשך" ואין טקסט הצלחה → בקשת-אישור; לעולם לא נלחצת אוטומטית;
+//   'info'   : רק "אישור" (שגיאה/ולידציה); 'unknown': אין מידע.
 // ‏1b (סקירת-בטיחות): "הצליח" לבדו רחב מדי (היה מסתיר בקשת-אישור לא-מוכרת כהצלחה). הצלחה = רק
 // "הצלחה" בתחילת הטקסט (כותרת ההודעה) או "קליטת תלמיד הצליחה" (גוף ההודעה שנצפה, F4).
 function classifyPopupText(text, flags) {
@@ -2623,7 +2640,7 @@ function classifyPopupText(text, flags) {
   return 'unknown';
 }
 
-// תווית כפתור (input.value או טקסט) — ללוג, כדי שהבדיקה הרטובה תספר מה האתר מציג.
+// תווית כפתור (input.value או טקסט): ללוג, כדי שהבדיקה הרטובה תספר מה האתר מציג.
 function popupButtonLabel(el) {
   if (!el) return '';
   const raw = el.value || el.textContent || el.innerText || '';
@@ -2631,9 +2648,9 @@ function popupButtonLabel(el) {
 }
 
 // שמות ה-ID נשמרים כפי שהם ב-depart-v5: btnMOK = "המשך" (אישור-רך), btnMCancel = "אישור"
-// (אישור/סגירת שגיאה — למרות השם), btnMNo = "לא".
-// מחזיר { text, hasContinue, hasOkOnly, kind, buttons } — ‏kind לפי classifyPopupText,
-// ‏buttons = תוויות הכפתורים הגלויים (בסדר: המשך, לא, אישור). הדגלים הגולמיים נשמרים —
+// (אישור/סגירת שגיאה: למרות השם), btnMNo = "לא".
+// מחזיר { text, hasContinue, hasOkOnly, kind, buttons }: ‏kind לפי classifyPopupText,
+// ‏buttons = תוויות הכפתורים הגלויים (בסדר: המשך, לא, אישור). הדגלים הגולמיים נשמרים:
 // הקורא מחליט "נחסם" רק כש-hasContinue && kind!=='success'.
 function readMessagePopup() {
   const panel = $el('ucMessagePopUp_pnlMessagePopup');
@@ -2647,7 +2664,7 @@ function readMessagePopup() {
   if (!hasContinue && !hasOk && !hasNo) return null; // פאנל מעובד אך בלי כפתור חי → לא פרומפט אמיתי
   let text = (panel.innerText || panel.textContent || '').replace(/\s+/g, ' ').trim();
   text = text.replace(/^\s*הודעה\s*/, '').trim();
-  // תוויות הכפתורים נכללות ב-innerText של הפאנל — מקלפים אותן מהסוף, כמה שיש (עד 4).
+  // תוויות הכפתורים נכללות ב-innerText של הפאנל: מקלפים אותן מהסוף, כמה שיש (עד 4).
   for (let i = 0; i < 4; i++) {
     const stripped = text.replace(/\s*(המשך|לא|אישור|ביטול|סגור)\s*$/, '').trim();
     if (stripped === text) break;
@@ -2663,10 +2680,10 @@ function readMessagePopup() {
 
 // סוגר את חלונית ההודעה. מעדיף את ה-ModalPopupExtender (hide() נקי, לא מפעיל שום
 // postback צד-שרת). נופל ל-btnMCancel ("אישור") רק אם ה-extender לא זמין. לעולם לא
-// לוחץ על btnMOK ("המשך") — זה כפתור אישור-רך ולא כפתור סגירה.
+// לוחץ על btnMOK ("המשך"): זה כפתור אישור-רך ולא כפתור סגירה.
 // M-f: ‏btnMCancel הוא postback צד-שרת, ולכן הוא חייב את הסדר הקשיח של
 // global-constraints: רושמים waitPRM *לפני* הלחיצה, והלחיצה נדחית ל-setTimeout(0).
-// מחזיר {hidden, wait} — `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
+// מחזיר {hidden, wait}: `wait` הוא ה-Promise של ה-postback (null כשנסגר ב-extender,
 // שאינו postback). ‏waitPRM לעולם לא נדחה.
 function hideMessagePopupAsync() {
   try {
@@ -2701,7 +2718,7 @@ function hideMessagePopup() {
 }
 
 // גרסה גנרית ל-extender כלשהו (ModalPopupExtender / AjaxModalPopup): $find(id).hide(),
-// null-safe — מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
+// null-safe: מחזיר false אם $find לא זמין או שלא נמצא extender בשם הזה.
 function closeModal(extenderId) {
   try {
     if (typeof window.$find !== 'function') return false;
@@ -2715,7 +2732,7 @@ function closeModal(extenderId) {
 }
 
 // ─── src/tools/absorb-dom.js ───
-// קליטה — נגיעות ב-DOM של האתר: מזהי הפקדים, כתיבה לשדות בסדר-postback קשיח, חיפוש עם
+// קליטה: נגיעות ב-DOM של האתר: מזהי הפקדים, כתיבה לשדות בסדר-postback קשיח, חיפוש עם
 // עדות-טריות, חלונית ההודעה, מודאל הקליטה, דף תלמיד-חדש. כל postback עובר דרך prm.js.
 // אין גישה ל-document/window ברמת המודול.
 
@@ -2916,7 +2933,7 @@ async function searchOnce(input, btn, value, gen) {
 async function absorbSearch(input, btn, value, gen) {
   let res = await searchOnce(input, btn, value, gen);
   if (res.executed) return res;
-  log('[חיפוש] אין עדות שהחיפוש רץ — ניסיון נוסף');
+  log('[חיפוש] אין עדות שהחיפוש רץ: ניסיון נוסף');
   await sleepCheckStop(500, gen);
   res = await searchOnce(input, btn, value, gen);
   if (!res.executed) log('[חיפוש] גם הניסיון השני לא הופעל');
@@ -2930,7 +2947,7 @@ function absorbSearchFailReason(res) {
   if (!res) return 'החיפוש לא הופעל';
   if (!res.started) return 'לחיצת החיפוש לא הפעילה בקשה לשרת' + (res.reason ? ` (${res.reason})` : '');
   if (!res.ok) return 'החיפוש נכשל או פג-זמן בשרת' + (res.reason ? ` (${res.reason})` : '');
-  if (res.countFresh === false) return 'תווית הספירה לא התרעננה — מה שמוצג אינו תוצאת החיפוש הזה';
+  if (res.countFresh === false) return 'תווית הספירה לא התרעננה: מה שמוצג אינו תוצאת החיפוש הזה';
   return 'החיפוש רץ אך תוצאותיו לא התעדכנו בדף';
 }
 
@@ -2946,7 +2963,7 @@ async function absorbHidePopup(gen) {
     await Promise.race([hide.wait, sleep(POPUP_HIDE_MS)]);
     await sleepCheckStop(150, gen);
   }
-  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית בלי ללחוץ "המשך" — ממשיכים');
+  if (hide && !hide.hidden) log('[הודעה] לא נמצאה דרך לסגור את החלונית בלי ללחוץ "המשך": ממשיכים');
   return hide;
 }
 
@@ -2955,15 +2972,15 @@ function absorbLogPopup(where, pop) {
   log(`[הודעה] ${where}: ${maskIdsInText(pop.text)} · סוג=${pop.kind || '?'} · כפתורים=[${buttons}]`);
 }
 
-// קורא חלונית אם יש, סוגר אותה, ומחזיר {pop, blocked} — blocked = בקשת-אישור ("המשך" שאינו הצלחה).
+// קורא חלונית אם יש, סוגר אותה, ומחזיר {pop, blocked}: blocked = בקשת-אישור ("המשך" שאינו הצלחה).
 async function absorbReadAndHidePopup(where, gen) {
   const pop = readMessagePopup();
   if (!pop) return { pop: null, blocked: false };
   absorbLogPopup(where, pop);
   await absorbHidePopup(gen);
   const blocked = !!pop.hasContinue && pop.kind !== 'success' && pop.kind !== 'error';
-  if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה — ממשיכים לאימות בגריד');
-  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר — השורה תסומן "שגיאה"');
+  if (pop.kind === 'success') log('[הודעה] הודעת-הצלחה: ממשיכים לאימות בגריד');
+  if (pop.kind === 'error') log('[הודעה] הודעת-שגיאה של האתר: השורה תסומן "שגיאה"');
   await sleepCheckStop(200, gen);
   return { pop, blocked };
 }
@@ -2995,7 +3012,7 @@ function absorbNewStudentPageMatches(identity) {
   return !!val && absorbNormalizeId(val) === absorbNormalizeId(identity);
 }
 
-// ממתין לסיום ה-postback (או לתקציב). ניווט מלא מפרק את הדף — הריצה ממשיכה אחרי הטעינה.
+// ממתין לסיום ה-postback (או לתקציב). ניווט מלא מפרק את הדף: הריצה ממשיכה אחרי הטעינה.
 async function absorbWaitOutcome(prmWait, budgetMs, gen) {
   let prmResult = null;
   prmWait.then((r) => { prmResult = r || { ok: true }; });
@@ -3011,7 +3028,7 @@ async function absorbWaitOutcome(prmWait, budgetMs, gen) {
 }
 
 // ─── src/tools/absorb-flow.js ───
-// קליטה — הזרימה: לכל תלמיד (1) להגיע לדף סוג-הלימוד הנכון, (2) חיפוש מקדים, (3) "קליטה" +
+// קליטה: הזרימה: לכל תלמיד (1) להגיע לדף סוג-הלימוד הנכון, (2) חיפוש מקדים, (3) "קליטה" +
 // חלונית הודעה, (4) מילוי המודאל, (5) אישור, (6) דף תלמיד-חדש אם צריך, (7) אימות מול הגריד.
 // ניווט מלא טוען דף חדש; המצב נשמר ב-sessionStorage וההמשך (resume) קורה אחרי הטעינה.
 // אין גישה ל-document/window ברמת המודול.
@@ -3021,8 +3038,8 @@ const STUDENT_TIMEOUT_MS = 60000;
 const CONFIRM_BUDGET_MS = 25000;
 const SAVE_BUDGET_MS = 30000;
 const NAV_WATCHDOG_MS = 12000;
-const NAVIGATED = { __navigated: true }; // ניווט מלא נורה — ההמשך אחרי טעינת הדף
-const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה — לתלמיד הבא
+const NAVIGATED = { __navigated: true }; // ניווט מלא נורה: ההמשך אחרי טעינת הדף
+const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה: לתלמיד הבא
 
 // ─── טקסטי "מה לעשות" (ממצא 12): תמיד עם "איך", לא רק "מה" ───────────────────
 const SUPPORT_URL = 'https://github.com/mdj441/talmud-scripts/issues';
@@ -3083,7 +3100,7 @@ function clearWatchdog() {
   if (watchdogTimer !== null) { try { clearTimeout(watchdogTimer); } catch (e) { /* noop */ } watchdogTimer = null; }
 }
 
-// ניווט שהוכרז ולא הביא טעינת דף תוך 12 שניות: אם הדף בכל זאת מתאים למשימה — ממשיכים;
+// ניווט שהוכרז ולא הביא טעינת דף תוך 12 שניות: אם הדף בכל זאת מתאים למשימה: ממשיכים;
 // אחרת התלמיד מקבל "שגיאה" עם הוראה ידנית, והאצווה ממשיכה. לעולם לא קופאים על "ממתין".
 function armWatchdog(taskIdx) {
   clearWatchdog();
@@ -3097,9 +3114,9 @@ function armWatchdog(taskIdx) {
     const fits = !!task && ((page.kind === 'studyType' && page.branch === b && page.studyType === String(task.studyType) && absorbBranchSourceTrusted(page.branchSource))
       || (page.kind === 'institute' && page.branch === b && page.branchSource === 'h1'));
     if (fits) {
-      log('[ניווט] הדף התעדכן בלי טעינה מלאה — ממשיכים במקום');
+      log('[ניווט] הדף התעדכן בלי טעינה מלאה: ממשיכים במקום');
     } else {
-      log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(NAV_WATCHDOG_MS / 1000)} שניות — התלמיד מסומן ומדלגים`);
+      log(`[ניווט] לא הגיעה טעינת דף תוך ${Math.round(NAV_WATCHDOG_MS / 1000)} שניות: התלמיד מסומן ומדלגים`);
       if (task && absorbShouldRecord(S.lastRecordedIdx, taskIdx)) {
         recordResult(makeAbsorbResult(task, ABSORB_STATUS.ERROR, 'הניווט לדף סוג-הלימוד לא הביא טעינת דף', manualStudyTypeAction(task.branch, task.studyType)), null, taskIdx);
       }
@@ -3140,7 +3157,7 @@ async function ensureStudyTypePage(task, gen) {
       return {
         ok: false, reason: res.reason,
         action: /בעץ/.test(String(res.reason || ''))
-          ? `סניף ${branch} לא נמצא בעץ-הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
+          ? `סניף ${branch} לא נמצא ברשימת הסניפים של האתר. בדוק את מספר הסניף, תקן את השורה ולחץ "תקן והרץ שוב"`
           : `סוג לימוד ${code} לא נמצא בסניף ${branch} (או מסומן "סגור"). בדוק בדף המוסד, בלשונית "סוגי לימוד למוסד". אם הוא שם, תקן את השורה ולחץ "תקן והרץ שוב"`,
       };
     }
@@ -3158,7 +3175,7 @@ async function ensureStudyTypePage(task, gen) {
 
 // יוצאים מדף תלמיד-חדש לדף סוג-הלימוד: דרך העץ אם יש בדף, אחרת דרך דף המוסדות (ומשם העץ והגריד אחרי הטעינה).
 async function leaveNewStudentPage(task, recorded, gen) {
-  if (absorbIsCancelled(gen)) { log('[תלמיד חדש] ניסיון שבוטל — לא יוצאים מהדף'); return CONTINUE; }
+  if (absorbIsCancelled(gen)) { log('[תלמיד חדש] ניסיון שבוטל: לא יוצאים מהדף'); return CONTINUE; }
   saveAbsorbState();
   beginNavigation();
   const res = await gotoStudyType(task.branch, task.studyType);
@@ -3203,7 +3220,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
   if (!birthDate) missing.push('תאריך לידה');
 
   if (missing.length) {
-    log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}) — לא שומרים`);
+    log(`[תלמיד חדש] חסרים נתונים (${missing.join(', ')}): לא שומרים`);
     const digitsOnly = /^\d+$/.test(String(identity || ''));
     const res = mk(ABSORB_STATUS.NEW_STUDENT_MISSING, `חסר: ${missing.join(', ')}`,
       `האתר לא מזהה את התלמיד. אם זה תלמיד חדש: לחץ "תקן והרץ שוב" ומלא ${missing.join(', ')}.${digitsOnly ? ' אם מדובר בדרכון: בחר "דרכון" ומלא תאריך לידה וארץ.' : ''}`);
@@ -3276,8 +3293,8 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
       saveAbsorbState();
       return mk(ABSORB_STATUS.ERROR, errs.join(' | '), 'תקן את פרטי התלמיד לפי ההודעה ולחץ "תקן והרץ שוב", או השלם ידנית בדף התלמיד באתר');
     }
-    // נשארנו בדף (עם או בלי הודעת הצלחה) — האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
-    log('[תלמיד חדש] נשארנו בדף אחרי השמירה — עוברים לרשימת התלמידים לאימות');
+    // נשארנו בדף (עם או בלי הודעת הצלחה): האמת נמצאת ברשימת התלמידים של סוג-הלימוד.
+    log('[תלמיד חדש] נשארנו בדף אחרי השמירה: עוברים לרשימת התלמידים לאימות');
     beginNavigation();
     const res = await gotoStudyType(task.branch, task.studyType);
     if (res && res.ok !== false) return NAVIGATED;
@@ -3285,7 +3302,7 @@ async function handleNewStudentPage(task, identity, mk, gen, myIdx) {
     return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [pendingSaveNote(), 'השמירה בוצעה אך לא ניתן היה לחזור לרשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(task.studyType, task.branch));
   }
 
-  // הדף התחלף בלי טעינה מלאה (נדיר): אם זה דף סוג-הלימוד — מאמתים כאן.
+  // הדף התחלף בלי טעינה מלאה (נדיר): אם זה דף סוג-הלימוד: מאמתים כאן.
   return verifyAfterNewStudent(task, identity, mk, gen);
 }
 
@@ -3333,7 +3350,7 @@ async function processStudent(task, gen) {
   // נחתנו בדף תלמיד-חדש (אחרי "אישור" במודאל שטען דף חדש)
   if (getPage().kind === 'newStudent') {
     if (absorbNewStudentPageMatches(identity)) return handleNewStudentPage(task, identity, mk, gen, myIdx);
-    log('[תלמיד חדש] הדף שייך למזהה אחר — יוצאים ממנו');
+    log('[תלמיד חדש] הדף שייך למזהה אחר: יוצאים ממנו');
     const left = await leaveNewStudentPage(task, null, gen);
     if (left === NAVIGATED) return NAVIGATED;
     return mk(ABSORB_STATUS.ERROR, 'נפתח דף תלמיד-חדש של מזהה אחר ולא ניתן היה לצאת ממנו', manualStudyTypeAction(branch, code));
@@ -3359,7 +3376,7 @@ async function processStudent(task, gen) {
   let pre = await absorbSearch(searchInput, searchBtn, identity, gen);
   let decision = absorbPrecheckDecision(pre);
   if (decision === 'retry') {
-    log('[חיפוש] התווית מדווחת תוצאות אך הרשימה לא התרעננה — חיפוש חוזר');
+    log('[חיפוש] התווית מדווחת תוצאות אך הרשימה לא התרעננה: חיפוש חוזר');
     await sleepCheckStop(500, gen);
     pre = await absorbSearch(searchInput, searchBtn, identity, gen);
     decision = absorbPrecheckDecision(pre);
@@ -3392,7 +3409,7 @@ async function processStudent(task, gen) {
     return mk(ABSORB_STATUS.VERIFY, [savedNote, `ברשימה שורה אחת עם מזהה אחר: ${preGrid.singleOther}`].filter(Boolean).join(' | '), searchListAction(code, branch));
   }
   if (justSaved) {
-    // נשמר בדף תלמיד-חדש אך לא ברשימה — לא קולטים שוב, מדווחים לבדיקה ידנית.
+    // נשמר בדף תלמיד-חדש אך לא ברשימה: לא קולטים שוב, מדווחים לבדיקה ידנית.
     S.justSaved = null;
     return mk(ABSORB_STATUS.SAVED_UNVERIFIED, [savedNote, 'התלמיד נשמר בדף תלמיד-חדש אך לא נמצא ברשימת התלמידים'].filter(Boolean).join(' | '), verifyListAction(code, branch));
   }
@@ -3514,8 +3531,8 @@ async function processStudent(task, gen) {
       // סבב רטוב 31.10.2026: "עצור" אחרי שה-postback של "קליטה" כבר יצא משאיר את חלון הקליטה פתוח
       // (עם רקע שחוסם את הדף, כולל העץ). סגירה ב"ביטול" היא בטוחה: שום דבר לא נשלח. שאר הדף: לא נוגעים.
       if (absorbIsCancelled(gen)) {
-        if (absorbModalVisible()) { log('[מודאל] ניסיון שבוטל — סוגרים את חלון הקליטה ב"ביטול", לא נוגעים בשאר הדף'); await absorbCloseAcceptModal(); }
-        else log('[מודאל] ניסיון שבוטל — לא נוגעים בדף');
+        if (absorbModalVisible()) { log('[מודאל] ניסיון שבוטל: סוגרים את חלון הקליטה ב"ביטול", לא נוגעים בשאר הדף'); await absorbCloseAcceptModal(); }
+        else log('[מודאל] ניסיון שבוטל: לא נוגעים בדף');
       } else if (absorbModalVisible()) await absorbCloseAcceptModal();
     } catch (e) { /* אצווה לא נתקעת */ }
   }
@@ -3544,7 +3561,7 @@ async function absorbAfterConfirmPopup(gen) {
   log(`[הודעה] אחרי אישור: ${pop.text} · סוג=${pop.kind} · כפתורים=[${(pop.buttons || []).join(', ')}]`);
   log('[המשך] "אשר המשך" מסומן בפאנל: לוחצים "המשך" (מעבר בין מוסדות; לימודיו במוסד האחר מסתיימים)');
   const pressed = pressMessagePopupContinueAsync();
-  if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא — נשאר "נחסם"'); return { pop, blocked: true }; }
+  if (!pressed.pressed) { log('[המשך] כפתור "המשך" לא נמצא: נשאר "נחסם"'); return { pop, blocked: true }; }
   if (pressed.wait) await pressed.wait;
   await sleepCheckStop(300, gen);
   const after = await absorbReadAndHidePopup('אחרי המשך', gen);
@@ -3556,7 +3573,7 @@ async function absorbAfterConfirmPopup(gen) {
 function withTimeout(promise, ms) {
   return new Promise((resolve, reject) => {
     const clearAll = () => { clearTimeout(timer); clearInterval(poller); };
-    const timer = setTimeout(() => { clearAll(); reject(new Error(`תהליך תקוע — חרג מ-${Math.round(ms / 1000)} שניות`)); }, ms);
+    const timer = setTimeout(() => { clearAll(); reject(new Error(`תהליך תקוע: חרג מ-${Math.round(ms / 1000)} שניות`)); }, ms);
     const poller = setInterval(() => { if (absorbIsStopped()) { clearAll(); reject(absorbStopError('timeout-poller')); } }, 200);
     promise.then((val) => { clearAll(); resolve(val); }, (err) => { clearAll(); reject(err); });
   });
@@ -3573,14 +3590,14 @@ async function processStudentSafe(task) {
     log(`[ניסיון 1] ${isAbsorbCancelError(err) ? 'בוטל' : 'נכשל'}: ${err && err.message}`);
     await absorbCloseAcceptModal();
     if (absorbIsStopped()) throw absorbStopError('between-attempts');
-    if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) { log('[ניסיון 2] לא נדרש — התוצאה לשורה הזו כבר נרשמה'); return CONTINUE; }
+    if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) { log('[ניסיון 2] לא נדרש: התוצאה לשורה הזו כבר נרשמה'); return CONTINUE; }
     try {
       await sleep(1000);
       log(`[ניסיון 2] ${maskId(task.identity)}`);
       return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
     } catch (err2) {
       if (isAbsorbStopError(err2)) throw err2;
-      log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message} — מדלגים`);
+      log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message}: מדלגים`);
       await absorbCloseAcceptModal();
       if (!absorbShouldRecord(S.lastRecordedIdx, myIdx)) return CONTINUE;
       return errResult(`2 ניסיונות: ${err2 && err2.message}`);
@@ -3591,7 +3608,7 @@ async function processStudentSafe(task) {
 // ─── התור ───────────────────────────────────────────────────────────────────
 function recordResult(result, gen, idx) {
   const at = typeof idx === 'number' ? idx : S.curIdx;
-  if (absorbIsCancelled(gen)) { log('[תוצאה] ניסיון שבוטל ניסה לרשום תוצאה — מתעלמים'); return false; }
+  if (absorbIsCancelled(gen)) { log('[תוצאה] ניסיון שבוטל ניסה לרשום תוצאה: מתעלמים'); return false; }
   if (!absorbShouldRecord(S.lastRecordedIdx, at)) { log(`[תוצאה] לשורה ${at + 1} כבר נרשמה תוצאה`); return false; }
   S.lastRecordedIdx = at;
   S.results.push(result);
@@ -3656,12 +3673,12 @@ async function runQueue() {
   clearWatchdog();
   watchUnload();
   startLockRefresh();
-  log(`🚀 ריצה — ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
+  log(`🚀 ריצה: ${S.queue.length} תלמידים, מתחילים בשורה ${S.curIdx + 1}`);
   hook('onStart', S.queue, S.curIdx);
 
   while (S.curIdx < S.queue.length) {
     if (absorbIsStopped()) {
-      log('⛔ נעצר — ממלאים את שארית התור');
+      log('⛔ נעצר: ממלאים את שארית התור');
       fillRemaining(ABSORB_STATUS.STOPPED, 'לא עובד (נעצר)', 'לא רץ. לחץ "תקן והרץ שוב" כדי להריץ את מי שנותר');
       break;
     }
@@ -3681,7 +3698,7 @@ async function runQueue() {
 
     if (result === NAVIGATED || (result && result.__navigated)) {
       S.running = false;
-      log('… טעינת דף — ההמשך אחרי הטעינה');
+      log('… טעינת דף: ההמשך אחרי הטעינה');
       armWatchdog(taskIdx);
       return;
     }
@@ -3778,7 +3795,7 @@ async function absorbResumeIfPending(opts) {
 
   const info = { total: st.queue.length, curIdx: st.curIdx || 0, startedAt: st.startedAt || null, stale: false, reason: '' };
   if (!force && absorbQueueIsStale(st.startedAt, Date.now(), ABSORB_MAX_QUEUE_AGE_MS)) {
-    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות — לא ממשיכים אוטומטית`);
+    log(`[המשך] תור שמור מ-${st.startedAt} ישן מ-${Math.round(ABSORB_MAX_QUEUE_AGE_MS / 60000)} דקות: לא ממשיכים אוטומטית`);
     hook('onStaleQueue', Object.assign(info, { stale: true, reason: 'stale' }));
     return false;
   }
@@ -3803,7 +3820,7 @@ async function absorbResumeIfPending(opts) {
 
   if (S.pendingSave && S.pendingSave.idx === S.curIdx) {
     S.justSaved = S.pendingSave.identity;
-    log('[המשך] תלמיד חדש נשמר לפני הטעינה — נאמת ברשימה');
+    log('[המשך] תלמיד חדש נשמר לפני הטעינה: נאמת ברשימה');
     saveAbsorbState();
   } else {
     S.pendingSave = null;
@@ -3813,13 +3830,13 @@ async function absorbResumeIfPending(opts) {
   log(`[המשך] שורה ${S.curIdx + 1}/${S.queue.length} · טעינה ${landings} · דף ${getPage().kind}`);
   if (landings > ABSORB_MAX_LANDINGS) {
     const stuck = S.queue[S.curIdx];
-    log(`⚠️ תלמיד ${maskId(stuck.identity)} — ${landings} טעינות דף בלי סיום; מדלגים`);
+    log(`⚠️ תלמיד ${maskId(stuck.identity)}: ${landings} טעינות דף בלי סיום; מדלגים`);
     recordResult(makeAbsorbResult(stuck, ABSORB_STATUS.SKIPPED, `לולאת ניווט: ${landings} טעינות דף ללא התקדמות`, manualStudyTypeAction(stuck.branch, stuck.studyType)));
     if (S.curIdx >= S.queue.length) { finishRun(); return false; }
   }
 
   hook('onResume', S.queue, S.results, S.curIdx);
-  S.running = true; // לפני ההמתנה — שלחיצת "התחל" בשנייה הזו לא תפתח ריצה מקבילה
+  S.running = true; // לפני ההמתנה: שלחיצת "התחל" בשנייה הזו לא תפתח ריצה מקבילה
   try {
     await sleep(900); // MS AJAX מסיים לאתחל
     await runQueue();
@@ -3953,6 +3970,9 @@ function createGrid(cfg) {
     const list = filled();
     const v = cfg.validate(list);
     st.v = v;
+    // ביקורת 2.11: כשהתגית הפעילה התרוקנה (תיקנו את כל האדומות) חוזרים ל"הכל", אחרת הטבלה נראית ריקה
+    if (st.filter !== 'all' && !v.counts[st.filter]) st.filter = 'all';
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
     let filledIdx = -1;
     st.rows.forEach((row, i) => {
       const tr = document.querySelector(`#${id}-grid tr.tt-r-main[data-i="${i}"]`);
@@ -3987,7 +4007,8 @@ function createGrid(cfg) {
       }
       if (sub) sub.hidden = blank || !(cfg.subOpen && cfg.subOpen(row));
       if (cfg.refreshRow) cfg.refreshRow(tr, sub, row, i);
-      const visible = gridRowMatchesFilter(st.filter, level, blank);
+      // השורה שעורכים עכשיו לא נעלמת באמצע ההקלדה כשהיא מפסיקה להתאים לתגית (ביקורת 2.11)
+      const visible = gridRowMatchesFilter(st.filter, level, blank) || !!(active && tr.contains(active));
       tr.hidden = !visible;
       if (msg && !visible) msg.hidden = true;
       if (sub && !visible) sub.hidden = true;
@@ -4039,11 +4060,14 @@ function createGrid(cfg) {
 
   function applyText(text, label) {
     const rows = cfg.fromText(text);
+    // ביקורת 2.11: טקסט בלי שורות (תו בודד בתיבה, קובץ ריק, כותרת בלבד) לא מוחק את מה שכבר בטבלה
+    if (!rows.length) { if (cfg.onStatus) cfg.onStatus('לא זוהו שורות. בכל שורה צריכים להיות סניף ומספר, מופרדים בטאב או בפסיק'); return false; }
     st.rows = rows;
     st.filter = 'all';
     st.sort = null;
     render();
     if (cfg.onFilled) cfg.onFilled(label, rows.length);
+    return true;
   }
 
   function showPasteBox(msg) {
@@ -4105,6 +4129,7 @@ function createGrid(cfg) {
     if (st.rows.every(isBlank) || Number.isNaN(target)) st.rows = parsed;
     else st.rows.splice(target, parsed.length, ...parsed);
     st.filter = 'all';
+    st.sort = null; // ביקורת 2.11: אחרת החץ בכותרת נשאר והשורות החדשות לא ממוינות
     render();
     if (cfg.onFilled) cfg.onFilled('הדבקה', parsed.length);
   }
@@ -4128,7 +4153,8 @@ function createGrid(cfg) {
     const tags = $el(`${id}-tags`);
     if (tags) tags.addEventListener('click', onTagsClick);
     const ta = $el(cfg.inputId);
-    if (ta) ta.addEventListener('input', function () { if (String(this.value).trim()) { applyText(this.value, 'הדבקה'); if (cfg.fromText(this.value).length) { hidePasteBox(); this.value = ''; } } });
+    // התיבה היא להדבקה בלבד: מגיבים רק לטקסט עם שורה שלמה (טאב או שורה חדשה), לא לכל תו שמוקלד (ביקורת 2.11)
+    if (ta) ta.addEventListener('input', function () { const v = String(this.value); if (v.trim() && /[\t\r\n]/.test(v)) { if (applyText(v, 'הדבקה')) { hidePasteBox(); this.value = ''; } } });
   }
 
   // ה-HTML של תיבת-ההדבקה (מוסתרת כברירת-מחדל): הכלי מניח אותה היכן שהוא רוצה
@@ -4182,6 +4208,11 @@ let total = 0;
 let awaitingErrorConfirm = false;
 let resFilter = 'all'; // תגיות התוצאות: all | ok | exists | verify | bad | stopped
 let resSort = null;
+// ביקורת 2.11: השורות כפי שרצו (עם לידה, ארץ ופרטי תלמיד חדש), כי הטבלה מתרוקנת בסיום הריצה ו"תקן והרץ שוב" /
+// "אשר המשך והרץ שוב" בונים ממנה, לא מהתוצאות הדלות
+let lastRunRows = [];
+let stageBeforeRun = 'prep'; // ריצה שנחסמה (לשונית אחרת) חוזרת לשלב שממנו יצאה
+let awaitingErrorFilter = 'all'; // התגית שהייתה פעילה כש"התחל" ביקש אישור על אדומות; החלפת תגית מבטלת את הבקשה
 
 const RESULT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
@@ -4361,9 +4392,10 @@ function gridColumns() {
       ? { key: 'branch', label: 'סניף', kind: 'select', width: '58px', options: () => [['', '']].concat(branches.map((b) => [b, b])) }
       : { key: 'branch', label: 'סניף', kind: 'input', width: '56px', mono: true, placeholder: 'סניף', list: `${P}-dl-branches` },
     { key: 'studyType', label: 'סוג לימוד', kind: 'input', width: '54px', mono: true, placeholder: 'סוג', list: `${P}-dl-studytypes` },
-    { key: 'idType', label: 'סוג מזהה', kind: 'select', width: '66px', options: () => ID_TYPES, value: (f, row) => (rowIsBlank(row) ? 'tz' : absorbEffectiveIdType(f)), sortValue: (f) => absorbEffectiveIdType(f) },
+    // שורה ריקה: הבחירה הידנית נשמרת (ביקורת 2.11: קודם אופסה ונדרסה, והתיבה קפצה ל"ת.ז.")
+    { key: 'idType', label: 'סוג מזהה', kind: 'select', width: '66px', options: () => ID_TYPES, value: (f, row) => (rowIsBlank(row) ? (f.idType || 'tz') : absorbEffectiveIdType(f)), sortValue: (f) => absorbEffectiveIdType(f) },
     { key: 'identifier', label: 'מספר', kind: 'input', width: '96px', mono: true, placeholder: 'מספר' },
-    { key: 'birthDate', label: 'תאריך לידה', kind: 'date', width: '86px', placeholder: (f, row) => (needBirth(f, row) ? 'יום/חודש/שנה' : ''), off: (f, row) => !needBirth(f, row), need: (f) => passport(f) && !String(f.birthDate || '').trim() },
+    { key: 'birthDate', label: 'תאריך לידה', kind: 'date', width: '86px', placeholder: (f, row) => (needBirth(f, row) ? 'יום/חודש/שנה' : ''), off: (f, row) => !needBirth(f, row), need: (f) => passport(f) && !String(f.birthDate || '').trim(), sortValue: (f) => dmyToIso(f.birthDate) || f.birthDate },
     { key: 'country', label: 'ארץ', kind: 'input', width: '90px', placeholder: (f) => (passport(f) ? 'בחר ארץ' : ''), list: `${P}-dl-countries`, off: (f) => !passport(f), need: (f) => passport(f) && !String(f.country || '').trim() },
   ];
 }
@@ -4430,7 +4462,7 @@ function buildGrid() {
     rowActions, subRowHtml, refreshRow,
     subOpen: (row) => !!(row.newOpen || rowHasNewFields(row)),
     onClick: onGridClick,
-    onCell: (row, k, el, type) => { if (k === 'country' && type === 'change') el.value = absorbCanonicalCountry(el.value); if (k === 'idType' && rowIsBlank(row)) row.fields.idType = ''; if (awaitingErrorConfirm) awaitingErrorConfirm = false; },
+    onCell: (row, k, el, type) => { if (k === 'country' && type === 'change') el.value = absorbCanonicalCountry(el.value); if (awaitingErrorConfirm) awaitingErrorConfirm = false; },
     onChange: (v) => { refreshStartButton(v); refreshStatus(v); },
     onStatus: (msg) => ui.status(msg),
     onFilled: (label, n) => { const v = grid.validation(); log(`[קלט] ${label}: ${n} שורות · ${v ? v.counts.bad : 0} לא ירוצו · ${v ? v.counts.warn : 0} אזהרות`); },
@@ -4447,6 +4479,8 @@ function setStage(s) {
   show(`${P}-prep-only`, s === 'prep');
   show(`${P}-fix-only`, s === 'fix');
   show(`${P}-back`, s === 'fix');
+  show(`${P}-restart`, s === 'fix');
+  show(`${P}-clear`, s === 'prep' && grid.filled().length > 0);
   show(`${P}-out-actions`, s === 'results');
   setText(`${P}-zone-in-title`, s === 'fix' ? 'תיקון והרצה חוזרת' : 'את מי קולטים');
   grid.setMode(s === 'fix' ? 'fix' : 'prep');
@@ -4485,12 +4519,30 @@ function runnable() {
 }
 
 function refreshStartButton() {
+  show(`${P}-clear`, stage === 'prep' && grid.filled().length > 0);
+  if (awaitingErrorConfirm && grid.filter() !== awaitingErrorFilter) awaitingErrorConfirm = false; // החלפת תגית = בקשה חדשה
   if (awaitingErrorConfirm) return;
   const v = runnable();
   const n = v.tasks.length;
   const shownNote = grid.filter() !== 'all' ? ' (המוצגים)' : '';
   const verb = stage === 'fix' ? 'התחל קליטה חוזרת' : 'התחל קליטה';
   setText(`${P}-start`, n ? `${verb}: ${plural(n, 'תלמיד אחד', 'N תלמידים')}${shownNote}` : verb);
+  // הכרעת 2.11: אין מי שירוץ (טבלה ריקה, רק אדומות, או תגית שמציגה רק אדומות) → הכפתור לא פעיל, לא רק בלי מספר
+  const idle = n === 0 && !absorbIsBusy() && stage !== 'run';
+  setDisabled(`${P}-start`, idle || absorbIsBusy() || stage === 'run');
+  const btn = $el(`${P}-start`);
+  if (btn) btn.title = idle ? (v.filled.length ? 'אין מי שירוץ: תקן את השורות האדומות, או בחר תגית אחרת' : 'אין שורות בטבלה') : '';
+}
+
+// "נקה" (הכרעת 2.11): מרוקן את טבלת-ההכנה אחרי לחיצה שנייה ("כן, נקה"); התוצאות לא נוגעות
+function clearTable() {
+  grid.setRows([]);
+  grid.setNotes(null);
+  grid.hidePasteBox();
+  awaitingErrorConfirm = false;
+  grid.render();
+  ui.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  log('[קלט] הטבלה נוקתה');
 }
 
 // ─── תוצאות: תגיות שמסננות, מיון, "מה לעשות" מתחת לכל שורה ───────────────────
@@ -4527,8 +4579,9 @@ function renderResults() {
 }
 
 // הסיכום (תגיות שמסננות + משפט) מוצג כשהריצה הסתיימה; בזמן ריצה התוצאות מצטברות בלי סיכום.
-function renderReport(report) {
+function renderReport(report, at) {
   if (!report) { show(`${P}-report`, false); setHtml(`${P}-report`, ''); setText(`${P}-zone-out-note`, ''); return; }
+  const when = at && !Number.isNaN(Date.parse(at)) ? new Date(at) : new Date(); // ביקורת 2.11: אחרי טעינת-דף, שעת הריצה ולא שעת הטעינה
   const c = absorbSummarizeKinds(results);
   const ok = c.absorbed + c.exists;
   const tag = (filter, label, n, kind) => (n ? tagHtml({ label: `${label} ${n}`, kind, button: true, filter, active: resFilter === filter }) : '');
@@ -4540,7 +4593,7 @@ function renderReport(report) {
     : `הסתיים: ${ok} מתוך ${results.length} הצליחו.${c.bad || c.verify ? ` ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
   setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
   show(`${P}-report`, true);
-  setText(`${P}-zone-out-note`, `ריצה מ-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
+  setText(`${P}-zone-out-note`, `ריצה מ-${when.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
 
 function onReportClick(e) {
@@ -4591,8 +4644,10 @@ function renderStaleQueue(info) {
 
 function setRunning(on) {
   setDisabled(`${P}-start`, !!on);
-  if (on) setStage('run'); else if (stage === 'run') setStage(results.length ? 'results' : 'prep');
+  if (on) { if (stage !== 'run') stageBeforeRun = stage; setStage('run'); }
+  else if (stage === 'run') setStage(results.length ? 'results' : (stageBeforeRun === 'fix' ? 'fix' : 'prep'));
   ui.running(!!on);
+  if (!on) refreshStartButton();
 }
 
 function startDate() {
@@ -4609,12 +4664,14 @@ async function start() {
   if (!v.filled.length) { ui.status(grid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
   if (v.counts.bad && !awaitingErrorConfirm) {
     awaitingErrorConfirm = true;
+    awaitingErrorFilter = grid.filter();
     setText(`${P}-start`, v.tasks.length ? `כן, התחל בלי ${plural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל קליטה');
     ui.status(`${plural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
     return;
   }
   if (!v.tasks.length) { ui.status('אין תלמידים שיכולים לרוץ. תקן את השורות האדומות'); return; }
   awaitingErrorConfirm = false;
+  lastRunRows = grid.filled();
   renderReport(null);
   renderStaleQueue(null);
   results = [];
@@ -4650,7 +4707,7 @@ function fixAndRerun() {
   const attention = displayedResults().filter((r) => !isAbsorbSuccess(r.status));
   if (!attention.length) return;
   const byKey = new Map(attention.map((r) => [resultKey(r), r]));
-  const existing = grid.filled();
+  const existing = grid.filled().length ? grid.filled() : lastRunRows; // ביקורת 2.11: הטבלה ריקה אחרי הריצה; השורות שרצו נשמרו
   const source = existing.length
     ? absorbRowsNeedingAttention(existing, results).rows.filter((r) => byKey.has(rowKey(r.fields)))
     : attention.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' }));
@@ -4687,6 +4744,7 @@ function newRun() {
   results = [];
   resFilter = 'all';
   resSort = null;
+  lastRunRows = [];
   clearAbsorbLastResults();
   renderReport(null);
   renderResults();
@@ -4704,7 +4762,12 @@ function continueAndRerun() {
   if (cb) { cb.checked = true; saveContinue(true); }
   const blocked = displayedResults().filter(absorbIsOtherInstituteBlock);
   if (!blocked.length) return;
-  grid.setRows(blocked.map((r) => rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' })));
+  // ביקורת 2.11: השורה כפי שרצה (עם לידה וארץ לדרכון), אחרת מהתוצאה
+  const prevByKey = new Map(lastRunRows.map((r) => [rowKey(r.fields), r]));
+  grid.setRows(blocked.map((r) => {
+    const prev = prevByKey.get(resultKey(r));
+    return prev ? { fields: Object.assign(emptyFields(), prev.fields), newOpen: !!prev.newOpen } : rowFrom({ branch: r.branch || '', studyType: r.studyType || '', identifier: r.identity || '', idType: r.idType === 'passport' ? 'passport' : '' });
+  }));
   grid.setNotes(null);
   setStage('fix');
   grid.render();
@@ -4774,6 +4837,7 @@ function mount(container, panelUi, page) {
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-template`, label: 'הורד תבנית', kind: 'ghost', size: 'small' })}
           ${buttonHtml({ id: `${P}-copy-input`, label: 'העתק את הטבלה לאקסל', kind: 'ghost', size: 'small' })}
+          ${buttonHtml({ id: `${P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         </div>
         <input id="${P}-xlsx-file" type="file" accept=".xlsx,.xls" hidden>
         ${grid.pasteBoxHtml()}
@@ -4789,6 +4853,7 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${P}-start`, label: 'התחל קליטה', kind: 'primary' })}
         ${buttonHtml({ id: `${P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
+        ${buttonHtml({ id: `${P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
@@ -4798,7 +4863,7 @@ function mount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap tt-row-tight" id="${P}-out-actions">
         ${buttonHtml({ id: `${P}-keep-attention`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול, כדי להשלים ולהתחיל שוב' })}
         ${buttonHtml({ id: `${P}-continue-rerun`, label: 'סמן "אשר המשך" והרץ שוב', kind: 'ghost', size: 'small', attrs: 'hidden' })}
-        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה' })}
+        ${buttonHtml({ id: `${P}-new-run`, label: 'קליטה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט או בדיווח-באג' })}
         ${buttonHtml({ id: `${P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true, title: 'קובץ CSV עם כל העמודות, כולל "פירוט". מכיל מזהים מלאים' })}
       </div>
@@ -4822,7 +4887,10 @@ function mount(container, panelUi, page) {
   $el(`${P}-csv`).addEventListener('click', exportCsv);
   $el(`${P}-keep-attention`).addEventListener('click', fixAndRerun);
   $el(`${P}-continue-rerun`).addEventListener('click', continueAndRerun);
-  $el(`${P}-new-run`).addEventListener('click', newRun);
+  // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
+  bindConfirmClick(`${P}-new-run`, { label: 'קליטה חדשה', confirmLabel: 'כן, קליטה חדשה', onConfirm: newRun });
+  bindConfirmClick(`${P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: newRun });
+  bindConfirmClick(`${P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: clearTable });
   $el(`${P}-template`).addEventListener('click', downloadTemplate);
   $el(`${P}-copy-input`).addEventListener('click', copyInputAsTsv);
   $el(`${P}-xlsx`).addEventListener('click', () => $el(`${P}-xlsx-file`).click());
@@ -4856,8 +4924,9 @@ function mount(container, panelUi, page) {
       renderStaleQueue(info);
       ui.open();
     },
-    onLocked: (msg) => { setRunning(false); ui.status(msg); ui.open(); },
+    onLocked: (msg) => { setRunning(false); ui.status(msg); setHtml(`${P}-stale`, esc(msg)); show(`${P}-stale`, true); ui.open(); }, // מקרה 22: תיבה צהובה, לא רק שורת-מצב
     onDone: (all, report) => {
+      if (grid.filled().length) lastRunRows = grid.filled(); // אחרי טעינת-דף הטבלה נבנתה מהתור (onResume), עם כל השדות
       results = all.slice(); resFilter = 'all'; resSort = null; grid.setRows([]); grid.setNotes(null);
       renderResults(); renderReport(report); setRunning(false); setStage('results'); ui.progress(all.length, all.length);
       const c = absorbSummarizeKinds(results);
@@ -4879,7 +4948,7 @@ function mount(container, panelUi, page) {
     if (last && last.results.length) {
       results = last.results.slice();
       renderResults();
-      renderReport(last.report);
+      renderReport(last.report, last.at);
       setStage('results');
       ui.status(`תוצאות הריצה האחרונה (${results.length} תלמידים)`);
     }
@@ -5798,6 +5867,8 @@ let departResults = [];
 let departTotal = 0;
 let departResFilter = 'all';
 let departResSort = null;
+let departStageBeforeRun = 'prep';
+let departAwaitingErrorFilter = 'all';
 
 const DEPART_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '44px' },
@@ -5911,6 +5982,8 @@ function departSetStage(s) {
   show(`${DEPART_P}-prep-only`, s === 'prep');
   show(`${DEPART_P}-fix-only`, s === 'fix');
   show(`${DEPART_P}-back`, s === 'fix');
+  show(`${DEPART_P}-restart`, s === 'fix');
+  show(`${DEPART_P}-clear`, s === 'prep' && departGrid.filled().length > 0);
   show(`${DEPART_P}-out-actions`, s === 'results');
   setText(`${DEPART_P}-zone-in-title`, s === 'fix' ? 'תיקון והרצה חוזרת' : 'על מי מדווחים עזיבה');
   departGrid.setMode(s === 'fix' ? 'fix' : 'prep');
@@ -5920,10 +5993,28 @@ function departSetStage(s) {
 function departRunnable() { return departValidateRows(departGrid.visibleFilled(), { branches: departKnownBranches().length ? departKnownBranches() : null }); }
 
 function departRefreshStartButton() {
+  show(`${DEPART_P}-clear`, departStage === 'prep' && departGrid.filled().length > 0);
+  if (departAwaitingErrorConfirm && departGrid.filter() !== departAwaitingErrorFilter) departAwaitingErrorConfirm = false;
   if (departAwaitingErrorConfirm) return;
-  const n = departRunnable().tasks.length;
+  const v = departRunnable();
+  const n = v.tasks.length;
   const verb = departStage === 'fix' ? 'התחל עזיבה חוזרת' : 'התחל עזיבה';
   setText(`${DEPART_P}-start`, n ? `${verb}: ${departPlural(n, 'תלמיד אחד', 'N תלמידים')}${departGrid.filter() !== 'all' ? ' (המוצגים)' : ''}` : verb);
+  // הכרעת 2.11: אין מי שירוץ → הכפתור לא פעיל (כמו בקליטה)
+  const idle = n === 0 && !departIsRunning() && departStage !== 'run';
+  setDisabled(`${DEPART_P}-start`, idle || departIsRunning() || departStage === 'run');
+  const btn = $el(`${DEPART_P}-start`);
+  if (btn) btn.title = idle ? (v.filled.length ? 'אין מי שירוץ: תקן את השורות האדומות, או בחר תגית אחרת' : 'אין שורות בטבלה') : '';
+}
+
+function departClearTable() {
+  departGrid.setRows([]);
+  departGrid.setNotes(null);
+  departGrid.hidePasteBox();
+  departAwaitingErrorConfirm = false;
+  departGrid.render();
+  departUi.status('הטבלה נוקתה. "הדבק מאקסל" או מלא שורה');
+  log('[עזיבה] הטבלה נוקתה');
 }
 
 function departRefreshStatus(v) {
@@ -6018,8 +6109,10 @@ function departRenderStaleQueue(info) {
 
 function departSetRunning(on) {
   setDisabled(`${DEPART_P}-start`, !!on);
-  if (on) departSetStage('run'); else if (departStage === 'run') departSetStage(departResults.length ? 'results' : 'prep');
+  if (on) { if (departStage !== 'run') departStageBeforeRun = departStage; departSetStage('run'); }
+  else if (departStage === 'run') departSetStage(departResults.length ? 'results' : (departStageBeforeRun === 'fix' ? 'fix' : 'prep'));
   departUi.running(!!on);
+  if (!on) departRefreshStartButton();
 }
 
 function departReadSettings() {
@@ -6052,6 +6145,7 @@ async function departStart() {
   if (!v.filled.length) { departUi.status(departGrid.filter() !== 'all' ? 'אין שורות בסינון הזה. לחץ "הכל"' : 'אין שורות להרצה. "הדבק מאקסל" או מלא שורה בטבלה'); return; }
   if (v.counts.bad && !departAwaitingErrorConfirm) {
     departAwaitingErrorConfirm = true;
+    departAwaitingErrorFilter = departGrid.filter();
     setText(`${DEPART_P}-start`, v.tasks.length ? `כן, התחל בלי ${departPlural(v.counts.bad, 'השורה האדומה', 'N השורות האדומות')}` : 'התחל עזיבה');
     departUi.status(`${departPlural(v.counts.bad, 'שורה אחת לא תרוץ', 'N שורות לא ירוצו')} (אדום). תקן אותן, או לחץ שוב כדי להתחיל בלי האדומות`);
     return;
@@ -6136,7 +6230,10 @@ function departMount(container, panelUi, page) {
       <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span></div>
       <div id="${DEPART_P}-prep-only">
         <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: מעתיקים באקסל שתי עמודות (סניף ות.ז.) ולוחצים "הדבק מאקסל", או ממלאים בטבלה. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
-        <div class="tt-row tt-row-wrap tt-row-tight">${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}</div>
+        <div class="tt-row tt-row-wrap tt-row-tight">
+          ${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
+          ${buttonHtml({ id: `${DEPART_P}-clear`, label: 'נקה', kind: 'subtle', size: 'small', title: 'מרוקן את הטבלה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
+        </div>
         ${departGrid.pasteBoxHtml()}
       </div>
       <div id="${DEPART_P}-fix-only" hidden><p class="tt-zone-lead">רק מי שדורש טיפול. תקן לפי ההוראה שמתחת לכל שורה, ולחץ "התחל עזיבה חוזרת".</p></div>
@@ -6150,6 +6247,7 @@ function departMount(container, panelUi, page) {
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${DEPART_P}-start`, label: 'התחל עזיבה', kind: 'primary' })}
         ${buttonHtml({ id: `${DEPART_P}-back`, label: 'חזרה לתוצאות', kind: 'ghost', attrs: 'hidden' })}
+        ${buttonHtml({ id: `${DEPART_P}-restart`, label: 'התחלה מחדש', kind: 'subtle', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}
         <span class="tt-legend"><i style="background:var(--tt-bad)"></i>לא ירוץ עד שיתוקן <i style="background:var(--tt-warn);margin-inline-start:8px"></i>אזהרה, ירוץ</span>
       </div>
     </section>
@@ -6158,7 +6256,7 @@ function departMount(container, panelUi, page) {
       <div id="${DEPART_P}-report" hidden></div>
       <div class="tt-row tt-row-wrap tt-row-tight" id="${DEPART_P}-out-actions">
         ${buttonHtml({ id: `${DEPART_P}-fix`, label: 'תקן והרץ שוב', kind: 'primary', size: 'small', disabled: true, title: 'פותח טבלה רק עם מי שדורש טיפול' })}
-        ${buttonHtml({ id: `${DEPART_P}-new-run`, label: 'עזיבה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה' })}
+        ${buttonHtml({ id: `${DEPART_P}-new-run`, label: 'עזיבה חדשה', kind: 'ghost', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת' })}
         ${buttonHtml({ id: `${DEPART_P}-tsv`, label: 'העתק תוצאות לאקסל', kind: 'ghost', size: 'small', disabled: true, title: 'מכיל מזהים מלאים: לא להדביק בצ\'אט' })}
         ${buttonHtml({ id: `${DEPART_P}-csv`, label: 'הורד קובץ', kind: 'ghost', size: 'small', disabled: true })}
       </div>
@@ -6178,7 +6276,10 @@ function departMount(container, panelUi, page) {
   $el(`${DEPART_P}-back`).addEventListener('click', departBackToResults);
   $el(`${DEPART_P}-stop`).addEventListener('click', departStopClick, true);
   $el(`${DEPART_P}-fix`).addEventListener('click', departFixAndRerun);
-  $el(`${DEPART_P}-new-run`).addEventListener('click', departNewRun);
+  // הכרעת 2.11: מה שמוחק טבלה או תוצאות דורש לחיצה שנייה
+  bindConfirmClick(`${DEPART_P}-new-run`, { label: 'עזיבה חדשה', confirmLabel: 'כן, עזיבה חדשה', onConfirm: departNewRun });
+  bindConfirmClick(`${DEPART_P}-restart`, { label: 'התחלה מחדש', confirmLabel: 'כן, התחל מחדש', onConfirm: departNewRun });
+  bindConfirmClick(`${DEPART_P}-clear`, { label: 'נקה', confirmLabel: 'כן, נקה', onConfirm: departClearTable });
   $el(`${DEPART_P}-tsv`).addEventListener('click', departCopyTsv);
   $el(`${DEPART_P}-csv`).addEventListener('click', departExportCsv);
   $el(`${DEPART_P}-report`).addEventListener('click', departOnReportClick);
@@ -6834,7 +6935,7 @@ function reportUiMount(container, panelUi, page) {
   reportDone = reportRows.length > 0;
   reportRenderRows();
   if (reportHasPendingRun()) { reportSetStatus('נמצאה ריצה פתוחה. ממשיך…'); reportSetRunning(true); }
-  else reportSetStatus(fits ? (branches.length ? 'מוכן. "התחל" מדווח לכל הסניפים שבעץ' : 'אין סניפים בעץ של הדף הזה') : 'הדיווח רץ מדף מוסד');
+  else reportSetStatus(fits ? (branches.length ? 'מוכן. "התחל" מדווח לכל הסניפים שברשימה' : 'אין סניפים ברשימת הסניפים של הדף הזה') : 'הדיווח רץ מדף מוסד');
   Promise.resolve().then(() => reportResumeIfPending()).catch((e) => {
     log('[דיווח] ההמשך נכשל: ' + (e && e.message));
     reportSetRunning(false);
