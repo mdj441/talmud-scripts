@@ -75,7 +75,8 @@ async function openBulk(page) {
   await page.waitForSelector(`${SEL.bulkRun}:visible`, { timeout: 5000 });
 }
 
-// ממתין לדוח "מה נשאר" (מוצג רק בסיום ריצה). קורא בלולאה עם try/catch.
+// ממתין לסיום ריצה (שורת-המצב "הסתיים…" / "נעצר…"). הכרעת בעל-המערכת 1.11.2026 (א): תיבת "מה נשאר" מוצגת רק כשיש
+// הודעות שנכשלו, בלי שורת "סיכום"; לכן text = שורת-המצב + התיבה (אם מוצגת), ו-boxHidden / boxText לבדיקות הכפילות.
 async function waitForReport(page, timeoutMs = 60000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
@@ -83,7 +84,10 @@ async function waitForReport(page, timeoutMs = 60000) {
       const st = await page.evaluate((s) => {
         const rep = document.querySelector(s.report);
         const status = document.querySelector(s.status);
-        return { done: !!rep && !rep.hidden && rep.innerText.trim() !== '', text: rep ? rep.innerText : '', status: status ? status.textContent : '' };
+        const statusText = status ? status.textContent : '';
+        const boxHidden = !rep || rep.hidden || rep.innerText.trim() === '';
+        const boxText = boxHidden ? '' : rep.innerText;
+        return { done: /^(הסתיים|נעצר)/.test(statusText.trim()), text: statusText + '\n' + boxText, boxHidden, boxText, status: statusText };
       }, SEL);
       if (st.done) return st;
     } catch (e) { /* ננסה שוב */ }
@@ -185,6 +189,8 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       assert.match(rep.text, /בוצעו=14/, rep.text + '\n' + log);
       assert.match(rep.text, /נכשלו=0/, rep.text);
       assert.doesNotMatch(rep.text, /נעצר/);
+      // הכרעת בעל-המערכת 1.11.2026 (א): בלי נכשלות אין תיבה צהובה (הסיכום כבר בשורת-המצב)
+      assert.equal(rep.boxHidden, true, 'תיבת "מה נשאר" מוצגת למרות שהכול בוצע: ' + rep.boxText);
       assert.match(log, /משנה סינון ל"נשלחה"/, 'הסקריפט היה צריך להחליף את הסינון מ"טופלה" ל"נשלחה"');
 
       const db = await readMockDb(page);
@@ -240,6 +246,9 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       assert.match(rep.text, /נכשלו=1/, rep.text);
       assert.match(rep.text, /דולגו=1/, rep.text);
       assert.match(rep.text, new RegExp(m06.uid), 'שורת "מה נשאר" להודעה שנכשלה');
+      assert.equal(rep.boxHidden, false, 'כשיש נכשלת מוצגת תיבת "מה נשאר"');
+      assert.match(rep.boxText, /מה נשאר לעשות/, rep.boxText);
+      assert.doesNotMatch(rep.boxText, /סיכום:/, 'שורת "סיכום:" בתיבה כופלת את שורת-המצב: ' + rep.boxText);
 
       const db = await readMockDb(page);
       assert.equal(byId(db, 'm01').handledBy, 'decline');

@@ -10,7 +10,7 @@ import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { loadXlsxFile } from './absorb-xlsx.js';
-import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, fitBoxHtml, bindConfirmClick, dmyToIso, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, fitBoxHtml, bindConfirmClick, dmyToIso, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import { gridSortRows } from '../ui/grid.js';
 import {
   MESSAGES_ACTION, MESSAGES_ALL_ACTIONS, MESSAGES_RESULT, MESSAGES_TRANSFER_HEADER, MESSAGES_TRANSFER_DONE_HEADER,
@@ -364,10 +364,19 @@ function messagesRenderResults() {
   setDisabled(`${MP}-copy-report`, !msgResults.length);
 }
 
+// הכרעת בעל-המערכת 1.11.2026 (א): הסיכום ("בוצעו=… · נכשלו=…") נאמר פעם אחת, בשורת-המצב; התיבה הצהובה מוצגת רק כשיש
+// "מה נשאר לעשות" (הודעות שנכשלו), בלי שורת "סיכום", כמו בדיווח.
 function messagesRenderReport(report) {
   if (!report) { show(`${MP}-report`, false); setHtml(`${MP}-report`, ''); setText(`${MP}-zone-out-note`, ''); return; }
-  setHtml(`${MP}-report`, reportBoxHtml(report));
-  show(`${MP}-report`, true);
+  const lines = Array.isArray(report.lines) ? report.lines : [];
+  if (lines.length) {
+    setHtml(`${MP}-report`, `<div class="tt-hint tt-hint-warn">הרשימה מכילה מזהים מלאים. לא להדביק אותה בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>
+      <div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`);
+    show(`${MP}-report`, true);
+  } else {
+    setHtml(`${MP}-report`, '');
+    show(`${MP}-report`, false);
+  }
   setText(`${MP}-zone-out-note`, `ריצה מ-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
 

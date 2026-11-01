@@ -148,19 +148,7 @@ export function resultsTableHtml({ columns, rows, classify, emptyText = '', acti
   return `<table class="tt-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-// תיבת דוח "מה נשאר"
-export function reportBoxHtml(report, { idsWarning = true } = {}) {
-  if (!report) return '';
-  let html = '';
-  if (idsWarning) html += `<div class="tt-hint tt-hint-warn">הדוח מכיל מזהים מלאים. לא להדביק אותו בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>`;
-  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '-')}</div>`;
-  if (report.lines && report.lines.length) {
-    html += `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${report.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`;
-  } else {
-    html += '<div class="tt-ok">הכול טופל. אין שורות שדורשות טיפול.</div>';
-  }
-  return html;
-}
+// (reportBoxHtml, תיבת "סיכום + מה נשאר", הוסרה 1.11.2026: הסיכום נאמר פעם אחת בשורת-המצב, ו"מה נשאר" נבנה בכל לשונית בעצמה.)
 
 // היומן המשותף (אחד לכל הכלים)
 export function logSectionHtml(id = 'tt-log') {

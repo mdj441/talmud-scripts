@@ -78,7 +78,10 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       const row = db.enrolled['10002'].find((s) => s.id === '012345678');
       assert.equal(row.left, '01/09/2026', 'תאריך העזיבה לא נשמר');
       assert.equal(row.leaveReason, '3', 'סיבת העזיבה לא נשמרה');
-      assert.match(run.report, /הכול טופל/);
+      // הכרעת בעל-המערכת 1.11.2026 (א): משפט-הסיכום רק בתיבת-המצב; באזור התוצאות תגיות וטבלה
+      assert.match(run.done.status, /הסתיים: 1 מתוך 1 הצליחו\. הכול טופל/, run.done.status);
+      assert.doesNotMatch(run.report, /הסתיים|הכול טופל/, 'המשפט כפול באזור התוצאות: ' + run.report);
+      assert.match(run.report, /הצליחו 1/, 'התגיות נשארות: ' + run.report);
       assert.ok(!consoleLines.some((l) => l.startsWith('PAGEERROR')), consoleLines.filter((l) => l.startsWith('PAGEERROR')).join('\n'));
       // "עזיבה חדשה" (הכרעת 2.11: מחיקת תוצאות דורשת לחיצה שנייה)
       await page.click('#tt-depart-new-run');
@@ -132,7 +135,7 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       assert.equal(run.results[0].status, 'כבר בוצעה עזיבה (15/05/2026)', run.log);
       const db = await readMockDb(page);
       assert.equal(db.enrolled['10002'][0].left, '15/05/2026', 'תאריך העזיבה המקורי שונה');
-      assert.match(run.report, /הכול טופל/);
+      assert.match(run.done.status, /הכול טופל/);
     } finally { await context.close(); }
   });
 

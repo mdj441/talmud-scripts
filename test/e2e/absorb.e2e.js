@@ -76,6 +76,10 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       assert.match(run.results[0].action, /סמן "אשר המשך"/, 'מה לעשות: לסמן ולהריץ שוב');
       // סבב רטוב 1.11.2026: לשורה שנחסמה לא הייתה שורת "◀" ביומן (רק "נקלט" נרשם), וזה הטעה בקריאת היומן
       assert.match(run.log, /◀ נחסם: רשום במוסד אחר/, 'היומן לא מסכם את השורה שנחסמה: ' + run.log);
+      // הכרעת בעל-המערכת 1.11.2026 (א): משפט-הסיכום מופיע רק בתיבת-המצב; באזור התוצאות נשארות התגיות והטבלה
+      assert.match(run.done.status, /הסתיים: 0 מתוך 1 הצליחו\. תלמיד אחד דורש טיפול/, run.done.status);
+      assert.doesNotMatch(run.report, /הסתיים|הצליחו/, 'המשפט כפול באזור התוצאות: ' + run.report);
+      assert.match(run.report, /דורשים טיפול 1/, 'התגיות נשארות: ' + run.report);
       // הכרעה ט: כפתור "סמן אשר המשך והרץ שוב" מוצג, ומריץ שוב רק את מי שנחסם
       const btn = await page.$('#tt-absorb-continue-rerun:not([hidden])');
       assert.ok(btn, 'כפתור "סמן אשר המשך והרץ שוב" לא מוצג');
@@ -411,7 +415,7 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
       let res = await readResults(page);
       assert.deepEqual(res.map((r) => r.status), ['כבר קיים', 'נעצר'], await readLog(page));
       let report = await readReport(page);
-      assert.match(report, /נעצר/, 'דוח "מה נשאר" מוצג');
+      assert.match(report, /לא רצו 1/, 'תגיות-הסיכום מוצגות');
       // טעינה נוספת: התוצאות של הריצה האחרונה עדיין מוצגות
       await page.reload();
       await waitForPanel(page);
@@ -419,7 +423,7 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
       res = await readResults(page);
       assert.deepEqual(res.map((r) => r.status), ['כבר קיים', 'נעצר'], 'תמונת-התוצאות האחרונה מוצגת אחרי טעינה');
       report = await readReport(page);
-      assert.match(report, /נעצר/);
+      assert.match(report, /לא רצו 1/);
       const saved = await page.evaluate(() => sessionStorage.getItem('talmud.absorb.queue'));
       assert.equal(saved, null, 'התור נוקה');
     } finally { await context.close(); }

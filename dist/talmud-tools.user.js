@@ -876,19 +876,7 @@ function resultsTableHtml({ columns, rows, classify, emptyText = '', actionKey =
   return `<table class="tt-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
 }
 
-// תיבת דוח "מה נשאר"
-function reportBoxHtml(report, { idsWarning = true } = {}) {
-  if (!report) return '';
-  let html = '';
-  if (idsWarning) html += `<div class="tt-hint tt-hint-warn">הדוח מכיל מזהים מלאים. לא להדביק אותו בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>`;
-  html += `<div class="tt-report-summary">סיכום: ${esc(report.summary || '-')}</div>`;
-  if (report.lines && report.lines.length) {
-    html += `<div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${report.lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`;
-  } else {
-    html += '<div class="tt-ok">הכול טופל. אין שורות שדורשות טיפול.</div>';
-  }
-  return html;
-}
+// (reportBoxHtml, תיבת "סיכום + מה נשאר", הוסרה 1.11.2026: הסיכום נאמר פעם אחת בשורת-המצב, ו"מה נשאר" נבנה בכל לשונית בעצמה.)
 
 // היומן המשותף (אחד לכל הכלים)
 function logSectionHtml(id = 'tt-log') {
@@ -4626,10 +4614,8 @@ function renderReport(report, at) {
   const tags = tagHtml({ label: `הכל ${results.length}`, kind: 'info', button: true, filter: 'all', active: resFilter === 'all' })
     + tag('ok', 'נקלטו', c.absorbed, 'ok') + tag('exists', 'כבר קיימים', c.exists, 'ok') + tag('verify', 'לבדוק', c.verify, 'warn')
     + tag('bad', 'דורשים טיפול', c.bad, 'bad') + tag('stopped', 'לא רצו', c.stopped, 'warn');
-  const sentence = report.stopped || c.stopped
-    ? `נעצר. ${plural(c.stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}`
-    : `הסתיים: ${ok} מתוך ${results.length} הצליחו.${c.bad || c.verify ? ` ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
-  setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
+  // הכרעת בעל-המערכת 1.11.2026 (א): משפט "הסתיים: X מתוך Y" נאמר פעם אחת, בתיבת-המצב; כאן רק התגיות (פירוט + סינון) והטבלה
+  setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div>`);
   show(`${P}-report`, true);
   setText(`${P}-zone-out-note`, `ריצה מ-${when.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
@@ -6099,10 +6085,8 @@ function departRenderReport(report) {
   const tag = (filter, label, n, kind) => (n ? tagHtml({ label: `${label} ${n}`, kind, button: true, filter, active: departResFilter === filter }) : '');
   const tags = tagHtml({ label: `הכל ${departResults.length}`, kind: 'info', button: true, filter: 'all', active: departResFilter === 'all' })
     + tag('ok', 'הצליחו', ok, 'ok') + tag('verify', 'לבדוק', verify, 'warn') + tag('bad', 'דורשים טיפול', bad, 'bad') + tag('stopped', 'לא רצו', stopped, 'warn');
-  const sentence = report.stopped || stopped
-    ? `נעצר. ${departPlural(stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}`
-    : `הסתיים: ${ok} מתוך ${departResults.length} הצליחו.${bad || verify ? ` ${departPlural(bad + verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
-  setHtml(`${DEPART_P}-report`, `<div class="tt-tags" id="${DEPART_P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
+  // הכרעת בעל-המערכת 1.11.2026 (א): משפט "הסתיים: X מתוך Y" נאמר פעם אחת, בתיבת-המצב; כאן רק התגיות (פירוט + סינון) והטבלה
+  setHtml(`${DEPART_P}-report`, `<div class="tt-tags" id="${DEPART_P}-rtags">${tags}</div>`);
   show(`${DEPART_P}-report`, true);
 }
 
@@ -8240,10 +8224,19 @@ function messagesRenderResults() {
   setDisabled(`${MP}-copy-report`, !msgResults.length);
 }
 
+// הכרעת בעל-המערכת 1.11.2026 (א): הסיכום ("בוצעו=… · נכשלו=…") נאמר פעם אחת, בשורת-המצב; התיבה הצהובה מוצגת רק כשיש
+// "מה נשאר לעשות" (הודעות שנכשלו), בלי שורת "סיכום", כמו בדיווח.
 function messagesRenderReport(report) {
   if (!report) { show(`${MP}-report`, false); setHtml(`${MP}-report`, ''); setText(`${MP}-zone-out-note`, ''); return; }
-  setHtml(`${MP}-report`, reportBoxHtml(report));
-  show(`${MP}-report`, true);
+  const lines = Array.isArray(report.lines) ? report.lines : [];
+  if (lines.length) {
+    setHtml(`${MP}-report`, `<div class="tt-hint tt-hint-warn">הרשימה מכילה מזהים מלאים. לא להדביק אותה בצ'אט או בדיווח-באג; ליומן יש "העתק יומן" ממוסך.</div>
+      <div class="tt-report-title">מה נשאר לעשות</div><ol class="tt-report-list">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ol>`);
+    show(`${MP}-report`, true);
+  } else {
+    setHtml(`${MP}-report`, '');
+    show(`${MP}-report`, false);
+  }
   setText(`${MP}-zone-out-note`, `ריצה מ-${new Date().toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
 

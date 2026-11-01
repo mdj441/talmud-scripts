@@ -444,10 +444,8 @@ function renderReport(report, at) {
   const tags = tagHtml({ label: `הכל ${results.length}`, kind: 'info', button: true, filter: 'all', active: resFilter === 'all' })
     + tag('ok', 'נקלטו', c.absorbed, 'ok') + tag('exists', 'כבר קיימים', c.exists, 'ok') + tag('verify', 'לבדוק', c.verify, 'warn')
     + tag('bad', 'דורשים טיפול', c.bad, 'bad') + tag('stopped', 'לא רצו', c.stopped, 'warn');
-  const sentence = report.stopped || c.stopped
-    ? `נעצר. ${plural(c.stopped, 'תלמיד אחד לא רץ', 'N תלמידים לא רצו')}`
-    : `הסתיים: ${ok} מתוך ${results.length} הצליחו.${c.bad || c.verify ? ` ${plural(c.bad + c.verify, 'תלמיד אחד דורש טיפול', 'N תלמידים דורשים טיפול')}` : ' הכול טופל'}`;
-  setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div><div class="tt-report-summary">${esc(sentence)}</div>`);
+  // הכרעת בעל-המערכת 1.11.2026 (א): משפט "הסתיים: X מתוך Y" נאמר פעם אחת, בתיבת-המצב; כאן רק התגיות (פירוט + סינון) והטבלה
+  setHtml(`${P}-report`, `<div class="tt-tags" id="${P}-rtags">${tags}</div>`);
   show(`${P}-report`, true);
   setText(`${P}-zone-out-note`, `ריצה מ-${when.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}`);
 }
