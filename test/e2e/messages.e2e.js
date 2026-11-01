@@ -623,6 +623,16 @@ describe('טיפול בהודעות: סביבת דמה', () => {
       review = await readReview(page);
       assert.equal(review.find((r) => r.id === '012345678').fullShown, false, 'לחיצה שנייה סוגרת');
       assert.equal(review.find((r) => r.id === '012345678').bodyOpen, false);
+      // בקשת 2.11: מיון בלחיצה על כותרת (כמו בטבלאות הקליטה); לחיצה שנייה הופכת; ההחלטות נשמרות
+      await page.click(`${SEL.scanned} th[data-sort="personId"]`);
+      const asc = (await readReview(page)).map((r) => r.id);
+      // כמו gridCompare: מספרים כמספרים, ריק תמיד בסוף
+      const cmp = (a, b) => (!a && !b ? 0 : (!a ? 1 : (!b ? -1 : (/^\d+$/.test(a) && /^\d+$/.test(b) ? Number(a) - Number(b) : a.localeCompare(b, 'he')))));
+      assert.deepEqual(asc, asc.slice().sort(cmp), 'מיון עולה לפי המספר, ריק בסוף');
+      await page.click(`${SEL.scanned} th[data-sort="personId"]`);
+      const desc = (await readReview(page)).map((r) => r.id);
+      assert.deepEqual(desc, asc.slice().reverse(), 'לחיצה שנייה הופכת את הסדר');
+      assert.equal((await readReview(page)).find((r) => r.id === '012345678').decision, DECLINE, 'ההחלטה שנבחרה שרדה את המיון');
       assert.equal(pageErrors(consoleLines), '', pageErrors(consoleLines));
     } finally { await context.close(); }
   });

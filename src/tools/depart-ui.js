@@ -402,13 +402,12 @@ function departMount(container, panelUi, page) {
   departUi = panelUi;
   departPage = page;
   departBuildGrid();
-  const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
     <section class="tt-zone" id="${DEPART_P}-zone-in">
       <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span>
         <span class="tt-zone-actions">${buttonHtml({ id: `${DEPART_P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${DEPART_P}-prep-only">
-        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), או מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${DEPART_P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small', title: 'שתי עמודות: סניף ומספר' })}

@@ -682,14 +682,13 @@ function mount(container, panelUi, page) {
   ui = panelUi;
   pageRef = page;
   buildGrid();
-  const fits = !!(page && ABSORB_PAGES.includes(page.kind));
   container.innerHTML = `
     ${datalistsHtml(page)}
     <section class="tt-zone" id="${P}-zone-in">
       <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span>
         <span class="tt-zone-actions">${buttonHtml({ id: `${P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${P}-prep-only">
-        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, או מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}

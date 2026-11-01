@@ -4860,14 +4860,13 @@ function mount(container, panelUi, page) {
   ui = panelUi;
   pageRef = page;
   buildGrid();
-  const fits = !!(page && ABSORB_PAGES.includes(page.kind));
   container.innerHTML = `
     ${datalistsHtml(page)}
     <section class="tt-zone" id="${P}-zone-in">
       <div class="tt-zone-head"><b id="${P}-zone-in-title">את מי קולטים</b><span class="tt-zone-note"></span>
         <span class="tt-zone-actions">${buttonHtml({ id: `${P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${P}-prep-only">
-        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן קולטים כמה תלמידים בבת אחת: ממלאים את הטבלה, או מדביקים נתונים מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. בודקים, ולוחצים "התחל קליטה".</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small' })}
@@ -6274,13 +6273,12 @@ function departMount(container, panelUi, page) {
   departUi = panelUi;
   departPage = page;
   departBuildGrid();
-  const fits = !!(page && page.kind === 'institute');
   container.innerHTML = `
     <section class="tt-zone" id="${DEPART_P}-zone-in">
       <div class="tt-zone-head"><b id="${DEPART_P}-zone-in-title">על מי מדווחים עזיבה</b><span class="tt-zone-note"></span>
         <span class="tt-zone-actions">${buttonHtml({ id: `${DEPART_P}-restart`, label: 'רשימה חדשה', kind: 'newlist', size: 'small', title: 'מנקה את הטבלה ואת התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' })}</span></div>
       <div id="${DEPART_P}-prep-only">
-        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.${fits ? '' : ' אפשר להתחיל גם מכאן: הכלי יעבור בעצמו לדף המוסד הנכון.'}</p>
+        <p class="tt-zone-lead">כאן מדווחים עזיבה לכמה תלמידים בבת אחת: ממלאים את הטבלה (סניף ומספר), או מדביקים שתי עמודות מאקסל ("הדבק מאקסל"), או טוענים קובץ אקסל. תלמיד שכבר רשום כעוזב מקבל "כבר בוצעה עזיבה" ולא משתנה.</p>
         <div class="tt-row tt-row-wrap tt-row-tight">
           ${buttonHtml({ id: `${DEPART_P}-paste-btn`, label: 'הדבק מאקסל', kind: 'primary', size: 'small', title: 'ממלא את הטבלה ממה שהעתקת באקסל' })}
           ${buttonHtml({ id: `${DEPART_P}-xlsx`, label: 'טען קובץ אקסל', kind: 'ghost', size: 'small', title: 'שתי עמודות: סניף ומספר' })}
@@ -7997,12 +7995,28 @@ function messagesRowHtml(r, i) {
   </tr><tr class="tt-body-full" data-key="${esc(r.key)}"${open ? '' : ' hidden'}><td colspan="${MESSAGES_REVIEW_COLS}">${esc(r.body)}</td></tr>`;
 }
 
+// מיון בלחיצה על כותרת (בקשת בעל-המערכת 2.11, כמו בטבלאות הקליטה): המפתח → הערך למיון
+const MESSAGES_REVIEW_HEAD = [
+  ['personId', 'ת.ז./דרכון', (r) => r.personId], ['header', 'נושא', (r) => r.header], ['body', 'גוף ההודעה', (r) => r.body],
+  ['date', 'תאריך', (r) => dmyToIso(r.date) || r.date], ['count', 'כמות', (r) => r.count], ['roster', 'במצבת', (r) => (r.pending ? 'א ממתין' : (r.probablyDone ? 'ב כנראה בוצע' : (r.rosterLabel || 'ג')))],
+  ['', 'החלטה', null],
+];
+let msgSort = null; // { key, dir }
+
+function messagesSortedRows() {
+  const col = msgSort ? MESSAGES_REVIEW_HEAD.find((c) => c[0] === msgSort.key) : null;
+  return col && col[2] ? gridSortRows(msgRows, col[2], msgSort.dir) : msgRows;
+}
+
 function messagesRenderReview() {
   const box = $el(`${MP}-scanned`);
   if (!box) return;
   if (!msgRows.length) { box.innerHTML = ''; messagesRenderSummary(); messagesRefreshRunButton(); messagesSetReviewEnabled(); return; }
-  const head = ['ת.ז./דרכון', 'נושא', 'גוף ההודעה', 'תאריך', 'כמות', 'במצבת', 'החלטה'].map((h) => `<th>${esc(h)}</th>`).join('');
-  box.innerHTML = `<table class="tt-table tt-review-table"><thead><tr>${head}</tr></thead><tbody>${msgRows.map(messagesRowHtml).join('')}</tbody></table>`;
+  const head = MESSAGES_REVIEW_HEAD.map(([key, label]) => {
+    const arrow = msgSort && msgSort.key === key ? (msgSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+    return key ? `<th class="tt-th-sort" data-sort="${esc(key)}" title="מיון לפי ${esc(label)}">${esc(label)}${arrow}</th>` : `<th>${esc(label)}</th>`;
+  }).join('');
+  box.innerHTML = `<table class="tt-table tt-review-table"><thead><tr>${head}</tr></thead><tbody>${messagesSortedRows().map(messagesRowHtml).join('')}</tbody></table>`;
   box.querySelectorAll('select.tt-decision').forEach((sel) => {
     sel.addEventListener('change', () => {
       const tr = sel.closest('tr');
@@ -8017,6 +8031,13 @@ function messagesRenderReview() {
 
 // לחיצה על גוף ההודעה פותחת/סוגרת את הנוסח המלא מתחת לשורה (האצלה: הטבלה נבנית מחדש בכל רענון).
 function messagesOnReviewClick(e) {
+  const th = e.target && e.target.closest ? e.target.closest('th[data-sort]') : null;
+  if (th) {
+    const key = th.getAttribute('data-sort');
+    msgSort = { key, dir: msgSort && msgSort.key === key && msgSort.dir === 'asc' ? 'desc' : 'asc' };
+    messagesRenderReview();
+    return;
+  }
   const td = e.target && e.target.closest ? e.target.closest('td.tt-body-cell') : null;
   if (!td) return;
   const tr = td.closest('tr.tt-review-row');
@@ -8161,6 +8182,7 @@ function messagesClearTable() {
   msgRows = [];
   msgDecisions = new Map();
   msgExpanded = new Set();
+  msgSort = null;
   const f = $el(`${MP}-filter`);
   if (f) f.value = '';
   messagesRenderReview();
@@ -8178,6 +8200,7 @@ function messagesNewScan() {
   msgRows = [];
   msgDecisions = new Map();
   msgExpanded = new Set();
+  msgSort = null;
   const f = $el(`${MP}-filter`);
   if (f) f.value = '';
   messagesRenderResults();

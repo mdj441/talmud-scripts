@@ -10,7 +10,8 @@ import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { loadXlsxFile } from './absorb-xlsx.js';
-import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, buttonsRowHtml, selectHtml, resultsTableHtml, reportBoxHtml, fitBoxHtml, bindConfirmClick, dmyToIso, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { gridSortRows } from '../ui/grid.js';
 import {
   MESSAGES_ACTION, MESSAGES_ALL_ACTIONS, MESSAGES_RESULT, MESSAGES_TRANSFER_HEADER, MESSAGES_TRANSFER_DONE_HEADER,
   messagesIsMessagesUrl, messagesParseTable, messagesLoadSummary, messagesBuildTsv,
@@ -137,12 +138,28 @@ function messagesRowHtml(r, i) {
   </tr><tr class="tt-body-full" data-key="${esc(r.key)}"${open ? '' : ' hidden'}><td colspan="${MESSAGES_REVIEW_COLS}">${esc(r.body)}</td></tr>`;
 }
 
+// מיון בלחיצה על כותרת (בקשת בעל-המערכת 2.11, כמו בטבלאות הקליטה): המפתח → הערך למיון
+const MESSAGES_REVIEW_HEAD = [
+  ['personId', 'ת.ז./דרכון', (r) => r.personId], ['header', 'נושא', (r) => r.header], ['body', 'גוף ההודעה', (r) => r.body],
+  ['date', 'תאריך', (r) => dmyToIso(r.date) || r.date], ['count', 'כמות', (r) => r.count], ['roster', 'במצבת', (r) => (r.pending ? 'א ממתין' : (r.probablyDone ? 'ב כנראה בוצע' : (r.rosterLabel || 'ג')))],
+  ['', 'החלטה', null],
+];
+let msgSort = null; // { key, dir }
+
+function messagesSortedRows() {
+  const col = msgSort ? MESSAGES_REVIEW_HEAD.find((c) => c[0] === msgSort.key) : null;
+  return col && col[2] ? gridSortRows(msgRows, col[2], msgSort.dir) : msgRows;
+}
+
 function messagesRenderReview() {
   const box = $el(`${MP}-scanned`);
   if (!box) return;
   if (!msgRows.length) { box.innerHTML = ''; messagesRenderSummary(); messagesRefreshRunButton(); messagesSetReviewEnabled(); return; }
-  const head = ['ת.ז./דרכון', 'נושא', 'גוף ההודעה', 'תאריך', 'כמות', 'במצבת', 'החלטה'].map((h) => `<th>${esc(h)}</th>`).join('');
-  box.innerHTML = `<table class="tt-table tt-review-table"><thead><tr>${head}</tr></thead><tbody>${msgRows.map(messagesRowHtml).join('')}</tbody></table>`;
+  const head = MESSAGES_REVIEW_HEAD.map(([key, label]) => {
+    const arrow = msgSort && msgSort.key === key ? (msgSort.dir === 'desc' ? ' ▼' : ' ▲') : '';
+    return key ? `<th class="tt-th-sort" data-sort="${esc(key)}" title="מיון לפי ${esc(label)}">${esc(label)}${arrow}</th>` : `<th>${esc(label)}</th>`;
+  }).join('');
+  box.innerHTML = `<table class="tt-table tt-review-table"><thead><tr>${head}</tr></thead><tbody>${messagesSortedRows().map(messagesRowHtml).join('')}</tbody></table>`;
   box.querySelectorAll('select.tt-decision').forEach((sel) => {
     sel.addEventListener('change', () => {
       const tr = sel.closest('tr');
@@ -157,6 +174,13 @@ function messagesRenderReview() {
 
 // לחיצה על גוף ההודעה פותחת/סוגרת את הנוסח המלא מתחת לשורה (האצלה: הטבלה נבנית מחדש בכל רענון).
 function messagesOnReviewClick(e) {
+  const th = e.target && e.target.closest ? e.target.closest('th[data-sort]') : null;
+  if (th) {
+    const key = th.getAttribute('data-sort');
+    msgSort = { key, dir: msgSort && msgSort.key === key && msgSort.dir === 'asc' ? 'desc' : 'asc' };
+    messagesRenderReview();
+    return;
+  }
   const td = e.target && e.target.closest ? e.target.closest('td.tt-body-cell') : null;
   if (!td) return;
   const tr = td.closest('tr.tt-review-row');
@@ -301,6 +325,7 @@ function messagesClearTable() {
   msgRows = [];
   msgDecisions = new Map();
   msgExpanded = new Set();
+  msgSort = null;
   const f = $el(`${MP}-filter`);
   if (f) f.value = '';
   messagesRenderReview();
@@ -318,6 +343,7 @@ function messagesNewScan() {
   msgRows = [];
   msgDecisions = new Map();
   msgExpanded = new Set();
+  msgSort = null;
   const f = $el(`${MP}-filter`);
   if (f) f.value = '';
   messagesRenderResults();
