@@ -1,15 +1,38 @@
 // ==UserScript==
 // @name         תלמוד - קליטת תלמידים
 // @namespace    http://tampermonkey.net/
-// @version      3.2
-// @description  עיבוד אוטומטי של קליטת תלמידים במערכת תלמוד - talmud.edu.gov.il
+// @version      3.2.1
+// @description  [הופסק 1.11.2026, יוסר 1.3.2027; עברו ל"תלמוד - כלי אוטומציה"] עיבוד אוטומטי של קליטת תלמידים במערכת תלמוד - talmud.edu.gov.il
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
 // @grant        none
+// @updateURL    https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/archive/%D7%AA%D7%9C%D7%9E%D7%95%D7%93%20-%20%D7%A7%D7%9C%D7%99%D7%98%D7%AA%20%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
+// @downloadURL  https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/archive/%D7%AA%D7%9C%D7%9E%D7%95%D7%93%20-%20%D7%A7%D7%9C%D7%99%D7%98%D7%AA%20%D7%AA%D7%9C%D7%9E%D7%99%D7%93%D7%99%D7%9D.user.js
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // הופסק 1.11.2026: הסקריפט הזה הוחלף בסקריפט המאוחד "תלמוד - כלי אוטומציה" (גרסה 4) ויוסר מהמאגר ב-1.3.2027.
+  // הלוגיקה למטה לא שונתה; נוסף רק פס-הודעה בראש הדף (נסגר ללשונית הנוכחית). להתקנה: https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-tools.user.js
+  (function deprecationNotice() {
+    try {
+      if (!document.body) { document.addEventListener('DOMContentLoaded', deprecationNotice); return; }
+      if (sessionStorage.getItem('talmud.old.notice.closed') === '1' || document.getElementById('talmud-old-notice')) return;
+      const bar = document.createElement('div');
+      bar.id = 'talmud-old-notice';
+      bar.setAttribute('dir', 'rtl');
+      bar.style.cssText = 'position:fixed;top:0;right:0;left:0;z-index:2147483646;background:#fff6df;color:#4f3600;border-bottom:1px solid #ead9a8;font:14px/1.5 Arial,sans-serif;padding:6px 14px;display:flex;gap:12px;align-items:center;justify-content:center';
+      bar.innerHTML = '<span>הסקריפט הזה (<b>' + "תלמוד - קליטת תלמידים" + '</b>) הופסק ב-1.11.2026 ויוסר ב-1.3.2027. הוא עדיין עובד, אבל בלי תיקונים. הכלים עברו לסקריפט אחד, "תלמוד - כלי אוטומציה".</span>'
+        + '<a href="https://github.com/mdj441/talmud-scripts/raw/refs/heads/main/dist/talmud-tools.user.js" target="_blank" rel="noopener" style="color:#1f6f5f;font-weight:700">להתקנת הסקריפט המאוחד</a>'
+        + '<button type="button" id="talmud-old-notice-close" style="border:1px solid #ead9a8;background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer">סגור</button>';
+      document.body.appendChild(bar);
+      document.getElementById('talmud-old-notice-close').addEventListener('click', function () {
+        try { sessionStorage.setItem('talmud.old.notice.closed', '1'); } catch (e) { /* noop */ }
+        bar.remove();
+      });
+    } catch (e) { /* ההודעה לא חוסמת את הסקריפט */ }
+  })();
 
   const BASE = 'ContentPlaceHolder1_tabStudyTypeDetails_StudentList_ucStudentsSearchDetails';
 
