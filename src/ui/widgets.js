@@ -60,6 +60,20 @@ export function setStep(id, current) {
   });
 }
 
+// טהורה (4.0.2): תווית שלב כשהריצה נקטעה וממתינה להחלטה.
+export function stepLabel(label, paused) { return paused ? `${label} (מושהית)` : label; }
+
+// השלב ב-index מסומן כמושהה (null = אף אחד); התווית המקורית נשמרת ב-data-label.
+export function setStepPaused(id, index) {
+  const el = $el(id);
+  if (!el) return;
+  Array.from(el.querySelectorAll('.tt-step')).forEach((s, i) => {
+    if (s.dataset.label === undefined) s.dataset.label = s.textContent;
+    s.textContent = stepLabel(s.dataset.label, i === index);
+    s.classList.toggle('tt-step-paused', i === index);
+  });
+}
+
 // תגית-מצב (ספירה). kind: info | ok | warn | bad. ‏button=true → תגית לחיצה (סינון), עם data-filter.
 export function tagHtml({ label, kind = 'info', id = '', button = false, filter = '', active = false, disabled = false, title = '' }) {
   const cls = `tt-tag tt-tag-${kind}${active ? ' tt-tag-active' : ''}`;

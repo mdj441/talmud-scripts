@@ -6,7 +6,7 @@
 import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoStudyType, normalizeBranch, classifyUrl } from '../core/navigate.js';
+import { getPage, gotoStudyType, normalizeBranch, classifyUrl, NAV_POSTBACK_BUDGET_MS, STUDENT_RESERVE_MS, runBudgetMs } from '../core/navigate.js';
 import { holdRunLock, dropRunLock } from '../core/lock.js';
 import {
   ABSORB_STATUS, ABSORB_MAX_QUEUE_AGE_MS, makeAbsorbResult, analyzeGrid, absorbPrecheckDecision, absorbShortStatus, OTHER_INSTITUTE_RE,
@@ -26,12 +26,18 @@ import {
   absorbSetAndWait, absorbSelectOption, absorbFireElement, absorbRunClientValidation, absorbCollectValidationMessages,
   absorbActivateStudentsTab, readAbsorbGridRows, absorbSearch, absorbSearchFailReason, absorbCountGate, absorbButtonEl,
   ABSORB_SEARCH_FAILED_ACTION, ABSORB_GRID_STALE_ACTION, absorbReadAndHidePopup, absorbModalVisible,
-  absorbCloseAcceptModal, absorbNewStudentPageMatches, absorbWaitOutcome,
+  absorbCloseAcceptModal, absorbNewStudentPageMatches, absorbWaitOutcome, ABSORB_SEARCH_BUDGET_MS,
 } from './absorb-dom.js';
 
-const STUDENT_TIMEOUT_MS = 60000;
+const ABSORB_CLICK_BUDGET_MS = 20000;
 const CONFIRM_BUDGET_MS = 25000;
 const SAVE_BUDGET_MS = 30000;
+// הצעדים שעלולים לרוץ בניסיון אחד. "שמירה" של תלמיד חדש לא נספרת: היא רצה אחרי טעינת-דף, בניסיון משלה.
+export const ABSORB_STEP_BUDGETS_MS = {
+  nav: NAV_POSTBACK_BUDGET_MS, tab: NAV_POSTBACK_BUDGET_MS, search: ABSORB_SEARCH_BUDGET_MS,
+  absorbClick: ABSORB_CLICK_BUDGET_MS, confirm: CONFIRM_BUDGET_MS, verify: ABSORB_SEARCH_BUDGET_MS,
+};
+export const ABSORB_STUDENT_TIMEOUT_MS = runBudgetMs(ABSORB_STEP_BUDGETS_MS, STUDENT_RESERVE_MS);
 const NAV_WATCHDOG_MS = 12000;
 const NAVIGATED = { __navigated: true }; // ניווט מלא נורה: ההמשך אחרי טעינת הדף
 const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה: לתלמיד הבא
@@ -414,7 +420,7 @@ export async function processStudent(task, gen) {
   const absorbBtn = absorbButtonEl(); // F5: לפי סיומת btnStudentAcceptence3, לא לפי מזהה מלא
   if (!absorbBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "קליטה" לא נמצא בדף', `בדוק שיש לך הרשאת קליטה לסוג לימוד זה ושאינו "סגור"; אם יש, ${MANUAL_ABSORB_ACTION}`);
   try {
-    const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: ABSORB_CLICK_BUDGET_MS });
     if (!click.ok) log(`[קליטה] postback לא תקין: ${click.reason}`);
     await sleepCheckStop(300, gen);
 
@@ -579,7 +585,7 @@ export async function processStudentSafe(task) {
   const myIdx = S.curIdx;
   const errResult = (detail) => makeAbsorbResult(task, ABSORB_STATUS.ERROR, detail, manualRowAction());
   try {
-    return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
+    return await withTimeout(processStudent(task, absorbNextGeneration()), ABSORB_STUDENT_TIMEOUT_MS);
   } catch (err) {
     if (isAbsorbStopError(err)) throw err;
     absorbNextGeneration();
@@ -590,7 +596,7 @@ export async function processStudentSafe(task) {
     try {
       await sleep(1000);
       log(`[ניסיון 2] ${maskId(task.identity)}`);
-      return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
+      return await withTimeout(processStudent(task, absorbNextGeneration()), ABSORB_STUDENT_TIMEOUT_MS);
     } catch (err2) {
       if (isAbsorbStopError(err2)) throw err2;
       log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message}: מדלגים`);

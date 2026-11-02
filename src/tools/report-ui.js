@@ -7,7 +7,7 @@ import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { copyTextToClipboard } from '../core/csv.js';
 import { readBranchesFromTree, institutesPageUrl } from '../core/navigate.js';
-import { esc, buttonHtml, resultsTableHtml, zoneHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
+import { esc, buttonHtml, buttonsRowHtml, resultsTableHtml, zoneHtml, fitBoxHtml, bindConfirmClick, flash, setHtml, setText, show, setDisabled } from '../ui/widgets.js';
 import {
   REPORT_STATUS, reportSetHooks, reportStart, reportResumeIfPending, reportRequestStop, reportHasPendingRun,
   reportIsRunning, reportGetResults, reportBuildTsv, reportIsStuck, reportLastStepAt, reportClearState,
@@ -21,6 +21,7 @@ let reportBaseStatus = 'מוכן';
 let reportStuckTimer = null;
 let reportTotal = 0;
 let reportDone = false;
+let reportStaleInfo = null; // ריצה שנקטעה ומחכה להחלטה בדף זר (התיבה הצהובה מוצגת)
 
 const REPORT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '52px' },
@@ -46,10 +47,41 @@ function reportApplyStage() {
   const running = reportIsRunning();
   const stage = running ? 'run' : (reportRows.length ? 'results' : 'prep');
   show(`${RP}-zone-in`, stage === 'prep');
+  show(`${RP}-fit`, stage === 'prep' && !reportStaleInfo);
   show(`${RP}-zone-run`, stage === 'run');
   show(`${RP}-zone-out`, stage !== 'prep');
-  show(`${RP}-new-run`, stage === 'results');
+  show(`${RP}-new-run`, stage === 'results' && !reportStaleInfo); // "דיווח חדש" היה מוחק ריצה שעוד אפשר להמשיך
   if (reportUi) reportUi.step(reportStep());
+}
+
+// 4.0.2: תיבת "הריצה נקטעה" (כמו בקליטה ובעזיבה). "המשך" מנווט לסניף הבא; "בטל" מסמן את השאר "נעצר" ומציג את התוצאות.
+function reportRenderStale(info) {
+  reportStaleInfo = info || null;
+  reportUi.pause(info ? REPORT_STEPS.indexOf('ריצה') : null);
+  if (!info) { show(`${RP}-stale`, false); setHtml(`${RP}-stale`, ''); reportApplyStage(); return; }
+  const ageMin = info.lastAt ? Math.round((Date.now() - Number(info.lastAt)) / 60000) : null;
+  setHtml(`${RP}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(info.curIdx)} מתוך ${esc(info.total)} סניפים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. הדף הזה אינו חלק מהדיווח, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף המוסד של הסניף הבא.
+    ${buttonsRowHtml([
+      { id: `${RP}-stale-go`, label: 'המשך מהסניף הבא', kind: 'primary', size: 'small' },
+      { id: `${RP}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
+    ], 'tt-row-wrap')}`);
+  show(`${RP}-stale`, true);
+  reportApplyStage();
+  $el(`${RP}-stale-go`).addEventListener('click', () => {
+    reportRenderStale(null);
+    reportSetStatus('ממשיך את הריצה שנקטעה…');
+    Promise.resolve().then(() => reportResumeIfPending({ force: true })).then((ran) => {
+      if (ran === false && reportHasPendingRun() && !reportIsRunning()) { reportSetRunning(false); reportRenderStale(info); } // נעילה: ההודעה בשורת-המצב, התיבה חוזרת
+    }).catch((e) => {
+      log('[המשך] כשל: ' + (e && e.message));
+      reportSetRunning(false);
+      reportSetStatus('ההמשך נכשל. בדוק את היומן');
+    });
+  });
+  $el(`${RP}-stale-clear`).addEventListener('click', () => {
+    reportRenderStale(null);
+    reportRequestStop(); // ‏reportFinish → onDone: השאר "נעצר", והתוצאות מוצגות
+  });
 }
 
 function reportRenderRows() {
@@ -140,16 +172,15 @@ function reportUiMount(container, panelUi, page) {
   reportUi = panelUi;
   const branches = page && page.kind === 'institute' ? readBranchesFromTree() : [];
   const fits = !!(page && page.kind === 'institute');
-  // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד
-  container.innerHTML = fits ? `
+  // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד. 4.0.2: התיבה הצהובה, שורת-הריצה
+  // ואזור התוצאות (מוסתרים עד שצריך) בכל דף, כי ריצה שנקטעה מסתיימת או ממשיכה גם מדף זר.
+  container.innerHTML = `<div id="${RP}-stale" class="tt-box tt-box-warn" hidden></div>` + (fits ? `
     ${zoneHtml({ id: `${RP}-zone-in`, title: 'דיווח לכל הסניפים', inner: `
       <p class="tt-zone-lead">הדיווח החודשי נשלח לכל הסניפים שברשימה, אחד אחרי השני; אין בחירה חלקית. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
       <div id="${RP}-branches" class="tt-hint">${branches.length ? `ברשימה ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
-      </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' });
-  if (!fits) $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
-  if (fits) container.innerHTML += `
+      </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' })) + `
     <div class="tt-runline" id="${RP}-zone-run" hidden><span class="tt-runtext" id="${RP}-runtext">דיווח בריצה</span>${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
     ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${RP}-new-run`, label: 'דיווח חדש', kind: 'newlist', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' }), inner: `
       <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
@@ -164,10 +195,10 @@ function reportUiMount(container, panelUi, page) {
         reportSetStatus('ההרצה נכשלה. בדוק את היומן ונסה שוב');
       });
     });
-    $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
-    $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
-    bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
-  }
+  } else $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
+  $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
+  $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+  bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
 
   reportSetHooks({
     onStart: (list, idx) => { reportTotal = list.length; reportSetRunning(true); reportUi.progress(idx, reportTotal); },
@@ -182,6 +213,12 @@ function reportUiMount(container, panelUi, page) {
     },
     onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); setText(`${RP}-runtext`, `דיווח בריצה · סניף ${branch} (${idx + 1} מתוך ${total})`); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
     onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
+    onStaleQueue: (info) => {
+      reportRenderStale(info);
+      reportSetRunning(false);
+      reportSetStatus('יש ריצת דיווח שנקטעה, אך הדף הזה אינו חלק מהדיווח. בחר "המשך" או "בטל"');
+      reportUi.open();
+    },
     onLocked: (msg) => { reportSetRunning(false); reportSetStatus(msg); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {

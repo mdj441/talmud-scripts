@@ -11,7 +11,7 @@ import { firePostback, waitPRM } from '../core/prm.js';
 import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
 import { padId9 } from '../core/identity.js';
-import { getPage, gotoInstitute, normalizeBranch, parsePostbackHref } from '../core/navigate.js';
+import { getPage, gotoInstitute, normalizeBranch, parsePostbackHref, STUDENT_RESERVE_MS, runBudgetMs } from '../core/navigate.js';
 import { holdRunLock, dropRunLock } from '../core/lock.js';
 import { dateTodayDMY, dateIsValidDMY } from '../core/dates.js';
 
@@ -277,7 +277,16 @@ const DEPART_CANCEL_PREFIX = '__DEPART_CANCELLED__@';
 const DEPART_LOCK_TOOL = 'depart';
 export const DEPART_MAX_LANDINGS = 6; // טעינות-דף לתלמיד אחד; מעל זה "דולג"
 export const DEPART_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // תור שמור ישן מזה לא ממשיך לבד
-const DEPART_STUDENT_TIMEOUT_MS = 60000;
+const DEPART_TAB_BUDGET_MS = 25000;
+const DEPART_POSTBACK_BUDGET_MS = 20000;
+const DEPART_ROW_BUDGET_MS = 12000;
+const DEPART_CONTINUE_BUDGET_MS = 15000;
+// הצעדים שעלולים לרוץ בניסיון אחד. הניווט לסניף לא נספר: הוא רץ לפני הניסיון (departEnsureBranch).
+export const DEPART_STEP_BUDGETS_MS = {
+  tab: DEPART_TAB_BUDGET_MS, search: DEPART_POSTBACK_BUDGET_MS, selectRow: DEPART_ROW_BUDGET_MS, departClick: DEPART_POSTBACK_BUDGET_MS,
+  confirm: DEPART_POSTBACK_BUDGET_MS, softContinue: DEPART_CONTINUE_BUDGET_MS, save: DEPART_POSTBACK_BUDGET_MS, verify: DEPART_POSTBACK_BUDGET_MS,
+};
+export const DEPART_STUDENT_TIMEOUT_MS = runBudgetMs(DEPART_STEP_BUDGETS_MS, STUDENT_RESERVE_MS);
 const DEPART_NAV_WAIT_MS = 12000;
 const DEPART_POPUP_HIDE_MS = 5000;
 const DEPART_FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
@@ -304,7 +313,7 @@ function departIsStopError(err) { return !!err && typeof err.message === 'string
 function departCancelError(where) { return new Error(DEPART_CANCEL_PREFIX + where); }
 export function departIsCancelError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_CANCEL_PREFIX) === 0; }
 
-// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו (60 שניות) ממשיך לחיות ברקע ועלול לגעת
+// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו ממשיך לחיות ברקע ועלול לגעת
 // בדף בזמן שהתלמיד הבא רץ (למשל לחיצת "שמירה" מאוחרת, או חיפוש-אימות שמחליף את הגריד של הבא). לכן לכל
 // ניסיון יש "דור"; timeout מקדם את הדור, והניסיון הישן מת בנקודת-הבדיקה הבאה (לפני כל צעד שנוגע באתר).
 let departGeneration = 0;
@@ -408,7 +417,7 @@ async function departActivateStudentsTab() {
     try { active = tabs.get_activeTabIndex(); } catch (e) { /* ignore */ }
     if (active !== DEPART_TAB_INDEX) {
       log('[לשונית] מעבר ללשונית "תלמידים למוסד"');
-      const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 25000 });
+      const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: DEPART_TAB_BUDGET_MS });
       setTimeout(() => { try { tabs.set_activeTabIndex(DEPART_TAB_INDEX); } catch (e) { log('[לשונית] שגיאה במעבר לשונית: ' + (e && e.message)); } }, 0);
       const res = await wait;
       if (res && res.ok === false) log(`[לשונית] ה-postback של הלשונית נכשל: ${res.reason}`);
@@ -443,7 +452,7 @@ async function departSearch(identity) {
   const cl = $el(DEPART_IDS.countLabel);
   if (cl) cl.textContent = '';
   await departSetAndWait(input, identity);
-  const res = await departFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const res = await departFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
   let settled = true;
   try {
     await waitFor(() => {
@@ -501,9 +510,9 @@ async function departSelectFirstActiveRow() {
   const cbPb = departParsePostback(cb.getAttribute('onclick') || '');
   if (cbPb && cbPb.target) {
     cb.checked = true;
-    await firePostback(cbPb.target, cbPb.arg, { startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+    await firePostback(cbPb.target, cbPb.arg, { startTimeoutMs: 2000, totalTimeoutMs: DEPART_ROW_BUDGET_MS });
   } else if (!cb.checked) {
-    const wait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+    const wait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: DEPART_ROW_BUDGET_MS });
     setTimeout(() => { try { cb.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
     await wait;
   }
@@ -554,7 +563,7 @@ async function departClickContinue(popup) {
   log(`[אישור] חלונית אישור-רך: "${maskIdsInText(popup.text)}" · כפתורים=[${buttons}] → לוחצים "המשך" (כמו הסקריפט הישן)`);
   const btn = $el('ucMessagePopUp_btnMOK');
   if (!btn) { log('[אישור] כפתור "המשך" לא נמצא'); return { ok: false }; }
-  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 });
+  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: DEPART_CONTINUE_BUDGET_MS });
   setTimeout(() => { try { btn.click(); } catch (e) { log('[אישור] לחיצת "המשך" נכשלה: ' + (e && e.message)); } }, 0);
   const res = await wait;
   await sleep(200);
@@ -594,7 +603,7 @@ async function departProcessStudent(task, gen) {
   // שלב 5: "עזיבה" (postback דרך ה-href, בלי eval)
   const deptBtn = $el(DEPART_IDS.deptBtn);
   if (!deptBtn) return mk(DEPART_STATUS.ERROR, 'כפתור "עזיבה" לא נמצא', DEPART_ACTIONS.error);
-  const dres = await departFireElement(deptBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const dres = await departFireElement(deptBtn, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
   if (dres && dres.ok === false) log(`[עזיבה] postback לא תקין: ${dres.reason}`);
 
   // שלב 6: המודאל נפתח?
@@ -634,7 +643,7 @@ async function departProcessStudent(task, gen) {
     const confirmEl = $el(DEPART_IDS.confirmBtn);
     if (!confirmEl) return mk(DEPART_STATUS.ERROR, 'כפתור "אישור" במודאל לא נמצא', DEPART_ACTIONS.error);
     departCheckStop('before-confirm', gen);
-    const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
     if (cres && cres.validationFailed) return mk(DEPART_STATUS.ERROR, 'ולידציה בחלון העזיבה נכשלה (תאריך או סיבה)', 'בדוק את תאריך העזיבה (DD/MM/YYYY) ואת הסיבה והרץ שוב');
     await sleep(300);
 
@@ -666,7 +675,7 @@ async function departProcessStudent(task, gen) {
     if (!saveEl) return mk(DEPART_STATUS.ERROR, 'כפתור "שמירה" לא נמצא', DEPART_ACTIONS.unverified);
     if (departIsCancelled(gen)) throw departCancelError('before-save'); // ניסיון שהוחלף לא שומר (עצירה רגילה: רק לפני התלמיד הבא)
     log(`[שמירה] class="${saveEl.className}" disabled=${saveEl.getAttribute('disabled')}`);
-    const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
     if (sres && sres.ok === false) log(`[שמירה] postback לא תקין: ${sres.reason}`);
     await sleep(300);
 

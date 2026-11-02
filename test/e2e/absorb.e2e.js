@@ -187,6 +187,11 @@ describe('קליטת תלמידים — סביבת דמה', () => {
       assert.match(await page.textContent('#tt-absorb-status'), /ממתין להשלמה/, 'שורת-המצב אומרת מה חסר');
       assert.match(await page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="0"]'), /תלמיד חדש: חסרים פרטים/, '"מה קרה" מתחת לשורה בטבלת-התיקון');
       assert.match(await page.textContent('#tt-absorb-grid tr.tt-rowmsg[data-msg="0"]'), /אם מדובר בדרכון/, '"מה לעשות" מתחת לשורה');
+      // 4.0.2: השדות שההודעה מצביעה עליהם ("חסר: שם פרטי, שם משפחה, תאריך לידה") צבועים; השאר לא
+      const flagged = () => page.$$eval('#tt-absorb-grid .tt-cell-flag', (els) => els.map((e) => (e.matches('input,select') ? e.dataset.k : e.querySelector('[data-k]').dataset.k)).sort());
+      assert.deepEqual(await flagged(), ['birthDate', 'firstName', 'lastName']);
+      assert.ok(await page.$('#tt-absorb-grid td.tt-cell-birthDate.tt-cell-flag'), 'התא של תאריך הלידה צבוע');
+      assert.ok(await page.$('#tt-absorb-grid tr.tt-sub input[data-k="firstName"].tt-cell-flag'), 'שם פרטי בשורת-הפרטים צבוע');
       assert.equal(await page.$eval('#tt-absorb-zone-out', (el) => el.hidden), true, 'בשלב התיקון טבלת-התוצאות לא מוצגת');
       assert.equal(await page.$eval('#tt-absorb-zone-in-title', (el) => el.textContent.trim()), 'תיקון והרצה חוזרת');
       assert.match(await page.textContent('#tt-absorb-start'), /התחל קליטה חוזרת: תלמיד אחד/);
@@ -476,10 +481,16 @@ describe('קליטת תלמידים: ממצאי הביקורת', () => {
       assert.match(box, /0 מתוך 2/, `התיבה: "${box}"`);
       assert.ok(await page.$('#tt-absorb-stale-go'), 'כפתור המשך');
       assert.ok(await page.$('#tt-absorb-stale-clear'), 'כפתור נקה');
+      // 4.0.2: סרגל-השלבים אומר "ריצה (מושהית)", לא "הכנה"
+      const stepOn = () => page.$eval('#tt-absorb-steps .tt-step-on', (el) => el.textContent.trim());
+      assert.equal(await stepOn(), 'ריצה (מושהית)');
+      assert.ok(await page.$('#tt-absorb-steps .tt-step-on.tt-step-paused'), 'השלב מודגש כמושהה');
       // "נקה" מוחק את התור
       await page.click('#tt-absorb-stale-clear');
       const saved = await page.evaluate(() => sessionStorage.getItem('talmud.absorb.queue'));
       assert.equal(saved, null);
+      assert.equal(await stepOn(), 'הכנה', 'אחרי הביטול הסרגל חוזר להכנה');
+      assert.deepEqual(await page.$$eval('#tt-absorb-steps .tt-step', (els) => els.map((e) => e.textContent.trim())), ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת'], 'התווית חזרה');
     } finally { await context.close(); }
   });
 });

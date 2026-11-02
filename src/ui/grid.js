@@ -147,6 +147,12 @@ export function createGrid(cfg) {
       }
       if (sub) sub.hidden = blank || !(cfg.subOpen && cfg.subOpen(row));
       if (cfg.refreshRow) cfg.refreshRow(tr, sub, row, i);
+      // 4.0.2: השדות שהודעת האתר מצביעה עליהם נצבעים: התא בשורה הראשית, השדה עצמו בשורת-הפרטים
+      const flagged = note && Array.isArray(note.fields) ? note.fields : [];
+      for (const scope of [tr, sub]) {
+        if (!scope) continue;
+        scope.querySelectorAll('[data-k]').forEach((el) => { (el.closest('td.tt-cell') || el).classList.toggle('tt-cell-flag', flagged.includes(el.dataset.k)); });
+      }
       // השורה שעורכים עכשיו לא נעלמת באמצע ההקלדה כשהיא מפסיקה להתאים לתגית (ביקורת 2.11)
       const visible = gridRowMatchesFilter(st.filter, level, blank) || !!(active && tr.contains(active));
       tr.hidden = !visible;

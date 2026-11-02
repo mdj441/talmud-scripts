@@ -2,7 +2,7 @@
 // טעינות-דף (ניווט בין סניפים) וממשיכה אחרי כל טעינה. הרצה: npm run build && node --test "test/e2e/report.e2e.js"
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { launch, openSession, readMockDb, readUserscript, URLS, sleep } from './harness.js';
+import { launch, openSession, readMockDb, readUserscript, URLS, SITE, sleep } from './harness.js';
 
 const SEL = {
   panel: '#tt-panel',
@@ -72,6 +72,31 @@ async function waitForRows(page, n, timeoutMs = 60000) {
 
 async function readLog(page) {
   return evalPatient(page, () => { const el = document.querySelector('#tt-log'); return el ? el.textContent : ''; });
+}
+
+// 4.0.2: ריצה שנקטעה אחרי סניף 00 (נשלח) ונפתח דף ההודעות: התיבה מוצגת, בלי ניווט ובלי שליחה
+async function openInterruptedOnMessages(page) {
+  await page.goto(`${SITE}/`);
+  await page.evaluate((k) => sessionStorage.setItem(k, JSON.stringify({
+    running: true, branches: ['00', '05', '16'], curIdx: 1, results: [{ branch: '00', status: 'נשלח', detail: '', action: '' }],
+    stop: false, landings: null, pendingSend: null, startedAt: new Date().toISOString(), lastStepAt: Date.now(),
+  })), STATE_KEY);
+  await page.goto(URLS.messages());
+  await page.waitForSelector(SEL.panel, { timeout: 10000 });
+  await page.waitForSelector('#tt-report-stale:not([hidden])', { timeout: 5000 });
+  await sleep(2500); // דיווח שממשיך לבד היה כבר מנווט
+  assert.match(page.url(), /Association\/Default\.aspx/, 'הדיווח ניווט לבד מדף ההודעות');
+  const box = await page.$eval('#tt-report-stale', (el) => el.innerText);
+  assert.match(box, /הריצה נקטעה/, box);
+  assert.match(box, /1 מתוך 3 סניפים/, box);
+  assert.match(box, /הדף הזה אינו חלק מהדיווח/, box);
+  assert.equal(await page.textContent('#tt-report-stale-go'), 'המשך מהסניף הבא');
+  assert.equal(await page.textContent('#tt-report-stale-clear'), 'בטל את השאר');
+  assert.equal(await page.$eval('#tt-report-steps .tt-step-on', (el) => el.textContent.trim()), 'ריצה (מושהית)');
+  assert.equal(await page.$eval('#tt-report-fit', (el) => el.hidden), true, 'תיבת "עבור לדף המוסדות" מוסתרת כשיש החלטה פתוחה');
+  assert.equal(await page.$eval('#tt-report-new-run', (el) => el.hidden), true, '"דיווח חדש" לא מוצג: היה מוחק ריצה שאפשר להמשיך');
+  assert.equal(await page.$eval('#tt-report-zone-run', (el) => el.hidden), true, 'לא נראה כריצה פעילה');
+  assert.equal((await readMockDb(page)).log.filter((l) => /monthly report sent/.test(l)).length, 0, 'נשלח דיווח בלי "המשך"');
 }
 
 // דף מוסד → לשונית "דיווח חודשי" → "התחל"
@@ -207,6 +232,49 @@ describe('דיווח חודשי: סביבת דמה', () => {
       assert.match(logText, /סניף 05: .*לא מאושר לדיווח/, logText);
       const db = await readMockDb(page);
       assert.notEqual(db.reported['4200'], true, 'סניף 05 לא היה אמור להישלח');
+    } finally { await context.close(); }
+  });
+
+  test('6. ריצה שנקטעה + דף ההודעות → תיבת "הריצה נקטעה" בלי ניווט; "המשך מהסניף הבא" עובר לסניף ומשלים', async () => {
+    const { context, page, consoleLines } = await openSession(browser, { script });
+    try {
+      await openInterruptedOnMessages(page);
+      await page.click('#tt-report-stale-go');
+      const done = await waitForReportDone(page, 120000);
+      const rows = await readReportRows(page);
+      const logText = await readLog(page);
+      assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'נשלח'], ['16', 'נשלח']], logText);
+      assert.match(done.status, /נשלחו 3, דולגו 0, שגיאות 0/);
+      const db = await readMockDb(page);
+      assert.deepEqual([db.reported['4200'], db.reported['4159']], [true, true]);
+      assert.equal(db.log.filter((l) => /monthly report sent/.test(l)).length, 2, 'סניף 00 נשלח לפני הקטיעה: לא שולחים שוב');
+      assert.equal(await page.$eval('#tt-report-steps .tt-step-on', (el) => el.textContent.trim()), 'תוצאות');
+      assert.deepEqual(await page.$$eval('#tt-report-steps .tt-step', (els) => els.map((e) => e.textContent.trim())), ['הכנה', 'ריצה', 'תוצאות'], 'התווית חזרה');
+      assert.equal(await evalPatient(page, (k) => sessionStorage.getItem(k), STATE_KEY), null);
+      assert.equal(consoleLines.filter((l) => l.startsWith('PAGEERROR')).length, 0, consoleLines.join('\n'));
+    } finally { await context.close(); }
+  });
+
+  test('7. ריצה שנקטעה + דף ההודעות → "בטל את השאר": השאר "נעצר", התוצאות מוצגות, ואין שליחה', async () => {
+    const { context, page } = await openSession(browser, { script });
+    try {
+      await openInterruptedOnMessages(page);
+      await page.click('#tt-report-stale-clear');
+      const done = await waitForReportDone(page, 5000);
+      const rows = await readReportRows(page);
+      assert.deepEqual(rows.map((r) => [r.branch, r.status]), [['00', 'נשלח'], ['05', 'נעצר'], ['16', 'נעצר']]);
+      assert.match(done.status, /נשלחו 1, דולגו 0, שגיאות 0, נעצרו 2/);
+      assert.match(done.reportText, /מה נשאר לעשות/);
+      assert.match(page.url(), /Association\/Default\.aspx/, 'הביטול לא מנווט');
+      assert.equal(await page.$eval('#tt-report-stale', (el) => el.hidden), true);
+      assert.equal(await evalPatient(page, (k) => sessionStorage.getItem(k), STATE_KEY), null);
+      const db = await readMockDb(page);
+      assert.equal(db.log.filter((l) => /monthly report sent/.test(l)).length, 0);
+      // "דיווח חדש" חוזר לתיבת-ההתאמה של הדף הזה
+      await page.click('#tt-report-new-run');
+      await page.click('#tt-report-new-run');
+      assert.equal(await page.$eval('#tt-report-fit', (el) => el.hidden), false);
+      assert.equal(await page.$eval('#tt-report-zone-out', (el) => el.hidden), true);
     } finally { await context.close(); }
   });
 });

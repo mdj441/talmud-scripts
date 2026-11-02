@@ -57,6 +57,7 @@ const FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
 const SELECT_WAIT = { startTimeoutMs: 1000, totalTimeoutMs: 10000 };
 const POPUP_HIDE_MS = 5000;
 const STALE_ATTR = 'data-absorb-stale';
+export const ABSORB_SEARCH_BUDGET_MS = 20000;
 
 // כתיבה לשדה = פוטנציאלית postback (AutoPostBack). רושמים המתנה קודם, כותבים מ-setTimeout(0).
 export function absorbSetAndWait(el, value, opts) {
@@ -190,7 +191,7 @@ async function searchOnce(input, btn, value, gen) {
   markStale($el(ABSORB_IDS.countLabel));
   await absorbSetAndWait(input, value);
   await sleepCheckStop(120, gen);
-  const res = await absorbFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const res = await absorbFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: ABSORB_SEARCH_BUDGET_MS });
   await sleepCheckStop(250, gen);
   const countText = readCountText();
   const count = absorbParseCount(countText);

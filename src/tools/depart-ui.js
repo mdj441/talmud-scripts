@@ -245,6 +245,7 @@ function departOnResultsClick(e) {
 }
 
 function departRenderStaleQueue(info) {
+  departUi.pause(info ? DEPART_STAGE_INDEX.run : null);
   if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה

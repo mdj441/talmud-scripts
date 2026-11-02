@@ -16,7 +16,7 @@ import { loadXlsxFile } from './absorb-xlsx.js';
 import {
   ABSORB_TEMPLATE_HEADER, isAbsorbSuccess, absorbStatusKey, absorbResultKind, absorbSummarizeKinds,
   absorbIsOtherInstituteBlock, absorbNormalizeId, buildResultsTsv, buildResultsCsvRows, absorbRowsNeedingAttention,
-  absorbIsValidDate,
+  absorbIsValidDate, absorbFieldsFromMessage,
 } from './absorb-report.js';
 
 // סבב רטוב 1.11.2026 (קטן): שלב "תיקון" שורד טעינת-דף (הדגל ב-sessionStorage; השורות נבנות מחדש מהתוצאות)
@@ -474,6 +474,7 @@ function onResultsClick(e) {
 
 // תיבת "הריצה נקטעה": תור ישן (מעל 30 דקות) או דף זר (ממצא 11). "המשך" מכריח המשך; "בטל" מסמן את השאר "נעצר".
 function renderStaleQueue(info) {
+  ui.pause(info ? STAGE_INDEX.run : null);
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
@@ -585,7 +586,7 @@ function fixAndRerun() {
   grid.setNotes((row) => {
     const res = byKey.get(rowKey(row.fields));
     if (!res) return null;
-    return { kind: classify(res) === 'bad' ? 'bad' : 'warn', text: `${res.status}. ${res.action || ''}`.trim() };
+    return { kind: classify(res) === 'bad' ? 'bad' : 'warn', text: `${res.status}. ${res.action || ''}`.trim(), fields: absorbFieldsFromMessage(`${res.status} ${res.detail || ''}`) };
   });
   awaitingErrorConfirm = false;
   setStage('fix');

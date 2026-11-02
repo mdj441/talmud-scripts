@@ -192,4 +192,22 @@ describe('עזיבת תלמידים - סביבת דמה', () => {
       assert.equal(db.enrolled['10002'].find((s) => s.id === '023456789').left, '01/09/2026');
     } finally { await context.close(); }
   });
+
+  test('7 (4.0.2) תור עזיבה + דף ההודעות → תיבת "הריצה נקטעה"; סרגל-השלבים "ריצה (מושהית)"; "בטל" מחזיר ל"הכנה"', async () => {
+    const { context, page } = await session();
+    try {
+      await page.goto(URLS.messages());
+      const now = new Date().toISOString();
+      await page.evaluate((st) => sessionStorage.setItem('talmud.depart.queue', JSON.stringify(st)), {
+        queue: [{ line: 2, branch: '00', idType: 'tz', identity: '023456789' }], results: [], curIdx: 0, startedAt: now, savedAt: now, settings: { leaveDate: '', leaveReason: '1' },
+      });
+      await page.reload();
+      await page.waitForSelector('#tt-depart-stale:not([hidden])', { timeout: 10000 });
+      const stepOn = () => page.$eval('#tt-depart-steps .tt-step-on', (el) => el.textContent.trim());
+      assert.equal(await stepOn(), 'ריצה (מושהית)');
+      await page.click('#tt-depart-stale-clear');
+      assert.equal(await stepOn(), 'הכנה');
+      assert.deepEqual(await page.$$eval('#tt-depart-steps .tt-step', (els) => els.map((e) => e.textContent.trim())), ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת']);
+    } finally { await context.close(); }
+  });
 });

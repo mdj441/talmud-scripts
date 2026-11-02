@@ -1,6 +1,6 @@
 // השלד המאוחד: כפתור צף (הלוגו) + מגירה אחת, צמודה לשמאל כברירת-מחדל (ניתן להעביר לימין; הצד נזכר),
 // עם לשוניות לכל הכלים. כל כלי נרשם עם registerTool({ id, title, pages, steps, mount, onStop, isRunning, hasPendingRun }).
-// ‏mount(container, ui, page) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), step(i), open() }.
+// ‏mount(container, ui, page) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), step(i), pause(i|null), open() }.
 // Escape → onStop של הלשונית הפעילה (רק כשהיא רצה). אין גישה ל-document ברמת המודול.
 //
 // עיצוב (30.10.2026, שכבת-הבהירות 1.11.2026): כלי-עבודה שקט בתוך אתר ממשלתי כחול-אפור. משפחת-גופן אחת (של
@@ -9,7 +9,7 @@
 
 import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
-import { esc, logSectionHtml, bindLogSection, stepsHtml, setStep } from './widgets.js';
+import { esc, logSectionHtml, bindLogSection, stepsHtml, setStep, setStepPaused } from './widgets.js';
 import { LOGO_DATA_URI } from './logo.js';
 
 export const PANEL_VERSION = '4.0';
@@ -94,6 +94,8 @@ export const PANEL_CSS = `
 .tt-step:first-child::after{display:none}
 .tt-step-on{color:var(--tt-accent);font-weight:700}
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
+.tt-step-paused{color:var(--tt-warn)}
+.tt-step-paused::before{background:var(--tt-warn);border-color:var(--tt-warn)}
 .tt-step-done{color:var(--tt-ink-2)}
 .tt-step-done::before{content:"✓";background:var(--tt-accent-soft);border-color:var(--tt-accent);color:var(--tt-accent)}
 .tt-strip-row{display:flex;align-items:center;gap:12px;min-height:22px}
@@ -240,6 +242,9 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-cell-off{background:#f4f5f6}
 .tt-cell-off .tt-input{background:transparent;border-color:transparent}
 .tt-input.tt-need{border-color:var(--tt-bad);background:#fff}
+/* 4.0.2: השדה שהודעת האתר מצביעה עליו ב"תקן והרץ שוב" */
+.tt-grid-input tr td.tt-cell-flag{background:#f6d5d0}
+.tt-grid-input td.tt-cell-flag .tt-input,.tt-grid-input td.tt-cell-flag .tt-select,.tt-grid-input .tt-sub-row .tt-cell-flag{border-color:var(--tt-bad);box-shadow:inset 0 0 0 1px var(--tt-bad);background:#fff}
 .tt-grid-input .tt-newbtn{white-space:nowrap}
 .tt-grid-input .tt-newbtn.tt-newbtn-on{color:var(--tt-ok);text-decoration:none;font-weight:600}
 
@@ -297,6 +302,8 @@ export function initialTabFor(list, page, savedId) {
 }
 
 function makeUi(tool) {
+  let lastStep = 0;
+  let pausedStep = null;
   return {
     status(msg) { const el = $el(`tt-${tool.id}-status`); if (el) el.textContent = msg == null ? '' : String(msg); },
     progress(cur, total) {
@@ -312,7 +319,13 @@ function makeUi(tool) {
       if (tab) { const dot = tab.querySelector('.tt-dot'); if (dot) dot.hidden = !on; }
     },
     // סרגל-השלבים של הלשונית: i = השלב הנוכחי (0-based); כל מה שלפניו מסומן ✓
-    step(i) { setStep(`tt-${tool.id}-steps`, i); },
+    step(i) { lastStep = i; setStep(`tt-${tool.id}-steps`, pausedStep === null ? i : pausedStep); },
+    // 4.0.2: ריצה שנקטעה (התיבה הצהובה מוצגת): השלב i מודגש כ"(מושהית)" וגובר על step עד pause(null)
+    pause(i) {
+      pausedStep = typeof i === 'number' ? i : null;
+      setStepPaused(`tt-${tool.id}-steps`, pausedStep);
+      setStep(`tt-${tool.id}-steps`, pausedStep === null ? lastStep : pausedStep);
+    },
     open() { openPanel(true); activateTab(tool.id); },
   };
 }

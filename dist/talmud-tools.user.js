@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         תלמוד - כלי אוטומציה
 // @namespace    https://github.com/mdj441/talmud-scripts
-// @version      4.0.1
+// @version      4.0.2
 // @description  קליטה, עזיבה, הודעות ודיווח חודשי לתלמו"ד בסקריפט אחד (v4.0)
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
@@ -314,6 +314,12 @@ const INSTITUTES_PAGE_PATH = '/Institutes/InstitutesDetails.aspx';
 // ממצא ב-2: תקציב לפוסטבק שמנווט (עריכה בגריד, עץ, לשונית). כשהתשובה היא pageRedirect אין endRequest,
 // ושרת איטי מעבר ל-8 שניות גרם ל-{ok:false} ולסימון התלמיד "שגיאה" רגע לפני שהדף נפרק.
 const NAV_POSTBACK_BUDGET_MS = 25000;
+// תקציב לתלמיד (4.0.2): הגבול הכולל נגזר מסכום תקציבי-הצעדים ועוד רזרבה להמתנות הקטנות שביניהם. גבול קטן מהסכום (היה
+// 60 שניות) סימן בשרת איטי "תהליך תקוע" לפני שצעד כלשהו נכשל, ובלי לומר איזה.
+const STUDENT_RESERVE_MS = 15000;
+function runBudgetMs(stepBudgets, reserveMs) {
+  return Object.values(stepBudgets || {}).reduce((total, ms) => total + ms, 0) + reserveMs;
+}
 
 // ─── כתובות ─────────────────────────────────────────────────────────────────
 
@@ -815,6 +821,20 @@ function setStep(id, current) {
   });
 }
 
+// טהורה (4.0.2): תווית שלב כשהריצה נקטעה וממתינה להחלטה.
+function stepLabel(label, paused) { return paused ? `${label} (מושהית)` : label; }
+
+// השלב ב-index מסומן כמושהה (null = אף אחד); התווית המקורית נשמרת ב-data-label.
+function setStepPaused(id, index) {
+  const el = $el(id);
+  if (!el) return;
+  Array.from(el.querySelectorAll('.tt-step')).forEach((s, i) => {
+    if (s.dataset.label === undefined) s.dataset.label = s.textContent;
+    s.textContent = stepLabel(s.dataset.label, i === index);
+    s.classList.toggle('tt-step-paused', i === index);
+  });
+}
+
 // תגית-מצב (ספירה). kind: info | ok | warn | bad. ‏button=true → תגית לחיצה (סינון), עם data-filter.
 function tagHtml({ label, kind = 'info', id = '', button = false, filter = '', active = false, disabled = false, title = '' }) {
   const cls = `tt-tag tt-tag-${kind}${active ? ' tt-tag-active' : ''}`;
@@ -995,7 +1015,7 @@ const LOGO_DATA_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAaQAAAGkCAI
 // ─── src/ui/panel.js ───
 // השלד המאוחד: כפתור צף (הלוגו) + מגירה אחת, צמודה לשמאל כברירת-מחדל (ניתן להעביר לימין; הצד נזכר),
 // עם לשוניות לכל הכלים. כל כלי נרשם עם registerTool({ id, title, pages, steps, mount, onStop, isRunning, hasPendingRun }).
-// ‏mount(container, ui, page) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), step(i), open() }.
+// ‏mount(container, ui, page) מרנדר את הלשונית; ui = { status(msg), progress(cur,total), running(bool), step(i), pause(i|null), open() }.
 // Escape → onStop של הלשונית הפעילה (רק כשהיא רצה). אין גישה ל-document ברמת המודול.
 //
 // עיצוב (30.10.2026, שכבת-הבהירות 1.11.2026): כלי-עבודה שקט בתוך אתר ממשלתי כחול-אפור. משפחת-גופן אחת (של
@@ -1085,6 +1105,8 @@ const PANEL_CSS = `
 .tt-step:first-child::after{display:none}
 .tt-step-on{color:var(--tt-accent);font-weight:700}
 .tt-step-on::before{background:var(--tt-accent);border-color:var(--tt-accent);color:#fff}
+.tt-step-paused{color:var(--tt-warn)}
+.tt-step-paused::before{background:var(--tt-warn);border-color:var(--tt-warn)}
 .tt-step-done{color:var(--tt-ink-2)}
 .tt-step-done::before{content:"✓";background:var(--tt-accent-soft);border-color:var(--tt-accent);color:var(--tt-accent)}
 .tt-strip-row{display:flex;align-items:center;gap:12px;min-height:22px}
@@ -1231,6 +1253,9 @@ button.tt-tag:disabled{opacity:.5;cursor:default}
 .tt-cell-off{background:#f4f5f6}
 .tt-cell-off .tt-input{background:transparent;border-color:transparent}
 .tt-input.tt-need{border-color:var(--tt-bad);background:#fff}
+/* 4.0.2: השדה שהודעת האתר מצביעה עליו ב"תקן והרץ שוב" */
+.tt-grid-input tr td.tt-cell-flag{background:#f6d5d0}
+.tt-grid-input td.tt-cell-flag .tt-input,.tt-grid-input td.tt-cell-flag .tt-select,.tt-grid-input .tt-sub-row .tt-cell-flag{border-color:var(--tt-bad);box-shadow:inset 0 0 0 1px var(--tt-bad);background:#fff}
 .tt-grid-input .tt-newbtn{white-space:nowrap}
 .tt-grid-input .tt-newbtn.tt-newbtn-on{color:var(--tt-ok);text-decoration:none;font-weight:600}
 
@@ -1288,6 +1313,8 @@ function initialTabFor(list, page, savedId) {
 }
 
 function makeUi(tool) {
+  let lastStep = 0;
+  let pausedStep = null;
   return {
     status(msg) { const el = $el(`tt-${tool.id}-status`); if (el) el.textContent = msg == null ? '' : String(msg); },
     progress(cur, total) {
@@ -1303,7 +1330,13 @@ function makeUi(tool) {
       if (tab) { const dot = tab.querySelector('.tt-dot'); if (dot) dot.hidden = !on; }
     },
     // סרגל-השלבים של הלשונית: i = השלב הנוכחי (0-based); כל מה שלפניו מסומן ✓
-    step(i) { setStep(`tt-${tool.id}-steps`, i); },
+    step(i) { lastStep = i; setStep(`tt-${tool.id}-steps`, pausedStep === null ? i : pausedStep); },
+    // 4.0.2: ריצה שנקטעה (התיבה הצהובה מוצגת): השלב i מודגש כ"(מושהית)" וגובר על step עד pause(null)
+    pause(i) {
+      pausedStep = typeof i === 'number' ? i : null;
+      setStepPaused(`tt-${tool.id}-steps`, pausedStep);
+      setStep(`tt-${tool.id}-steps`, pausedStep === null ? lastStep : pausedStep);
+    },
     open() { openPanel(true); activateTab(tool.id); },
   };
 }
@@ -2185,6 +2218,21 @@ function absorbShortStatus(kind, text) {
   return `${kind}: ${short}`;
 }
 
+// 4.0.2, "תקן והרץ שוב": על אילו שדות בשורה ההודעה מצביעה (נוסחי האתר והזרימה), כדי לצבוע אותם. בלי שדה מזוהה: [].
+// "מספר זהות לא חוקי" צובע גם את סוג המזהה: הסיבה השכיחה היא דרכון שסומן ת.ז.; "אותיות בעברית בלבד" זהה לשני שדות השם באתר.
+const ABSORB_FIELD_MESSAGES = [
+  ['idType', /סוג מזהה|מספר זהות לא חוקי/],
+  ['identifier', /מספר זהות|ת\.?ז\.?\s*\/\s*דרכון|מספר דרכון/],
+  ['birthDate', /תאריך לידה|גיל התלמיד/],
+  ['country', /ארץ/],
+  ['firstName', /שם פרטי|אותיות בעברית/],
+  ['lastName', /שם משפחה|אותיות בעברית/],
+];
+function absorbFieldsFromMessage(text) {
+  const s = String(text == null ? '' : text);
+  return ABSORB_FIELD_MESSAGES.filter(([, re]) => re.test(s)).map(([field]) => field);
+}
+
 // האם תוצאת "נחסם" היא אזהרת "רשום במוסד אחר" (שמסומנת "אשר המשך" פותרת).
 function absorbIsOtherInstituteBlock(result) {
   return !!result && absorbStatusKey(result.status) === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(String(result.detail || result.status || ''));
@@ -2878,6 +2926,7 @@ const FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
 const SELECT_WAIT = { startTimeoutMs: 1000, totalTimeoutMs: 10000 };
 const POPUP_HIDE_MS = 5000;
 const STALE_ATTR = 'data-absorb-stale';
+const ABSORB_SEARCH_BUDGET_MS = 20000;
 
 // כתיבה לשדה = פוטנציאלית postback (AutoPostBack). רושמים המתנה קודם, כותבים מ-setTimeout(0).
 function absorbSetAndWait(el, value, opts) {
@@ -3011,7 +3060,7 @@ async function searchOnce(input, btn, value, gen) {
   markStale($el(ABSORB_IDS.countLabel));
   await absorbSetAndWait(input, value);
   await sleepCheckStop(120, gen);
-  const res = await absorbFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const res = await absorbFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: ABSORB_SEARCH_BUDGET_MS });
   await sleepCheckStop(250, gen);
   const countText = readCountText();
   const count = absorbParseCount(countText);
@@ -3128,9 +3177,15 @@ async function absorbWaitOutcome(prmWait, budgetMs, gen) {
 // אין גישה ל-document/window ברמת המודול.
 
 
-const STUDENT_TIMEOUT_MS = 60000;
+const ABSORB_CLICK_BUDGET_MS = 20000;
 const CONFIRM_BUDGET_MS = 25000;
 const SAVE_BUDGET_MS = 30000;
+// הצעדים שעלולים לרוץ בניסיון אחד. "שמירה" של תלמיד חדש לא נספרת: היא רצה אחרי טעינת-דף, בניסיון משלה.
+const ABSORB_STEP_BUDGETS_MS = {
+  nav: NAV_POSTBACK_BUDGET_MS, tab: NAV_POSTBACK_BUDGET_MS, search: ABSORB_SEARCH_BUDGET_MS,
+  absorbClick: ABSORB_CLICK_BUDGET_MS, confirm: CONFIRM_BUDGET_MS, verify: ABSORB_SEARCH_BUDGET_MS,
+};
+const ABSORB_STUDENT_TIMEOUT_MS = runBudgetMs(ABSORB_STEP_BUDGETS_MS, STUDENT_RESERVE_MS);
 const NAV_WATCHDOG_MS = 12000;
 const NAVIGATED = { __navigated: true }; // ניווט מלא נורה: ההמשך אחרי טעינת הדף
 const CONTINUE = { __continue: true }; // התוצאה כבר נרשמה: לתלמיד הבא
@@ -3513,7 +3568,7 @@ async function processStudent(task, gen) {
   const absorbBtn = absorbButtonEl(); // F5: לפי סיומת btnStudentAcceptence3, לא לפי מזהה מלא
   if (!absorbBtn) return mk(ABSORB_STATUS.ERROR, 'כפתור "קליטה" לא נמצא בדף', `בדוק שיש לך הרשאת קליטה לסוג לימוד זה ושאינו "סגור"; אם יש, ${MANUAL_ABSORB_ACTION}`);
   try {
-    const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const click = await absorbFireElement(absorbBtn, { startTimeoutMs: 3000, totalTimeoutMs: ABSORB_CLICK_BUDGET_MS });
     if (!click.ok) log(`[קליטה] postback לא תקין: ${click.reason}`);
     await sleepCheckStop(300, gen);
 
@@ -3678,7 +3733,7 @@ async function processStudentSafe(task) {
   const myIdx = S.curIdx;
   const errResult = (detail) => makeAbsorbResult(task, ABSORB_STATUS.ERROR, detail, manualRowAction());
   try {
-    return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
+    return await withTimeout(processStudent(task, absorbNextGeneration()), ABSORB_STUDENT_TIMEOUT_MS);
   } catch (err) {
     if (isAbsorbStopError(err)) throw err;
     absorbNextGeneration();
@@ -3689,7 +3744,7 @@ async function processStudentSafe(task) {
     try {
       await sleep(1000);
       log(`[ניסיון 2] ${maskId(task.identity)}`);
-      return await withTimeout(processStudent(task, absorbNextGeneration()), STUDENT_TIMEOUT_MS);
+      return await withTimeout(processStudent(task, absorbNextGeneration()), ABSORB_STUDENT_TIMEOUT_MS);
     } catch (err2) {
       if (isAbsorbStopError(err2)) throw err2;
       log(`[ניסיון 2] ${isAbsorbCancelError(err2) ? 'בוטל' : 'נכשל'}: ${err2 && err2.message}: מדלגים`);
@@ -4101,6 +4156,12 @@ function createGrid(cfg) {
       }
       if (sub) sub.hidden = blank || !(cfg.subOpen && cfg.subOpen(row));
       if (cfg.refreshRow) cfg.refreshRow(tr, sub, row, i);
+      // 4.0.2: השדות שהודעת האתר מצביעה עליהם נצבעים: התא בשורה הראשית, השדה עצמו בשורת-הפרטים
+      const flagged = note && Array.isArray(note.fields) ? note.fields : [];
+      for (const scope of [tr, sub]) {
+        if (!scope) continue;
+        scope.querySelectorAll('[data-k]').forEach((el) => { (el.closest('td.tt-cell') || el).classList.toggle('tt-cell-flag', flagged.includes(el.dataset.k)); });
+      }
       // השורה שעורכים עכשיו לא נעלמת באמצע ההקלדה כשהיא מפסיקה להתאים לתגית (ביקורת 2.11)
       const visible = gridRowMatchesFilter(st.filter, level, blank) || !!(active && tr.contains(active));
       tr.hidden = !visible;
@@ -4726,6 +4787,7 @@ function onResultsClick(e) {
 
 // תיבת "הריצה נקטעה": תור ישן (מעל 30 דקות) או דף זר (ממצא 11). "המשך" מכריח המשך; "בטל" מסמן את השאר "נעצר".
 function renderStaleQueue(info) {
+  ui.pause(info ? STAGE_INDEX.run : null);
   if (!info) { show(`${P}-stale`, false); setHtml(`${P}-stale`, ''); return; }
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
@@ -4837,7 +4899,7 @@ function fixAndRerun() {
   grid.setNotes((row) => {
     const res = byKey.get(rowKey(row.fields));
     if (!res) return null;
-    return { kind: classify(res) === 'bad' ? 'bad' : 'warn', text: `${res.status}. ${res.action || ''}`.trim() };
+    return { kind: classify(res) === 'bad' ? 'bad' : 'warn', text: `${res.status}. ${res.action || ''}`.trim(), fields: absorbFieldsFromMessage(`${res.status} ${res.detail || ''}`) };
   });
   awaitingErrorConfirm = false;
   setStage('fix');
@@ -5358,7 +5420,16 @@ const DEPART_CANCEL_PREFIX = '__DEPART_CANCELLED__@';
 const DEPART_LOCK_TOOL = 'depart';
 const DEPART_MAX_LANDINGS = 6; // טעינות-דף לתלמיד אחד; מעל זה "דולג"
 const DEPART_MAX_QUEUE_AGE_MS = 30 * 60 * 1000; // תור שמור ישן מזה לא ממשיך לבד
-const DEPART_STUDENT_TIMEOUT_MS = 60000;
+const DEPART_TAB_BUDGET_MS = 25000;
+const DEPART_POSTBACK_BUDGET_MS = 20000;
+const DEPART_ROW_BUDGET_MS = 12000;
+const DEPART_CONTINUE_BUDGET_MS = 15000;
+// הצעדים שעלולים לרוץ בניסיון אחד. הניווט לסניף לא נספר: הוא רץ לפני הניסיון (departEnsureBranch).
+const DEPART_STEP_BUDGETS_MS = {
+  tab: DEPART_TAB_BUDGET_MS, search: DEPART_POSTBACK_BUDGET_MS, selectRow: DEPART_ROW_BUDGET_MS, departClick: DEPART_POSTBACK_BUDGET_MS,
+  confirm: DEPART_POSTBACK_BUDGET_MS, softContinue: DEPART_CONTINUE_BUDGET_MS, save: DEPART_POSTBACK_BUDGET_MS, verify: DEPART_POSTBACK_BUDGET_MS,
+};
+const DEPART_STUDENT_TIMEOUT_MS = runBudgetMs(DEPART_STEP_BUDGETS_MS, STUDENT_RESERVE_MS);
 const DEPART_NAV_WAIT_MS = 12000;
 const DEPART_POPUP_HIDE_MS = 5000;
 const DEPART_FIELD_WAIT = { startTimeoutMs: 400, totalTimeoutMs: 8000 };
@@ -5385,7 +5456,7 @@ function departIsStopError(err) { return !!err && typeof err.message === 'string
 function departCancelError(where) { return new Error(DEPART_CANCEL_PREFIX + where); }
 function departIsCancelError(err) { return !!err && typeof err.message === 'string' && err.message.indexOf(DEPART_CANCEL_PREFIX) === 0; }
 
-// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו (60 שניות) ממשיך לחיות ברקע ועלול לגעת
+// ─── דורות (סקירה סופית 1.11.2026, כמו בקליטה): ניסיון שפג זמנו ממשיך לחיות ברקע ועלול לגעת
 // בדף בזמן שהתלמיד הבא רץ (למשל לחיצת "שמירה" מאוחרת, או חיפוש-אימות שמחליף את הגריד של הבא). לכן לכל
 // ניסיון יש "דור"; timeout מקדם את הדור, והניסיון הישן מת בנקודת-הבדיקה הבאה (לפני כל צעד שנוגע באתר).
 let departGeneration = 0;
@@ -5489,7 +5560,7 @@ async function departActivateStudentsTab() {
     try { active = tabs.get_activeTabIndex(); } catch (e) { /* ignore */ }
     if (active !== DEPART_TAB_INDEX) {
       log('[לשונית] מעבר ללשונית "תלמידים למוסד"');
-      const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 25000 });
+      const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: DEPART_TAB_BUDGET_MS });
       setTimeout(() => { try { tabs.set_activeTabIndex(DEPART_TAB_INDEX); } catch (e) { log('[לשונית] שגיאה במעבר לשונית: ' + (e && e.message)); } }, 0);
       const res = await wait;
       if (res && res.ok === false) log(`[לשונית] ה-postback של הלשונית נכשל: ${res.reason}`);
@@ -5524,7 +5595,7 @@ async function departSearch(identity) {
   const cl = $el(DEPART_IDS.countLabel);
   if (cl) cl.textContent = '';
   await departSetAndWait(input, identity);
-  const res = await departFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const res = await departFireElement(btn, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
   let settled = true;
   try {
     await waitFor(() => {
@@ -5582,9 +5653,9 @@ async function departSelectFirstActiveRow() {
   const cbPb = departParsePostback(cb.getAttribute('onclick') || '');
   if (cbPb && cbPb.target) {
     cb.checked = true;
-    await firePostback(cbPb.target, cbPb.arg, { startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+    await firePostback(cbPb.target, cbPb.arg, { startTimeoutMs: 2000, totalTimeoutMs: DEPART_ROW_BUDGET_MS });
   } else if (!cb.checked) {
-    const wait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: 12000 });
+    const wait = waitPRM({ startTimeoutMs: 2000, totalTimeoutMs: DEPART_ROW_BUDGET_MS });
     setTimeout(() => { try { cb.click(); } catch (e) { /* אצווה לא נתקעת */ } }, 0);
     await wait;
   }
@@ -5635,7 +5706,7 @@ async function departClickContinue(popup) {
   log(`[אישור] חלונית אישור-רך: "${maskIdsInText(popup.text)}" · כפתורים=[${buttons}] → לוחצים "המשך" (כמו הסקריפט הישן)`);
   const btn = $el('ucMessagePopUp_btnMOK');
   if (!btn) { log('[אישור] כפתור "המשך" לא נמצא'); return { ok: false }; }
-  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: 15000 });
+  const wait = waitPRM({ startTimeoutMs: 1500, totalTimeoutMs: DEPART_CONTINUE_BUDGET_MS });
   setTimeout(() => { try { btn.click(); } catch (e) { log('[אישור] לחיצת "המשך" נכשלה: ' + (e && e.message)); } }, 0);
   const res = await wait;
   await sleep(200);
@@ -5675,7 +5746,7 @@ async function departProcessStudent(task, gen) {
   // שלב 5: "עזיבה" (postback דרך ה-href, בלי eval)
   const deptBtn = $el(DEPART_IDS.deptBtn);
   if (!deptBtn) return mk(DEPART_STATUS.ERROR, 'כפתור "עזיבה" לא נמצא', DEPART_ACTIONS.error);
-  const dres = await departFireElement(deptBtn, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+  const dres = await departFireElement(deptBtn, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
   if (dres && dres.ok === false) log(`[עזיבה] postback לא תקין: ${dres.reason}`);
 
   // שלב 6: המודאל נפתח?
@@ -5715,7 +5786,7 @@ async function departProcessStudent(task, gen) {
     const confirmEl = $el(DEPART_IDS.confirmBtn);
     if (!confirmEl) return mk(DEPART_STATUS.ERROR, 'כפתור "אישור" במודאל לא נמצא', DEPART_ACTIONS.error);
     departCheckStop('before-confirm', gen);
-    const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const cres = await departFireElement(confirmEl, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
     if (cres && cres.validationFailed) return mk(DEPART_STATUS.ERROR, 'ולידציה בחלון העזיבה נכשלה (תאריך או סיבה)', 'בדוק את תאריך העזיבה (DD/MM/YYYY) ואת הסיבה והרץ שוב');
     await sleep(300);
 
@@ -5747,7 +5818,7 @@ async function departProcessStudent(task, gen) {
     if (!saveEl) return mk(DEPART_STATUS.ERROR, 'כפתור "שמירה" לא נמצא', DEPART_ACTIONS.unverified);
     if (departIsCancelled(gen)) throw departCancelError('before-save'); // ניסיון שהוחלף לא שומר (עצירה רגילה: רק לפני התלמיד הבא)
     log(`[שמירה] class="${saveEl.className}" disabled=${saveEl.getAttribute('disabled')}`);
-    const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: 20000 });
+    const sres = await departFireElement(saveEl, { startTimeoutMs: 3000, totalTimeoutMs: DEPART_POSTBACK_BUDGET_MS });
     if (sres && sres.ok === false) log(`[שמירה] postback לא תקין: ${sres.reason}`);
     await sleep(300);
 
@@ -6273,6 +6344,7 @@ function departOnResultsClick(e) {
 }
 
 function departRenderStaleQueue(info) {
+  departUi.pause(info ? DEPART_STAGE_INDEX.run : null);
   if (!info) { show(`${DEPART_P}-stale`, false); setHtml(`${DEPART_P}-stale`, ''); return; }
   const done = info.curIdx || 0;
   const lastMs = Date.parse(info.lastAt || info.startedAt); // סבב רטוב 1.11: מהפעילות האחרונה, לא מתחילת הריצה
@@ -6659,6 +6731,12 @@ function reportNextIndexToRun(state) {
   return idx < state.branches.length ? idx : -1;
 }
 
+// 4.0.2 (כמו בקליטה ובעזיבה): דף שאינו חלק מהדיווח (למשל ההודעות) אינו מקום להשתלט עליו: הפאנל מציג "הריצה
+// נקטעה" ומחכה ל"המשך". דף מוסד או דף סוג-לימוד (יש בהם עץ): ממשיכים.
+function reportForeignPage(page) {
+  return !page || page.kind === 'other' || page.kind === 'newStudent';
+}
+
 // טקסט הודעה שנראה ככישלון (אחרי "המשך"). הישן סימן "נשלח" בלי לקרוא; כאן קוראים כדי לא לשקר.
 function reportPopupLooksLikeFailure(text) {
   return /שגיאה|נכשל|לא הצליח|לא ניתן|לא בוצע/.test(String(text == null ? '' : text));
@@ -6666,7 +6744,7 @@ function reportPopupLooksLikeFailure(text) {
 
 // ─── מצב חי + sessionStorage ────────────────────────────────────────────────
 
-const reportLive = { running: false, stop: false, hooks: {}, lastStepAt: null, lastResults: [] };
+const reportLive = { running: false, stop: false, paused: false, hooks: {}, lastStepAt: null, lastResults: [] };
 
 function reportSetHooks(hooks) { reportLive.hooks = hooks || {}; }
 function reportHook(name, ...args) { try { if (reportLive.hooks[name]) reportLive.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
@@ -6698,9 +6776,9 @@ function reportHasPendingRun() {
   return !!(st && st.running && reportNextIndexToRun(st) !== -1);
 }
 
-// "רץ" גם כשממתינים לטעינת דף (כדי ש-Escape/"עצור" יעבדו באמצע ניווט).
+// "רץ" גם כשממתינים לטעינת דף (כדי ש-Escape/"עצור" יעבדו באמצע ניווט), אבל לא כשהריצה מושהית בדף זר ומחכה להחלטה.
 function reportIsRunning() {
-  return reportLive.running || reportHasPendingRun();
+  return reportLive.running || (reportHasPendingRun() && !reportLive.paused);
 }
 
 function reportGetResults() {
@@ -6776,6 +6854,7 @@ function reportTakeRunLock(where) {
 function reportFinish(state) {
   reportLive.running = false;
   reportLive.stop = false;
+  reportLive.paused = false;
   reportLive.lastResults = Array.isArray(state.results) ? state.results.slice() : [];
   reportClearState();
   dropRunLock(REPORT_LOCK_TOOL);
@@ -6969,7 +7048,7 @@ async function reportRunLoop() {
 
 // "התחל": אוסף את הסניפים מעץ-הצד ומתחיל. מחזיר {ok, count} או {ok:false, reason}.
 async function reportStart() {
-  if (reportIsRunning()) return { ok: false, reason: 'ריצה כבר פעילה' };
+  if (reportLive.running || reportHasPendingRun()) return { ok: false, reason: 'ריצה כבר פעילה' };
   const held = holdRunLock(REPORT_LOCK_TOOL);
   if (!held.ok) { log(`[נעילה] התחלה: ${held.message}`); return { ok: false, reason: held.message, locked: true }; }
   const branches = readBranchesFromTree();
@@ -6988,9 +7067,10 @@ async function reportStart() {
   return { ok: true, count: branches.length };
 }
 
-// בטעינת דף: אם יש מצב שמור, ממשיכים (כמו הישן: המתנה ל-h1, ואז הצעד הבא).
-async function reportResumeIfPending() {
+// בטעינת דף: אם יש מצב שמור, ממשיכים (כמו הישן: המתנה ל-h1, ואז הצעד הבא). דף זר ממשיך רק אחרי "המשך" בפאנל (opts.force).
+async function reportResumeIfPending(opts) {
   if (reportLive.running) return false;
+  const force = !!(opts && opts.force);
   const state = reportLoadState();
   if (!state || !state.running) return false;
   if (reportNextIndexToRun(state) === -1) { reportFinish(state); return true; }
@@ -7000,16 +7080,26 @@ async function reportResumeIfPending() {
     reportFinish(state);
     return true;
   }
-  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה
+  if (!force && reportForeignPage(getPage())) {
+    log('[המשך] הדף הזה אינו חלק מהדיווח: לא ממשיכים אוטומטית; "המשך" בפאנל ינווט');
+    reportLive.paused = true;
+    reportHook('onStaleQueue', { total: state.branches.length, curIdx: reportNextIndexToRun(state), lastAt: state.lastStepAt || null, reason: 'foreign-page' });
+    return false;
+  }
+  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה או ב"המשך"
+  reportLive.paused = false;
   reportLive.running = true; // לפני ההמתנה, כדי ש"התחל" לא יפתח ריצה מקבילה
+  if (force) { state.landings = null; reportTouch(state); reportSaveState(state); } // "המשך" מפורש: ספירת-הטעינות והחיווי "נתקע" מתחילים מחדש
   reportLive.lastStepAt = state.lastStepAt || Date.now();
   reportHook('onResume', state);
-  try {
-    await waitFor(() => {
-      const h1 = document.querySelector('h1');
-      return !!(h1 && String(h1.textContent || '').trim().length > 3);
-    }, { timeout: REPORT_PAGE_WAIT_MS, interval: 200 });
-  } catch (e) { /* הצעד עצמו ינווט או ידווח שגיאה */ }
+  if (!force) { // בדף זר (אחרי "המשך") אין h1 לחכות לו: הצעד הבא מנווט משם
+    try {
+      await waitFor(() => {
+        const h1 = document.querySelector('h1');
+        return !!(h1 && String(h1.textContent || '').trim().length > 3);
+      }, { timeout: REPORT_PAGE_WAIT_MS, interval: 200 });
+    } catch (e) { /* הצעד עצמו ינווט או ידווח שגיאה */ }
+  }
   await sleep(900); // MS AJAX מסיים לאתחל
   log(`[המשך] סניף ${reportNextIndexToRun(state) + 1}/${state.branches.length} · דף ${getPage().kind}`);
   return reportRunLoop();
@@ -7030,6 +7120,7 @@ let reportBaseStatus = 'מוכן';
 let reportStuckTimer = null;
 let reportTotal = 0;
 let reportDone = false;
+let reportStaleInfo = null; // ריצה שנקטעה ומחכה להחלטה בדף זר (התיבה הצהובה מוצגת)
 
 const REPORT_COLUMNS = [
   { key: 'branch', label: 'סניף', center: true, width: '52px' },
@@ -7055,10 +7146,41 @@ function reportApplyStage() {
   const running = reportIsRunning();
   const stage = running ? 'run' : (reportRows.length ? 'results' : 'prep');
   show(`${RP}-zone-in`, stage === 'prep');
+  show(`${RP}-fit`, stage === 'prep' && !reportStaleInfo);
   show(`${RP}-zone-run`, stage === 'run');
   show(`${RP}-zone-out`, stage !== 'prep');
-  show(`${RP}-new-run`, stage === 'results');
+  show(`${RP}-new-run`, stage === 'results' && !reportStaleInfo); // "דיווח חדש" היה מוחק ריצה שעוד אפשר להמשיך
   if (reportUi) reportUi.step(reportStep());
+}
+
+// 4.0.2: תיבת "הריצה נקטעה" (כמו בקליטה ובעזיבה). "המשך" מנווט לסניף הבא; "בטל" מסמן את השאר "נעצר" ומציג את התוצאות.
+function reportRenderStale(info) {
+  reportStaleInfo = info || null;
+  reportUi.pause(info ? REPORT_STEPS.indexOf('ריצה') : null);
+  if (!info) { show(`${RP}-stale`, false); setHtml(`${RP}-stale`, ''); reportApplyStage(); return; }
+  const ageMin = info.lastAt ? Math.round((Date.now() - Number(info.lastAt)) / 60000) : null;
+  setHtml(`${RP}-stale`, `<b>הריצה נקטעה</b> (למשל החיבור לאתר פג) אחרי ${esc(info.curIdx)} מתוך ${esc(info.total)} סניפים${ageMin === null ? '' : `, לפני ${esc(ageMin)} דקות`}. הדף הזה אינו חלק מהדיווח, ולכן הכלי לא ממשיך לבד. "המשך" יעבור לדף המוסד של הסניף הבא.
+    ${buttonsRowHtml([
+      { id: `${RP}-stale-go`, label: 'המשך מהסניף הבא', kind: 'primary', size: 'small' },
+      { id: `${RP}-stale-clear`, label: 'בטל את השאר', kind: 'danger', size: 'small' },
+    ], 'tt-row-wrap')}`);
+  show(`${RP}-stale`, true);
+  reportApplyStage();
+  $el(`${RP}-stale-go`).addEventListener('click', () => {
+    reportRenderStale(null);
+    reportSetStatus('ממשיך את הריצה שנקטעה…');
+    Promise.resolve().then(() => reportResumeIfPending({ force: true })).then((ran) => {
+      if (ran === false && reportHasPendingRun() && !reportIsRunning()) { reportSetRunning(false); reportRenderStale(info); } // נעילה: ההודעה בשורת-המצב, התיבה חוזרת
+    }).catch((e) => {
+      log('[המשך] כשל: ' + (e && e.message));
+      reportSetRunning(false);
+      reportSetStatus('ההמשך נכשל. בדוק את היומן');
+    });
+  });
+  $el(`${RP}-stale-clear`).addEventListener('click', () => {
+    reportRenderStale(null);
+    reportRequestStop(); // ‏reportFinish → onDone: השאר "נעצר", והתוצאות מוצגות
+  });
 }
 
 function reportRenderRows() {
@@ -7149,16 +7271,15 @@ function reportUiMount(container, panelUi, page) {
   reportUi = panelUi;
   const branches = page && page.kind === 'institute' ? readBranchesFromTree() : [];
   const fits = !!(page && page.kind === 'institute');
-  // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד
-  container.innerHTML = fits ? `
+  // הכרעת סבב 3: בדף לא מתאים מוצגת רק תיבת-ההתאמה (כמו בהודעות); האזור הרגיל רק בדף מוסד. 4.0.2: התיבה הצהובה, שורת-הריצה
+  // ואזור התוצאות (מוסתרים עד שצריך) בכל דף, כי ריצה שנקטעה מסתיימת או ממשיכה גם מדף זר.
+  container.innerHTML = `<div id="${RP}-stale" class="tt-box tt-box-warn" hidden></div>` + (fits ? `
     ${zoneHtml({ id: `${RP}-zone-in`, title: 'דיווח לכל הסניפים', inner: `
       <p class="tt-zone-lead">הדיווח החודשי נשלח לכל הסניפים שברשימה, אחד אחרי השני; אין בחירה חלקית. סניף שכבר דווח מדולג. "עצור" עוצר לפני הסניף הבא.</p>
       <div id="${RP}-branches" class="tt-hint">${branches.length ? `ברשימה ${branches.length} סניפים: ${esc(branches.join(', '))}` : 'לא נמצאו סניפים ברשימת הסניפים של הדף הזה'}</div>
       <div class="tt-row tt-row-wrap">
         ${buttonHtml({ id: `${RP}-start`, label: 'התחל דיווח לכל הסניפים', kind: 'primary', disabled: !branches.length })}
-      </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' });
-  if (!fits) $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
-  if (fits) container.innerHTML += `
+      </div>` })}` : fitBoxHtml({ id: `${RP}-fit`, text: 'הדיווח החודשי רץ מדף מוסד (שם יש את רשימת הסניפים).', buttonId: `${RP}-goto`, buttonLabel: 'עבור לדף המוסדות' })) + `
     <div class="tt-runline" id="${RP}-zone-run" hidden><span class="tt-runtext" id="${RP}-runtext">דיווח בריצה</span>${buttonHtml({ id: `${RP}-stop`, label: 'עצור', kind: 'stop', title: 'גם מקש Escape עוצר' })}</div>
     ${zoneHtml({ id: `${RP}-zone-out`, title: 'תוצאות', hidden: true, actions: buttonHtml({ id: `${RP}-new-run`, label: 'דיווח חדש', kind: 'newlist', size: 'small', title: 'מנקה את התוצאות וחוזר להכנה. לחיצה שנייה מאשרת', attrs: 'hidden' }), inner: `
       <div id="${RP}-report" class="tt-box tt-box-warn" hidden></div>
@@ -7173,10 +7294,10 @@ function reportUiMount(container, panelUi, page) {
         reportSetStatus('ההרצה נכשלה. בדוק את היומן ונסה שוב');
       });
     });
-    $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
-    $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
-    bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
-  }
+  } else $el(`${RP}-goto`).addEventListener('click', () => { reportSetStatus('עובר לדף המוסדות…'); location.href = institutesPageUrl(); });
+  $el(`${RP}-stop`).addEventListener('click', reportUiStop, true);
+  $el(`${RP}-tsv`).addEventListener('click', reportCopyTsv);
+  bindConfirmClick(`${RP}-new-run`, { label: 'דיווח חדש', confirmLabel: 'לחץ שוב לדיווח חדש', onConfirm: reportNewRun });
 
   reportSetHooks({
     onStart: (list, idx) => { reportTotal = list.length; reportSetRunning(true); reportUi.progress(idx, reportTotal); },
@@ -7191,6 +7312,12 @@ function reportUiMount(container, panelUi, page) {
     },
     onProgress: (idx, total, branch) => { reportTotal = total; reportUi.progress(idx, total); setText(`${RP}-runtext`, `דיווח בריצה · סניף ${branch} (${idx + 1} מתוך ${total})`); reportSetStatus(`סניף ${branch} (${idx + 1} מתוך ${total})`); },
     onNavigating: (branch) => { reportSetStatus(`עובר לדף המוסד של סניף ${branch}… ממתין לטעינה`); },
+    onStaleQueue: (info) => {
+      reportRenderStale(info);
+      reportSetRunning(false);
+      reportSetStatus('יש ריצת דיווח שנקטעה, אך הדף הזה אינו חלק מהדיווח. בחר "המשך" או "בטל"');
+      reportUi.open();
+    },
     onLocked: (msg) => { reportSetRunning(false); reportSetStatus(msg); },
     onResult: (result, all) => { reportRows = all.slice(); reportRenderRows(); reportUi.progress(all.length, Math.max(reportTotal, all.length)); },
     onDone: (all, summary) => {

@@ -113,6 +113,12 @@ export function reportNextIndexToRun(state) {
   return idx < state.branches.length ? idx : -1;
 }
 
+// 4.0.2 (כמו בקליטה ובעזיבה): דף שאינו חלק מהדיווח (למשל ההודעות) אינו מקום להשתלט עליו: הפאנל מציג "הריצה
+// נקטעה" ומחכה ל"המשך". דף מוסד או דף סוג-לימוד (יש בהם עץ): ממשיכים.
+export function reportForeignPage(page) {
+  return !page || page.kind === 'other' || page.kind === 'newStudent';
+}
+
 // טקסט הודעה שנראה ככישלון (אחרי "המשך"). הישן סימן "נשלח" בלי לקרוא; כאן קוראים כדי לא לשקר.
 export function reportPopupLooksLikeFailure(text) {
   return /שגיאה|נכשל|לא הצליח|לא ניתן|לא בוצע/.test(String(text == null ? '' : text));
@@ -120,7 +126,7 @@ export function reportPopupLooksLikeFailure(text) {
 
 // ─── מצב חי + sessionStorage ────────────────────────────────────────────────
 
-export const reportLive = { running: false, stop: false, hooks: {}, lastStepAt: null, lastResults: [] };
+export const reportLive = { running: false, stop: false, paused: false, hooks: {}, lastStepAt: null, lastResults: [] };
 
 export function reportSetHooks(hooks) { reportLive.hooks = hooks || {}; }
 function reportHook(name, ...args) { try { if (reportLive.hooks[name]) reportLive.hooks[name](...args); } catch (e) { /* אצווה לא נתקעת */ } }
@@ -152,9 +158,9 @@ export function reportHasPendingRun() {
   return !!(st && st.running && reportNextIndexToRun(st) !== -1);
 }
 
-// "רץ" גם כשממתינים לטעינת דף (כדי ש-Escape/"עצור" יעבדו באמצע ניווט).
+// "רץ" גם כשממתינים לטעינת דף (כדי ש-Escape/"עצור" יעבדו באמצע ניווט), אבל לא כשהריצה מושהית בדף זר ומחכה להחלטה.
 export function reportIsRunning() {
-  return reportLive.running || reportHasPendingRun();
+  return reportLive.running || (reportHasPendingRun() && !reportLive.paused);
 }
 
 export function reportGetResults() {
@@ -230,6 +236,7 @@ function reportTakeRunLock(where) {
 function reportFinish(state) {
   reportLive.running = false;
   reportLive.stop = false;
+  reportLive.paused = false;
   reportLive.lastResults = Array.isArray(state.results) ? state.results.slice() : [];
   reportClearState();
   dropRunLock(REPORT_LOCK_TOOL);
@@ -423,7 +430,7 @@ export async function reportRunLoop() {
 
 // "התחל": אוסף את הסניפים מעץ-הצד ומתחיל. מחזיר {ok, count} או {ok:false, reason}.
 export async function reportStart() {
-  if (reportIsRunning()) return { ok: false, reason: 'ריצה כבר פעילה' };
+  if (reportLive.running || reportHasPendingRun()) return { ok: false, reason: 'ריצה כבר פעילה' };
   const held = holdRunLock(REPORT_LOCK_TOOL);
   if (!held.ok) { log(`[נעילה] התחלה: ${held.message}`); return { ok: false, reason: held.message, locked: true }; }
   const branches = readBranchesFromTree();
@@ -442,9 +449,10 @@ export async function reportStart() {
   return { ok: true, count: branches.length };
 }
 
-// בטעינת דף: אם יש מצב שמור, ממשיכים (כמו הישן: המתנה ל-h1, ואז הצעד הבא).
-export async function reportResumeIfPending() {
+// בטעינת דף: אם יש מצב שמור, ממשיכים (כמו הישן: המתנה ל-h1, ואז הצעד הבא). דף זר ממשיך רק אחרי "המשך" בפאנל (opts.force).
+export async function reportResumeIfPending(opts) {
   if (reportLive.running) return false;
+  const force = !!(opts && opts.force);
   const state = reportLoadState();
   if (!state || !state.running) return false;
   if (reportNextIndexToRun(state) === -1) { reportFinish(state); return true; }
@@ -454,16 +462,26 @@ export async function reportResumeIfPending() {
     reportFinish(state);
     return true;
   }
-  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה
+  if (!force && reportForeignPage(getPage())) {
+    log('[המשך] הדף הזה אינו חלק מהדיווח: לא ממשיכים אוטומטית; "המשך" בפאנל ינווט');
+    reportLive.paused = true;
+    reportHook('onStaleQueue', { total: state.branches.length, curIdx: reportNextIndexToRun(state), lastAt: state.lastStepAt || null, reason: 'foreign-page' });
+    return false;
+  }
+  if (!reportTakeRunLock('המשך')) return false; // המצב נשאר שמור; ינסה שוב בטעינה הבאה או ב"המשך"
+  reportLive.paused = false;
   reportLive.running = true; // לפני ההמתנה, כדי ש"התחל" לא יפתח ריצה מקבילה
+  if (force) { state.landings = null; reportTouch(state); reportSaveState(state); } // "המשך" מפורש: ספירת-הטעינות והחיווי "נתקע" מתחילים מחדש
   reportLive.lastStepAt = state.lastStepAt || Date.now();
   reportHook('onResume', state);
-  try {
-    await waitFor(() => {
-      const h1 = document.querySelector('h1');
-      return !!(h1 && String(h1.textContent || '').trim().length > 3);
-    }, { timeout: REPORT_PAGE_WAIT_MS, interval: 200 });
-  } catch (e) { /* הצעד עצמו ינווט או ידווח שגיאה */ }
+  if (!force) { // בדף זר (אחרי "המשך") אין h1 לחכות לו: הצעד הבא מנווט משם
+    try {
+      await waitFor(() => {
+        const h1 = document.querySelector('h1');
+        return !!(h1 && String(h1.textContent || '').trim().length > 3);
+      }, { timeout: REPORT_PAGE_WAIT_MS, interval: 200 });
+    } catch (e) { /* הצעד עצמו ינווט או ידווח שגיאה */ }
+  }
   await sleep(900); // MS AJAX מסיים לאתחל
   log(`[המשך] סניף ${reportNextIndexToRun(state) + 1}/${state.branches.length} · דף ${getPage().kind}`);
   return reportRunLoop();

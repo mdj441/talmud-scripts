@@ -60,6 +60,21 @@ export function absorbShortStatus(kind, text) {
   return `${kind}: ${short}`;
 }
 
+// 4.0.2, "תקן והרץ שוב": על אילו שדות בשורה ההודעה מצביעה (נוסחי האתר והזרימה), כדי לצבוע אותם. בלי שדה מזוהה: [].
+// "מספר זהות לא חוקי" צובע גם את סוג המזהה: הסיבה השכיחה היא דרכון שסומן ת.ז.; "אותיות בעברית בלבד" זהה לשני שדות השם באתר.
+const ABSORB_FIELD_MESSAGES = [
+  ['idType', /סוג מזהה|מספר זהות לא חוקי/],
+  ['identifier', /מספר זהות|ת\.?ז\.?\s*\/\s*דרכון|מספר דרכון/],
+  ['birthDate', /תאריך לידה|גיל התלמיד/],
+  ['country', /ארץ/],
+  ['firstName', /שם פרטי|אותיות בעברית/],
+  ['lastName', /שם משפחה|אותיות בעברית/],
+];
+export function absorbFieldsFromMessage(text) {
+  const s = String(text == null ? '' : text);
+  return ABSORB_FIELD_MESSAGES.filter(([, re]) => re.test(s)).map(([field]) => field);
+}
+
 // האם תוצאת "נחסם" היא אזהרת "רשום במוסד אחר" (שמסומנת "אשר המשך" פותרת).
 export function absorbIsOtherInstituteBlock(result) {
   return !!result && absorbStatusKey(result.status) === ABSORB_STATUS.BLOCKED && OTHER_INSTITUTE_RE.test(String(result.detail || result.status || ''));

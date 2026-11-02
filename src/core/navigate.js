@@ -22,6 +22,12 @@ const INSTITUTES_PAGE_PATH = '/Institutes/InstitutesDetails.aspx';
 // ממצא ב-2: תקציב לפוסטבק שמנווט (עריכה בגריד, עץ, לשונית). כשהתשובה היא pageRedirect אין endRequest,
 // ושרת איטי מעבר ל-8 שניות גרם ל-{ok:false} ולסימון התלמיד "שגיאה" רגע לפני שהדף נפרק.
 export const NAV_POSTBACK_BUDGET_MS = 25000;
+// תקציב לתלמיד (4.0.2): הגבול הכולל נגזר מסכום תקציבי-הצעדים ועוד רזרבה להמתנות הקטנות שביניהם. גבול קטן מהסכום (היה
+// 60 שניות) סימן בשרת איטי "תהליך תקוע" לפני שצעד כלשהו נכשל, ובלי לומר איזה.
+export const STUDENT_RESERVE_MS = 15000;
+export function runBudgetMs(stepBudgets, reserveMs) {
+  return Object.values(stepBudgets || {}).reduce((total, ms) => total + ms, 0) + reserveMs;
+}
 
 // ─── כתובות ─────────────────────────────────────────────────────────────────
 

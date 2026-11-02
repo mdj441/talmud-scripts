@@ -1,6 +1,6 @@
 {
   "name": "talmud-scripts",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "סקריפט Tampermonkey אחד לעבודה שוטפת במערכת תלמו\"ד: קליטת תלמידים, עזיבת תלמידים, טיפול בהודעות ודיווח חודשי",
   "private": true,
   "license": "MIT",
