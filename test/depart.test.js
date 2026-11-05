@@ -35,10 +35,10 @@ test('מצב ריצה ב-Node בלי sessionStorage: אין תור שמור, ל�
 });
 
 // ─── parseDepartInput ────────────────────────────────────────────────────────
-test('parseDepartInput: טאבים, ריפוד סניף ות.ז.', () => {
-  const r = parseDepartInput(`0${T}12345678\n16${T}023456789`);
+test('parseDepartInput: טאבים, ריפוד סניף ות.ז. (010000008 היא ת.ז. תקינה שאקסל השמיט לה אפס)', () => {
+  const r = parseDepartInput(`0${T}10000008\n16${T}023456789`);
   assert.equal(r.errors.length, 0);
-  assert.deepEqual(r.tasks.map((t) => [t.branch, t.identity]), [['00', '012345678'], ['16', '023456789']]);
+  assert.deepEqual(r.tasks.map((t) => [t.branch, t.identity]), [['00', '010000008'], ['16', '023456789']]);
   assert.deepEqual(r.tasks.map((t) => t.line), [1, 2]);
 });
 
@@ -75,11 +75,20 @@ test('parseDepartInput: קלט ריק → בלי משימות ובלי שגיא�
   assert.deepEqual(parseDepartInput(null), { tasks: [], errors: [] });
 });
 
-test('departNormalizeIdentity: ריפוד, רווחים ומקפים, שגיאות', () => {
-  assert.equal(departNormalizeIdentity('12345678').value, '012345678');
-  assert.equal(departNormalizeIdentity('012-345-678').value, '012345678');
-  assert.ok(departNormalizeIdentity('1234').error);
-  assert.ok(departNormalizeIdentity('0123456789').error);
+// 4.0.3 (הכרעת בעל-המערכת 5.11.2026): בעזיבה סוג המזהה חסר משמעות, ולכן הריפוד באפסים מצומצם למקרה היחיד שבו הוא כמעט
+// בוודאות ת.ז.: ספרות בלבד, פחות מ-9, והמספר המרופד עובר את ספרת-הביקורת (אקסל השמיט אפס מוביל). כל השאר נשלח כפי שהוקלד.
+test('departNormalizeIdentity: ריפוד רק לת.ז. שעוברת ספרת-ביקורת אחרי הריפוד; אחרת כפי שהוקלד', () => {
+  assert.equal(departNormalizeIdentity('10000008').value, '010000008', 'ת.ז. בלי האפס המוביל: מרופדת');
+  assert.equal(departNormalizeIdentity('010-000-008').value, '010000008', 'רווחים ומקפים מנוקים');
+  assert.equal(departNormalizeIdentity('12345678').value, '12345678', 'לא עוברת ספרת-ביקורת אחרי ריפוד: כפי שהוקלד');
+  assert.equal(departNormalizeIdentity('1234567').value, '1234567', 'דרכון מספרי קצר: כפי שהוקלד');
+  assert.equal(departNormalizeIdentity('566706689').value, '566706689', '9 ספרות: כפי שהוקלד גם בלי ספרת-ביקורת');
+  assert.equal(departNormalizeIdentity('0123456789').value, '0123456789', '10 ספרות: דרכון מספרי, מותר');
+  assert.equal(departNormalizeIdentity('ab1234').value, 'AB1234', 'אותיות: בלי ריפוד, אותיות גדולות');
+  assert.equal(departNormalizeIdentity('1234').value, '1234', '4 תווים: הגבול התחתון, כמו לדרכון');
+  assert.ok(departNormalizeIdentity('123').error, 'פחות מ-4');
+  assert.ok(departNormalizeIdentity('1'.repeat(21)).error, 'יותר מ-20');
+  assert.ok(departNormalizeIdentity('12#45').error, 'תו זר');
   assert.ok(departNormalizeIdentity('').error);
 });
 

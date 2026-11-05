@@ -10,7 +10,7 @@ import { $el, isVisible, sleep, waitFor } from '../core/dom.js';
 import { firePostback, waitPRM } from '../core/prm.js';
 import { readMessagePopup, hideMessagePopupAsync } from '../core/popup.js';
 import { log, maskId, maskIdsInText } from '../core/log.js';
-import { padId9 } from '../core/identity.js';
+import { padId9, isValidIsraeliId } from '../core/identity.js';
 import { getPage, gotoInstitute, normalizeBranch, parsePostbackHref, STUDENT_RESERVE_MS, runBudgetMs } from '../core/navigate.js';
 import { holdRunLock, dropRunLock } from '../core/lock.js';
 import { dateTodayDMY, dateIsValidDMY } from '../core/dates.js';
@@ -108,16 +108,16 @@ function departHeaderMap(cells) {
   return map.branch !== -1 || map.identity !== -1 ? map : null;
 }
 
-// ת.ז.: ספרות (5-9) → ריפוד ל-9; דרכון: אותיות+ספרות (4-20) → אותיות גדולות; אחרת שגיאה.
+// בעזיבה סוג המזהה חסר משמעות (הכרעת בעל-המערכת 5.11.2026): התלמיד כבר קיים באתר והאתר יודע אם זה ת.ז. או דרכון.
+// לכן: אותיות וספרות (4-20) → אותיות גדולות, כפי שהוקלד. ריפוד באפסים ל-9 רק במקרה היחיד שבו זה כמעט בוודאות ת.ז.
+// שאקסל השמיט לה אפס מוביל: ספרות בלבד, פחות מ-9, והמספר המרופד עובר את ספרת-הביקורת. דרכון מספרי (קצר או ארוך)
+// נשלח לחיפוש כפי שהוקלד (כמו בסקריפט הישן, שלא ריפד). התאמת הגריד מתעלמת מאפסים מוביל בכל מקרה (departNormId).
 export function departNormalizeIdentity(raw) {
   const s = String(raw == null ? '' : raw).replace(/[\s-]/g, '');
   if (!s) return { value: '', error: 'חסרה ת.ז.' };
-  if (/^\d+$/.test(s)) {
-    if (s.length < 5 || s.length > 9) return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
-    return { value: padId9(s), error: null };
-  }
-  if (/^[A-Za-z0-9]{4,20}$/.test(s)) return { value: s.toUpperCase(), error: null };
-  return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+  if (!/^[A-Za-z0-9]{4,20}$/.test(s)) return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+  if (/^\d+$/.test(s) && s.length < 9 && isValidIsraeliId(s)) return { value: padId9(s), error: null };
+  return { value: s.toUpperCase(), error: null };
 }
 
 export function parseDepartInput(text) {

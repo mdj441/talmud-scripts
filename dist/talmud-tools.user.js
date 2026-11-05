@@ -5251,16 +5251,16 @@ function departHeaderMap(cells) {
   return map.branch !== -1 || map.identity !== -1 ? map : null;
 }
 
-// ת.ז.: ספרות (5-9) → ריפוד ל-9; דרכון: אותיות+ספרות (4-20) → אותיות גדולות; אחרת שגיאה.
+// בעזיבה סוג המזהה חסר משמעות (הכרעת בעל-המערכת 5.11.2026): התלמיד כבר קיים באתר והאתר יודע אם זה ת.ז. או דרכון.
+// לכן: אותיות וספרות (4-20) → אותיות גדולות, כפי שהוקלד. ריפוד באפסים ל-9 רק במקרה היחיד שבו זה כמעט בוודאות ת.ז.
+// שאקסל השמיט לה אפס מוביל: ספרות בלבד, פחות מ-9, והמספר המרופד עובר את ספרת-הביקורת. דרכון מספרי (קצר או ארוך)
+// נשלח לחיפוש כפי שהוקלד (כמו בסקריפט הישן, שלא ריפד). התאמת הגריד מתעלמת מאפסים מוביל בכל מקרה (departNormId).
 function departNormalizeIdentity(raw) {
   const s = String(raw == null ? '' : raw).replace(/[\s-]/g, '');
   if (!s) return { value: '', error: 'חסרה ת.ז.' };
-  if (/^\d+$/.test(s)) {
-    if (s.length < 5 || s.length > 9) return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
-    return { value: padId9(s), error: null };
-  }
-  if (/^[A-Za-z0-9]{4,20}$/.test(s)) return { value: s.toUpperCase(), error: null };
-  return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+  if (!/^[A-Za-z0-9]{4,20}$/.test(s)) return { value: '', error: `ת.ז. לא תקינה: ${raw}` };
+  if (/^\d+$/.test(s) && s.length < 9 && isValidIsraeliId(s)) return { value: padId9(s), error: null };
+  return { value: s.toUpperCase(), error: null };
 }
 
 function parseDepartInput(text) {
@@ -6174,7 +6174,7 @@ function departFriendlyError(reason, f) {
   if (/חסרים שדות חובה/.test(s)) { const miss = []; if (!String(f.branch || '').trim()) miss.push('סניף'); if (!String(f.identifier || '').trim()) miss.push('מספר'); return `חסר: ${miss.join(', ') || 'סניף או מספר'}`; }
   if (/סניף לא תקין/.test(s)) return 'מספר סניף לא תקין. בחר סניף מהרשימה';
   if (/חסרה ת\.ז\./.test(s)) return 'חסר: מספר';
-  if (/ת\.ז\. לא תקינה/.test(s)) return 'מספר לא תקין (ת.ז. 5 עד 9 ספרות, או דרכון באותיות וספרות)';
+  if (/ת\.ז\. לא תקינה/.test(s)) return 'מספר לא תקין (4 עד 20 אותיות או ספרות, בלי סימנים)';
   return s;
 }
 

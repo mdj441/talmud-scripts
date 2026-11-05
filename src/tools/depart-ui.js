@@ -74,7 +74,7 @@ export function departFriendlyError(reason, f) {
   if (/חסרים שדות חובה/.test(s)) { const miss = []; if (!String(f.branch || '').trim()) miss.push('סניף'); if (!String(f.identifier || '').trim()) miss.push('מספר'); return `חסר: ${miss.join(', ') || 'סניף או מספר'}`; }
   if (/סניף לא תקין/.test(s)) return 'מספר סניף לא תקין. בחר סניף מהרשימה';
   if (/חסרה ת\.ז\./.test(s)) return 'חסר: מספר';
-  if (/ת\.ז\. לא תקינה/.test(s)) return 'מספר לא תקין (ת.ז. 5 עד 9 ספרות, או דרכון באותיות וספרות)';
+  if (/ת\.ז\. לא תקינה/.test(s)) return 'מספר לא תקין (4 עד 20 אותיות או ספרות, בלי סימנים)';
   return s;
 }
 
