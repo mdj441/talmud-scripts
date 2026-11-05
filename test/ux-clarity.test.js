@@ -223,19 +223,23 @@ test('grid: סינון לפי תגית ומיון (מספרים כמספרים, 
   assert.deepEqual(gridSortRows(rows, (r) => r.fields.b, 'desc').map((r) => r.fields.b), ['16', '05', '00']);
 });
 
-test('עזיבה: טקסט → שורות (כותרת מדולגת), אימות (סניף ברשימה, ספרת-ביקורת, כפילות), נוסחים', () => {
+// 4.0.3 (הכרעת בעל-המערכת 5.11.2026): בעזיבה אין אזהרת ספרת-ביקורת. התלמיד כבר קיים באתר והאתר יודע אם זה ת.ז. או
+// דרכון; דרכון מספרי (למשל 566706689) נכשל בבדיקה כמעט תמיד, והאזהרה "בדוק את המספר" הטעתה.
+test('עזיבה: טקסט → שורות (כותרת מדולגת), אימות (סניף ברשימה, כפילות; בלי ספרת-ביקורת), נוסחים', () => {
   assert.deepEqual(DEPART_STEPS, ['הכנה', 'ריצה', 'תוצאות', 'תיקון והרצה חוזרת']);
   const rows = departTextToRows('סניף\tת.ז.\n00\t012345678\n16\tAB1234567\n\n# הערה\n05 123456782');
   assert.deepEqual(rows.map((r) => [r.fields.branch, r.fields.identifier]), [['00', '012345678'], ['16', 'AB1234567'], ['05', '123456782']]);
   const v = departValidateRows([
     { fields: { branch: '00', identifier: '123456782' } },
     { fields: { branch: '00', identifier: '123456782' } }, // כפול
-    { fields: { branch: '00', identifier: '123456789' } }, // ספרת-ביקורת
+    { fields: { branch: '00', identifier: '566706689' } }, // דרכון מספרי (ספרת-ביקורת שגויה): מוכן, בלי אזהרה
     { fields: { branch: '27', identifier: '123456782' } }, // לא ברשימה
     { fields: { branch: 'ab', identifier: '123456782' } }, // לא תקין
     { fields: { branch: '', identifier: '' } },
   ], { branches: ['00', '16'] });
-  assert.deepEqual(v.issues.map((i) => i.level), ['', 'warn', 'warn', 'bad', 'bad']);
+  assert.deepEqual(v.issues.map((i) => i.level), ['', 'warn', '', 'bad', 'bad']);
+  assert.equal(v.issues[2].msg, '');
+  assert.deepEqual(v.counts, { all: 5, ready: 2, warn: 1, bad: 2 });
   assert.match(v.issues[1].msg, /כפול של שורה 1/);
   assert.match(v.issues[3].msg, /ברשימת הסניפים/);
   assert.deepEqual(v.tasks.map((t) => t.line - 2), [0, 1, 2]);

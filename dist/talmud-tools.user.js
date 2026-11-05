@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         תלמוד - כלי אוטומציה
 // @namespace    https://github.com/mdj441/talmud-scripts
-// @version      4.0.2
+// @version      4.0.3
 // @description  קליטה, עזיבה, הודעות ודיווח חודשי לתלמו"ד בסקריפט אחד (v4.0)
 // @author       מרדכי יאקאב
 // @match        https://talmud.edu.gov.il/*
@@ -6198,7 +6198,9 @@ function departValidateRows(list, ctx) {
       const id = String(f.identifier || '').replace(/[\s-]/g, '');
       const key = `${String(f.branch).trim().padStart(2, '0')}|${/^\d+$/.test(id) ? id.replace(/^0+/, '') : id.toUpperCase()}`;
       if (seen.has(key)) { level = 'warn'; msg = `כפול של שורה ${seen.get(key) + 1}`; }
-      else { seen.set(key, i); if (/^\d+$/.test(id) && !isValidIsraeliId(id)) { level = 'warn'; msg = 'ת.ז. לא תקינה (ספרת ביקורת). בדוק את המספר'; } }
+      // בלי בדיקת ספרת-ביקורת (4.0.3, הכרעת בעל-המערכת 5.11.2026): התלמיד כבר קיים באתר והאתר יודע אם המספר הוא
+      // ת.ז. או דרכון; דרכון מספרי נכשל בבדיקה כמעט תמיד והאזהרה "בדוק את המספר" הטעתה. בקליטה הבדיקה נשארת.
+      else seen.set(key, i);
     }
     issues.push({ level, msg });
     counts[level === 'bad' ? 'bad' : (level === 'warn' ? 'warn' : 'ready')]++;

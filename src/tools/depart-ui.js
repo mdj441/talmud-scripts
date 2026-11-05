@@ -6,7 +6,6 @@
 import { $el } from '../core/dom.js';
 import { log } from '../core/log.js';
 import { downloadCsv, copyTextToClipboard } from '../core/csv.js';
-import { isValidIsraeliId } from '../core/identity.js';
 import { readBranchesFromTree } from '../core/navigate.js';
 import {
   DEPART_REASONS, DEPART_DEFAULT_REASON, DEPART_STATUS, parseDepartInput, buildDepartTsv, buildDepartCsvRows,
@@ -99,7 +98,9 @@ export function departValidateRows(list, ctx) {
       const id = String(f.identifier || '').replace(/[\s-]/g, '');
       const key = `${String(f.branch).trim().padStart(2, '0')}|${/^\d+$/.test(id) ? id.replace(/^0+/, '') : id.toUpperCase()}`;
       if (seen.has(key)) { level = 'warn'; msg = `כפול של שורה ${seen.get(key) + 1}`; }
-      else { seen.set(key, i); if (/^\d+$/.test(id) && !isValidIsraeliId(id)) { level = 'warn'; msg = 'ת.ז. לא תקינה (ספרת ביקורת). בדוק את המספר'; } }
+      // בלי בדיקת ספרת-ביקורת (4.0.3, הכרעת בעל-המערכת 5.11.2026): התלמיד כבר קיים באתר והאתר יודע אם המספר הוא
+      // ת.ז. או דרכון; דרכון מספרי נכשל בבדיקה כמעט תמיד והאזהרה "בדוק את המספר" הטעתה. בקליטה הבדיקה נשארת.
+      else seen.set(key, i);
     }
     issues.push({ level, msg });
     counts[level === 'bad' ? 'bad' : (level === 'warn' ? 'warn' : 'ready')]++;
